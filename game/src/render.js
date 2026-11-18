@@ -94,6 +94,48 @@ export function makeSignTexture(text, bg = '#1d5c2e', fg = '#ffffff') {
   });
 }
 
+// Round-5 polish: the sun disc — a bright core with warm corona rings —
+// and a wide soft halo for atmosphere. Both are procedural canvas
+// textures, so the game stays fully offline. world.js uses them for the
+// low sunset sun sprites.
+export function makeSunDiscTexture() {
+  return makeCanvasTexture(256, 256, (ctx, w, h) => {
+    const cx = w / 2;
+    const cy = h / 2;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2);
+    grad.addColorStop(0, '#fffdf0');
+    grad.addColorStop(0.22, '#fff0b0');
+    grad.addColorStop(0.42, '#ffc46b');
+    grad.addColorStop(0.6, 'rgba(255,138,42,0.55)');
+    grad.addColorStop(0.8, 'rgba(255,122,42,0.18)');
+    grad.addColorStop(1, 'rgba(255,122,42,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    // Corona rings: thin warm circles outside the bright core.
+    ctx.strokeStyle = 'rgba(255,200,120,0.35)';
+    ctx.lineWidth = 3;
+    for (const r of [0.52, 0.64, 0.76]) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, (w / 2) * r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  });
+}
+
+export function makeHaloTexture() {
+  return makeCanvasTexture(256, 256, (ctx, w, h) => {
+    const cx = w / 2;
+    const cy = h / 2;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2);
+    grad.addColorStop(0, 'rgba(255,170,80,0.55)');
+    grad.addColorStop(0.4, 'rgba(255,140,50,0.22)');
+    grad.addColorStop(0.75, 'rgba(255,120,40,0.07)');
+    grad.addColorStop(1, 'rgba(255,120,40,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
 // Create the renderer for `canvas`, a perspective camera, and the lights.
 // Returns { renderer, camera, sunLight, hemiLight, resize, setSize }.
 // The caller owns the render loop; resize() is also bound to window resize.
@@ -105,7 +147,9 @@ export function createRenderContext(canvas) {
   renderer.shadowMap.type = THREE.PCFShadowMap; // (r187 removed PCFSoftShadowMap)
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  // Round-5: 1.12 (was 1.05) so the sunset colours stay rich — ACES
+  // washes them out at the old exposure.
+  renderer.toneMappingExposure = CONFIG.round5 ? CONFIG.round5.exposure : 1.12;
 
   const camera = new THREE.PerspectiveCamera(
     CONFIG.camera.fov,
@@ -137,9 +181,14 @@ export function createRenderContext(canvas) {
   sunLight.shadow.bias = -0.0004;
   sunLight.shadow.normalBias = 0.4;
 
-  // Hemisphere light: bright sky bounce + warm ground bounce, no shadows.
-  // Kept dimmer than round 1 (1.1 washed the shadows out).
-  const hemiLight = new THREE.HemisphereLight(0xbfe3f2, 0x8a7a5a, CONFIG.lighting.hemiIntensity);
+  // Hemisphere light: warm sunset sky bounce + warm ground bounce, no
+  // shadows. Round-5 colours come from CONFIG.round5 (warm orange sky,
+  // brown ground); kept dimmer than round 1 so shadows stay visible.
+  const hemiLight = new THREE.HemisphereLight(
+    CONFIG.round5 ? CONFIG.round5.lighting.hemiSky : 0xffb080,
+    CONFIG.round5 ? CONFIG.round5.lighting.hemiGround : 0x7a5a40,
+    CONFIG.lighting.hemiIntensity,
+  );
 
   function resize() {
     const w = window.innerWidth;

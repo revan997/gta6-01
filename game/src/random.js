@@ -3,6 +3,19 @@
 // built-in unseeded random function, so a given seed reproduces the same city.
 // Uses the mulberry32 algorithm: small, fast, and well distributed.
 
+// Round-5: hash a string to a 32-bit seed (FNV-1a) so named things
+// (missions, districts) get a stable, readable seed instead of a magic
+// number. Deterministic: the same string always yields the same seed.
+export function seedFromString(str) {
+  let h = 0x811c9dc5;
+  const s = String(str ?? '');
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
 // Create a generator from a numeric seed.
 // Returns { next(), range(min, max), int(min, max), pick(array), chance(p) }.
 export function createRng(seed) {
@@ -121,7 +134,7 @@ export function createRng(seed) {
     return out.slice(0, take);
   }
 
-  return { next, range, int, pick, weightedPick, chance, gaussian, noise2, shuffle, sample, seed: seed >>> 0 };
+  return { next, range, int, pick, weightedPick, chance, gaussian, noise2, shuffle, sample, seedFromString, seed: seed >>> 0 };
 }
 
 export default createRng;

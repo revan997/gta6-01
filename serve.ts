@@ -70,6 +70,13 @@ const server = createServer((request, response) => {
     return;
   }
   if (pathname.endsWith('/')) pathname += 'index.html';
+  // Round-5: a tiny health endpoint so the test harness (or a human) can
+  // tell the dev server is up without fetching the game.
+  if (pathname === '/__health') {
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({ ok: true, round: 5, root }));
+    return;
+  }
   const file = resolve(join(root, normalize(pathname)));
   if (file !== root && !file.startsWith(root + sep)) {
     response.writeHead(403).end('forbidden');

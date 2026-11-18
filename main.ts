@@ -46,6 +46,20 @@ if (!existsSync(gameFavicon)) {
     throw new Error(`missing input: game/favicon.ico at ${gameFavicon} is not a valid ICO file (bad magic bytes)`);
   }
 }
+// Round 5: the sunset palette must be present — the submission's sky is
+// a dramatic violet-to-gold sunset, and a copy that lost CONFIG.round5
+// would ship the old pale-grey sky. Fail loudly here instead of at the
+// intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const sunsetOk = cfg?.colors?.skyTop === 0x2e1a4e
+    && Array.isArray(cfg?.round5?.sky?.mids) && cfg.round5.sky.mids.length >= 4;
+  if (!sunsetOk) {
+    throw new Error('missing input: CONFIG.round5 sunset palette not found in game/src/config.js');
+  }
+  console.log(`sunset palette: skyTop #${cfg.colors.skyTop.toString(16).padStart(6, '0')} horizon #${cfg.colors.skyHorizon.toString(16).padStart(6, '0')}`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

@@ -6,13 +6,14 @@
 // instead of crashing on an old save.
 
 export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 3;
-// Version 1 and 2 saves are still readable: they migrate with the v2
-// fields (playTimeSeconds, timesPlayed) and the v3 fields (totalEarned,
-// bestTimes, missionsCompletedCount, gamesPlayed) defaulting to 0 / {}.
+export const SAVE_VERSION = 4;
+// Version 1, 2 and 3 saves are still readable: they migrate with the v2
+// fields (playTimeSeconds, timesPlayed), the v3 fields (totalEarned,
+// bestTimes, missionsCompletedCount, gamesPlayed) and the v4 field
+// (parBonuses) defaulting to 0 / {}.
 // MissionsCompletedCount is recomputed from the completed list when it is
 // missing, so even a v1 save reports the right count on load.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3];
+export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4];
 
 function safeParse(text) {
   try {
@@ -94,6 +95,8 @@ export class SaveSystem {
       gamesPlayed: Math.max(0, Math.round(state.gamesPlayed ?? 0)),
       // Round 3: lifetime cash earned across all missions on this profile.
       totalEarned: Math.max(0, Math.round(state.totalEarned ?? 0)),
+      // Round 5: under-par bonuses earned (each worth CONFIG.parBonus).
+      parBonuses: Math.max(0, Math.round(state.parBonuses ?? 0)),
       // Round 4: best clear time per mission (seconds, one decimal).
       bestTimes,
     };
@@ -144,6 +147,8 @@ export class SaveSystem {
       timesPlayed: typeof data.timesPlayed === 'number' ? Math.max(0, data.timesPlayed) : 0,
       gamesPlayed: typeof data.gamesPlayed === 'number' ? Math.max(0, data.gamesPlayed) : 0,
       totalEarned: typeof data.totalEarned === 'number' ? Math.max(0, data.totalEarned) : 0,
+      // Round 5: par bonuses are new in v4 — older saves simply have none.
+      parBonuses: typeof data.parBonuses === 'number' ? Math.max(0, data.parBonuses) : 0,
       // Round 4: best times are new in v3 — v1/v2 saves simply have none.
       bestTimes: isPlainObject(data.bestTimes) ? { ...data.bestTimes } : {},
     };
@@ -159,6 +164,7 @@ export class SaveSystem {
       missionsCompleted: data.missionsCompletedCount,
       gamesPlayed: data.gamesPlayed,
       totalEarned: data.totalEarned,
+      parBonuses: data.parBonuses, // round 5: under-par bonuses earned
       bestTimesCount: Object.keys(data.bestTimes || {}).length,
     };
   }

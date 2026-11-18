@@ -40,6 +40,7 @@ $250 and five jobs waiting. No account, no install, no network.
 | M | Mute / unmute |
 | P | Pause |
 | Mouse | Look around (click to lock the pointer) |
+| Mouse wheel | Zoom the chase camera in / out |
 
 Your first job starts on its own: pick up Mama Lou's package at the
 Marina and run it to North Beach. A golden beacon marks every objective,
@@ -63,9 +64,13 @@ same seed always builds the same streets:
 - **The sea** — a textured, breathing water plane with a foam strip at
   the shoreline.
 
-The sun sits low over the water, the sky is a sunset gradient, and the
-shadows stretch long across the roads. At street level the ground is
-mottled grass and paved sidewalks, not flat colour.
+The sun sits low over the water — a big low disc with a halo, hanging
+in a violet-to-magenta-to-gold sky — and the shadows stretch long across
+the roads. Clouds catch the pink and orange light, and the buildings
+wear real recessed windows: dark frames set into the facades, warm lit
+glass, sloped awnings that throw shade, parapets and stepped towers
+that read in profile. At street level the ground is mottled grass and
+paved sidewalks, not flat colour.
 
 ## The law
 
@@ -95,20 +100,24 @@ and a best time that is saved to your profile.
 
 Driving has weight: five car models plus traffic variety (taxi with a
 checker band and roof sign, a six-wheel city bus, beach buggy, food
-truck, limo), brake lights that flare, tyre screech on a hard skid, an
-engine whose pitch follows your speed through five gears, and a camera
-whose field of view opens up as you go faster. On foot, Rico leans into
-turns, hunches when he sprints, and casts a soft shadow that keeps him
+truck, limo), all sitting planted on bigger wheels with arches and side
+skirts — the van has a sloped windshield and a real nose now — brake
+lights that flare, tyre screech on a hard skid, an engine whose pitch
+follows your speed through five gears, and a camera whose field of view
+opens up as you go faster (scroll the mouse wheel to zoom it in or out).
+On foot, Rico leans into turns, hunches when he sprints, catches the
+sunset on his shoulders, and casts a soft shadow that keeps him
 planted on the pavement. Punches knock targets back and freeze the
 action for a beat; consecutive hits build a combo (COMBO x2, x3, …)
-with a sting that climbs in pitch. Shots leave tracers, muzzle flashes
-and impact bursts.
+with a sting that climbs in pitch. Shots leave warm gold tracers,
+muzzle flashes and impact bursts.
 
 All sound is synthesised live with the Web Audio API — engine hum,
 sirens that swell as the nearest unit closes in, footsteps, door slams,
 a laid-back chord loop, a city hum that gives way to surf near the
-beach, and stings for mission starts, rising heat, combos and cash
-earned. Pressing SPACE a fraction early still jumps, thanks to jump
+beach, a warm golden-hour chord pad underneath it all, and stings for
+mission starts, rising heat, combos, cash earned and the sunset itself.
+Pressing SPACE a fraction early still jumps, thanks to jump
 buffering.
 
 The HUD keeps it all readable: wanted stars that flash red when the
@@ -144,13 +153,14 @@ press START.
 ## Screenshots
 
 The `screenshots/` folder holds staged shots from the test harness
-(menu, driving, chase, pause). The test itself (`round4-test.mjs` in
+(menu, driving, chase, pause). The test itself (`round5-test.mjs` in
 the workdir) loads the game in headless Chromium, drives it (menu →
 START → driving → carjack → wanted 1 → police spawn → mission advance
 → pause/resume), lands a live punch, completes mission 1, checks the
-save round-trip, triggers a busted, and requires zero console errors,
-zero warnings, zero failed requests and zero external requests in two
-separate full runs.
+save round-trip, triggers a busted, proves the round-5 sunset sky,
+planted-car stance and recessed geometry windows, and requires zero
+console errors, zero warnings, zero failed requests and zero external
+requests in two separate full runs.
 
 ## Credits
 

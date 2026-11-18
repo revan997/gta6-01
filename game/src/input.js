@@ -31,6 +31,13 @@ function onMouseMove(event) {
   mouseDY += event.movementY || 0;
 }
 
+// Round-5: mouse-wheel delta (pixels, deltaY), accumulated until the game
+// loop consumes it — the chase camera zooms in/out per notch.
+let wheelDelta = 0;
+function onWheel(event) {
+  wheelDelta += event.deltaY || 0;
+}
+
 function onPointerLockChange() {
   pointerLocked = document.pointerLockElement === attachedCanvas;
   if (!pointerLocked) {
@@ -46,6 +53,7 @@ function attach(canvas) {
   window.addEventListener('keyup', onKeyUp);
   window.addEventListener('blur', () => { heldKeys.clear(); pressedKeys.clear(); });
   document.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('wheel', onWheel, { passive: true }); // round 5: camera zoom
   document.addEventListener('pointerlockchange', onPointerLockChange);
   listenersAttached = true;
 }
@@ -105,6 +113,14 @@ function consumeMouseDelta() {
   return out;
 }
 
+// Round-5: consume and return the accumulated wheel delta (pixels,
+// deltaY) since the last call, then clear it. Positive = scrolled down.
+function consumeWheelDelta() {
+  const out = wheelDelta;
+  wheelDelta = 0;
+  return out;
+}
+
 // Consume and return the e.code values pressed since the last call,
 // then clear the set. A held key is reported once, on its first keydown.
 function consumePressed() {
@@ -156,6 +172,7 @@ export const input = {
   consumePressedCode,
   moveVector,
   consumeMouseDelta,
+  consumeWheelDelta,
   consumePressed,
   get pointerLocked() {
     return pointerLocked;

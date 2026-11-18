@@ -200,6 +200,7 @@ let timesPlayed = 0; // sessions on this profile; persisted by save v2
 let camYaw = player.heading + Math.PI;
 let camPitch = 0;
 let camFar = false; // round 3: C toggles the chase camera near / far
+let camZoom = 1; // round 5: mouse wheel zooms the chase camera (0.8..1.35)
 let orbitAngle = 0.6;
 let messageText = '';
 let muzzleTimer = 0;
@@ -254,7 +255,9 @@ scene.add(beacon);
 
 const muzzle = new THREE.Mesh(
   new THREE.SphereGeometry(0.28, 8, 8),
-  new THREE.MeshBasicMaterial({ color: 0xffe98a }),
+  // Round-5: warm gold, not pale yellow — the muzzle flash is lit by the
+  // same low sun as the rest of the sunset scene.
+  new THREE.MeshBasicMaterial({ color: 0xffc46b }),
 );
 muzzle.visible = false;
 scene.add(muzzle);
@@ -361,6 +364,7 @@ function startPlaying() {
     audio.ensureContext();
     audio.startMusic();
     audio.startAmbient(); // round 4: city hum + surf bed
+    audio.playSunsetSting?.(); // round 5: golden-hour swell as the game starts
   }
   // Resume a previous session (round-2 polish): the save system was
   // writing on mission complete but never loading. v1 and v2 saves both
@@ -445,6 +449,7 @@ function showMissionComplete(name, reward) {
     timesPlayed,
     totalEarned, // round 3: save v3 field
     gamesPlayed, // round 4: save v3 field
+    parBonuses: missions.getParBonusesEarned(), // round 5: save v4 field
   });
 }
 
@@ -523,7 +528,10 @@ function updateCamera(dt) {
   const focus = player.onFoot ? player.position : (player.currentCar ? player.currentCar.position : player.position);
   const driving = !player.onFoot;
   // Round 3: C toggles the chase camera near / far.
-  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1);
+  // Round-5: mouse wheel zooms the chase camera (each notch ~8%).
+  const wheel = input.consumeWheelDelta ? input.consumeWheelDelta() : 0;
+  if (wheel) camZoom = Math.max(0.8, Math.min(1.35, camZoom * (1 + wheel * 0.0008)));
+  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1) * camZoom;
   const height = driving ? CONFIG.camera.drivingHeight : CONFIG.camera.onFootHeight;
   // Round-3 polish: the field of view opens up at speed while the
   // throttle is held, so fast driving feels fast.
@@ -789,6 +797,8 @@ function update(dt) {
     pos.setXYZ(0, tracer.from.x, tracer.from.y, tracer.from.z);
     pos.setXYZ(1, tracer.to.x, tracer.to.y, tracer.to.z);
     pos.needsUpdate = true;
+    // Round-5: the tracer carries its sunset tint from combat.js.
+    if (tracer.color) tracerMat.color.set(tracer.color);
     tracerTimer = tracer.timer;
     tracerLine.visible = true;
   }
@@ -1027,4 +1037,19 @@ window.__solmar = {
   get buoys() { return world.buoys || []; },
   get water() { return world.water || null; },
   get marker() { return missions.getMarkerPosition(world); },
+  // Round-5 probes: the dramatic sunset sky + geometry windows.
+  get round5() {
+    const r5 = CONFIG.round5 || {};
+    return {
+      sky: {
+        top: '#' + CONFIG.colors.skyTop.toString(16).padStart(6, '0'),
+        horizon: '#' + CONFIG.colors.skyHorizon.toString(16).padStart(6, '0'),
+        fog: scene.fog ? '#' + scene.fog.color.getHexString() : null,
+        background: scene.background ? '#' + scene.background.getHexString() : null,
+        exposure: renderer.toneMappingExposure,
+        sun: r5.sun || null,
+      },
+      windows: world.round5 || null,
+    };
+  },
 };

@@ -267,6 +267,29 @@ export class TrafficManager {
     };
   }
 
+  // Round-5 dusk: traffic cars run their headlights — brighter headlight
+  // glow sprites + stronger headlight emissive on real 3D cars. Applied
+  // once per car (guarded by _duskHeadlightsApplied); stand-in cars have
+  // no mesh so this is a no-op for them. Reads CONFIG.round5 when it
+  // exists, otherwise uses hardcoded dusk values.
+  _applyDuskHeadlights(car) {
+    if (!car || car._duskHeadlightsApplied || !car.group) return;
+    car._duskHeadlightsApplied = true;
+    const cfg = CONFIG.round5?.traffic || {};
+    const glowOpacity = cfg.headlightGlowOpacity ?? 0.95;
+    const glowScale = cfg.headlightGlowScale ?? 1.8;
+    const emissive = cfg.headlightEmissive ?? 1.8;
+    if (car.headMat) car.headMat.emissiveIntensity = emissive;
+    if (Array.isArray(car.headGlows)) {
+      for (const g of car.headGlows) { if (g) g.opacity = glowOpacity; }
+    }
+    if (Array.isArray(car.headGlowSprites)) {
+      for (const s of car.headGlowSprites) {
+        if (s && s.scale && typeof s.scale.setScalar === 'function') s.scale.setScalar(glowScale);
+      }
+    }
+  }
+
   _spawnCar(world, player) {
     const pick = this._pickSpawnPoint(world, player, true);
     const roads = this._roads(world);
@@ -304,6 +327,8 @@ export class TrafficManager {
     // and a phase for the gentle speed breathing applied in update().
     car.baseTargetSpeed = car.targetSpeed;
     car.speedPhase = this.rng.range(0, Math.PI * 2);
+    // Round-5 dusk: headlights on for moving traffic.
+    this._applyDuskHeadlights(car);
     car.roadIndex = pick.roadIndex;
     car.roadT = pick.roadT;
     car.roadDirection = direction;
@@ -422,6 +447,9 @@ export class TrafficManager {
     const roads = this._roads(world);
     for (const car of this.cars) {
       if (car.driver && car.driver !== 'ai') continue; // player-driven now
+      // Round-5 dusk: catch any AI car that missed the spawn-time
+      // headlight pass (e.g. a car created before this lane landed).
+      this._applyDuskHeadlights(car);
       // Round-4: cruise speed breathes gently around the car's own
       // baseline, so traffic does not move in lockstep.
       if (car.baseTargetSpeed !== undefined) {

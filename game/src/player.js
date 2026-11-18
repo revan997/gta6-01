@@ -46,6 +46,10 @@ export function createPlayer(scene, world, spawn) {
   part(matBandana, 0.38, 0.07, 0.36, 0, 1.5, 0);
   part(matGold, 0.3, 0.06, 0.05, 0, 1.32, 0.2);
   part(matBelt, 0.64, 0.08, 0.36, 0, 0.78, 0);
+  // Round-5: a warm sunset rim across the shoulders — the low sun catches
+  // Rico's jacket edge, so he reads as lit by golden hour, not flat.
+  part(new THREE.MeshStandardMaterial({ color: 0xff9a3c, emissive: 0xff7a2a, emissiveIntensity: 0.55, roughness: 0.8 }),
+    0.64, 0.06, 0.36, 0, 1.46, 0);
   const head = part(matSkin, 0.36, 0.38, 0.34, 0, 1.68, 0);
   part(matHair, 0.38, 0.14, 0.36, 0, 1.9, 0);
   part(matHair, 0.38, 0.22, 0.08, 0, 1.78, -0.16);

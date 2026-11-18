@@ -480,6 +480,14 @@ export class HUD {
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 10px sans-serif';
     ctx.fillText('N', size - 14, 14);
+
+    // Round-5: a warm golden-hour ring around the minimap edge — the
+    // whole game is shot at sunset, so the map wears the same light.
+    ctx.strokeStyle = 'rgba(255, 150, 60, 0.85)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2 - 2, 0, Math.PI * 2);
+    ctx.stroke();
   }
 }
 

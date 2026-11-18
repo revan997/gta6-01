@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createRng } from './random.js';
-import { makeCanvasTexture, makeGlowTexture, makeSignTexture, makeWaterTexture } from './render.js';
+import { makeCanvasTexture, makeGlowTexture, makeHaloTexture, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
 export function districtAt(x, z) {
@@ -26,12 +26,21 @@ export function buildWorld(scene, seedOrRng) {
   // Round-4b config — declared here (top of buildWorld) because the sky /
   // sun-glow block below reads it before the round-4 block is defined.
   const R4b = CONFIG.round4b;
+  // Round-5 config (sunset sky + recessed geometry windows).
+  const R5 = CONFIG.round5;
+  const R5W = R5.geometryWindows;
+  // Plain facades get their own rng stream so the main rng sequence (and
+  // therefore the round-4 city layout) is not disturbed by the extra
+  // texture work.
+  const plainRng = createRng(CONFIG.world.seed + 5001);
   const half = CONFIG.halfCity;
   const roadW = CONFIG.roadWidth;
   const lines = CONFIG.roadLines;
 
-  scene.background = new THREE.Color(C.sky);
-  scene.fog = new THREE.Fog(C.fog, 260, 900);
+  // Round-5: warm sunset haze + warm horizon-orange backdrop (was a pale
+  // blue sky / pale blue fog).
+  scene.background = new THREE.Color(R5.lighting.background);
+  scene.fog = new THREE.Fog(R5.lighting.fog, R5.lighting.fogNear, R5.lighting.fogFar);
 
   const roads = [];
   const buildings = []; // collision boxes: { minX, maxX, minZ, maxZ, height, district }
@@ -40,16 +49,22 @@ export function buildWorld(scene, seedOrRng) {
   // Sky dome: a big gradient sphere (BackSide, fog-free) so the horizon
   // reads as sky, not a flat colour. setPalette(top, horizon) repaints it
   // — stageEnd uses it for the sunset shot.
+  // Round-5: a multi-stop dramatic sunset — deep violet zenith ->
+  // magenta -> rose -> deep orange band -> bright gold at the horizon.
+  // `midStops` is optional; when omitted the CONFIG.round5 mids are used,
+  // so the 2-arg setPalette(top, horizon) call in main.js keeps working.
   const skyCanvas = document.createElement('canvas');
   skyCanvas.width = 4;
   skyCanvas.height = 256;
   const skyCtx = skyCanvas.getContext('2d');
   const skyTex = new THREE.CanvasTexture(skyCanvas);
   skyTex.colorSpace = THREE.SRGBColorSpace;
-  function paintSky(topHex, horizonHex) {
+  function paintSky(topHex, horizonHex, midStops) {
     const grad = skyCtx.createLinearGradient(0, 0, 0, 256);
     grad.addColorStop(0, '#' + topHex.toString(16).padStart(6, '0'));
-    grad.addColorStop(0.55, '#' + horizonHex.toString(16).padStart(6, '0'));
+    for (const m of (midStops || R5.sky.mids)) {
+      grad.addColorStop(m.stop, '#' + m.hex.toString(16).padStart(6, '0'));
+    }
     grad.addColorStop(1, '#' + horizonHex.toString(16).padStart(6, '0'));
     skyCtx.fillStyle = grad;
     skyCtx.fillRect(0, 0, 4, 256);
@@ -62,32 +77,47 @@ export function buildWorld(scene, seedOrRng) {
   );
   const sky = {
     mesh: skyMesh,
-    setPalette(topHex, horizonHex) {
-      paintSky(topHex, horizonHex);
+    setPalette(topHex, horizonHex, midStops) {
+      paintSky(topHex, horizonHex, midStops);
     },
   };
   scene.add(skyMesh);
-  // Round-4b: sunset sun — a warm glow sprite + bright disc low on the
-  // horizon toward the sun light, so the dusk reads as a real sunset.
+  // Round-5: sunset sun — a big warm glow sprite + bright disc with
+  // corona rings + a wide faint halo, low on the horizon toward the sun
+  // light, so the dusk reads as a real sunset. (Round-4b had a smaller,
+  // higher, cooler sun at (520, 110, 280), glow 300 / disc 90.)
   const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: makeGlowTexture('#ff9a3c', 0.1, 1), transparent: true, opacity: 0.85,
+    map: makeGlowTexture('#ff8a2a', 0.1, 1), transparent: true, opacity: 0.85,
     depthWrite: false, fog: false,
   }));
-  sunGlow.scale.set(R4b.sun.glowScale, R4b.sun.glowScale, 1);
-  sunGlow.position.set(R4b.sun.x, R4b.sun.y, R4b.sun.z);
+  sunGlow.scale.set(R5.sun.glowScale, R5.sun.glowScale, 1);
+  sunGlow.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
   scene.add(sunGlow);
   const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: makeGlowTexture('#fff3c4', 0.5, 1), transparent: true, opacity: 0.95,
+    map: makeSunDiscTexture(), transparent: true, opacity: 0.95,
     depthWrite: false, fog: false,
   }));
-  sunDisc.scale.set(R4b.sun.discScale, R4b.sun.discScale, 1);
-  sunDisc.position.set(R4b.sun.x, R4b.sun.y, R4b.sun.z);
+  sunDisc.scale.set(R5.sun.discScale, R5.sun.discScale, 1);
+  sunDisc.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
   scene.add(sunDisc);
+  const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeHaloTexture(), transparent: true, opacity: R5.sun.haloOpacity,
+    depthWrite: false, fog: false,
+  }));
+  sunHalo.scale.set(R5.sun.haloScale, R5.sun.haloScale, 1);
+  sunHalo.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
+  scene.add(sunHalo);
 
   // Building facades: 6 procedural variants (base colour + window grid
   // with a few lit windows + a darker ground floor). Each building clones
   // one variant and repeats it by its own dimensions, so windows stay
   // ~6 m apart horizontally and ~3 m vertically on every building.
+  // Window grid: 4 columns x 8 floors. Round-5: windows read recessed —
+  // a dark frame border around each window, glass with a vertical
+  // gradient (warm lit / cool dark), and a thin light sill line at the
+  // bottom. The lit ratio varies per FLOOR (some floors mostly lit, some
+  // mostly dark) — derived deterministically from floor + base colour so
+  // no extra rng is consumed and the round-4 layout stays identical.
   function makeFacadeTexture(baseHex, rng) {
     const base = '#' + baseHex.toString(16).padStart(6, '0');
     return makeCanvasTexture(128, 256, (ctx, w, h) => {
@@ -99,19 +129,55 @@ export function buildWorld(scene, seedOrRng) {
         ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
         ctx.fillRect(rng.range(0, w), rng.range(0, h), 2, 2);
       }
-      // Window grid: 4 columns x 8 floors, ~25% lit.
+      // Window grid: 4 columns x 8 floors, per-floor lit ratio.
+      const floorLitRatios = [0.12, 0.3, 0.55, 0.8];
       for (let floor = 0; floor < 8; floor++) {
+        const floorLitRatio = floorLitRatios[(floor * 5 + (baseHex % 13)) % floorLitRatios.length];
         for (let col = 0; col < 4; col++) {
           const x = 6 + col * 32;
           const y = 6 + floor * 32;
-          const lit = rng.next() < 0.25;
-          ctx.fillStyle = lit ? '#ffd97a' : '#22303c';
+          const lit = rng.next() < floorLitRatio;
+          // Dark frame border (2 px) — the recess read.
+          ctx.fillStyle = '#14181d';
+          ctx.fillRect(x - 2, y - 2, 24, 22);
+          // Inner glass with a vertical gradient.
+          const g = ctx.createLinearGradient(0, y, 0, y + 18);
+          if (lit) {
+            g.addColorStop(0, '#ffe9a8');
+            g.addColorStop(1, '#ff9a3c');
+          } else {
+            g.addColorStop(0, '#1a2a3a');
+            g.addColorStop(1, '#2a3a4a');
+          }
+          ctx.fillStyle = g;
           ctx.fillRect(x, y, 20, 18);
-          ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-          ctx.strokeRect(x + 0.5, y + 0.5, 20, 18);
+          // Thin light sill line at the bottom of the glass.
+          ctx.fillStyle = lit ? 'rgba(255,233,168,0.9)' : 'rgba(180,200,220,0.55)';
+          ctx.fillRect(x, y + 18, 20, 2);
         }
       }
       // Ground floor: darker band + a door.
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.fillRect(0, h - 32, w, 32);
+      ctx.fillStyle = '#1c2733';
+      ctx.fillRect(w / 2 - 8, h - 26, 16, 26);
+    });
+  }
+  // Round-5: PLAIN facade (base colour + speckle + ground-floor band, NO
+  // painted windows) for buildings that get REAL geometry windows — so
+  // texture windows and geometry windows never double up. Painted on the
+  // dedicated plainRng stream (see top of buildWorld).
+  function makePlainFacadeTexture(baseHex, rng) {
+    const base = '#' + baseHex.toString(16).padStart(6, '0');
+    return makeCanvasTexture(128, 256, (ctx, w, h) => {
+      ctx.fillStyle = base;
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < 700; i++) {
+        const v = rng.noise2(i * 0.31, i * 0.17);
+        ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+        ctx.fillRect(rng.range(0, w), rng.range(0, h), 2, 2);
+      }
+      // Ground floor: darker band + a door (same as the windowed facade).
       ctx.fillStyle = 'rgba(0,0,0,0.28)';
       ctx.fillRect(0, h - 32, w, 32);
       ctx.fillStyle = '#1c2733';
@@ -128,6 +194,12 @@ export function buildWorld(scene, seedOrRng) {
     facadeByDistrict[label] = colors.map((c) => makeFacadeTexture(c, rng));
   }
   const facadeTextures = facadeByDistrict.Downtown || Object.values(facadeByDistrict)[0];
+  // Round-5: plain (windowless) facades per district, for buildings that
+  // get real geometry windows instead of painted ones.
+  const plainByDistrict = {};
+  for (const [label, colors] of Object.entries(R4.districtFacades)) {
+    plainByDistrict[label] = colors.map((c) => makePlainFacadeTexture(c, plainRng));
+  }
 
   // Asphalt with a dashed centre line and edge lines. Two orientations:
   // the X variant dashes along U (roads running east-west), the Z variant
@@ -271,8 +343,13 @@ export function buildWorld(scene, seedOrRng) {
   const matConeBand = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.8 });
   const matLifeguard = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.8 });
   const matLifeguardRed = new THREE.MeshStandardMaterial({ color: 0xc23a2a, roughness: 0.8 });
-  const matCloud = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const matSun = new THREE.MeshBasicMaterial({ color: 0xfff6c8 });
+  // Round-5: warm-tinted cloud materials (pink / orange / cream, slight
+  // warm emissive so shadowed sides never go grey). One shared material
+  // per tint; each cloud picks one.
+  const cloudMats = R5.clouds.tints.map((c) => new THREE.MeshStandardMaterial({
+    color: c, roughness: 1, emissive: c, emissiveIntensity: R5.clouds.emissiveIntensity,
+  }));
+  const matSun = new THREE.MeshBasicMaterial({ color: 0xfff0b0 });
   const matPier = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 1 });
 
   const buildingMats = CONFIG.colors.buildingPalette.map(
@@ -461,6 +538,112 @@ export function buildWorld(scene, seedOrRng) {
     color: C.windowDark, roughness: 0.3, metalness: 0.4,
   });
 
+  // ---- Round-5: real recessed geometry windows (InstancedMesh) ----
+  // A subset of buildings (~35%, preferring taller / downtown) gets REAL
+  // windows instead of painted ones: a dark frame ring (one ShapeGeometry
+  // border, protruding 0.14 m) + a glass pane set nearly flush (0.03 m),
+  // on all 4 faces where the building is wide enough. Only 3 shared
+  // materials (frame / lit glass / dark glass); awnings reuse the balcony
+  // material. Placements are collected during the building loop, then
+  // baked into 4 InstancedMeshes after the loop (counts unknown until then).
+  // Round-5 perf: the window pieces are MeshBasicMaterial, not Standard
+  // — a lit pane is a flat warm glow, a dark pane and a frame are flat
+  // dark colours, so scene lighting and shadow-map sampling buy nothing
+  // here and cost a fortune per pixel in software rendering. (The first
+  // round-5 build used Standard materials and ran ~10x slower than
+  // round 4 in headless SwiftShader; planes + Basic is the fix. The
+  // frame ring is the second perf fix: 1 instance per window instead
+  // of 4 bar planes, same border, ~11k fewer instances.)
+  const matGeoFrame = new THREE.MeshBasicMaterial({ color: 0x1a1d20, side: THREE.DoubleSide });
+  const matGeoGlassLit = new THREE.MeshBasicMaterial({ color: 0xffe9a8, side: THREE.DoubleSide });
+  const matGeoGlassDark = new THREE.MeshBasicMaterial({ color: 0x2a3a4a, side: THREE.DoubleSide });
+  // Round-5 perf: ONE ring geometry per window frame instead of 4
+  // separate bar planes — the same border (outer rect minus the glass
+  // rect, bar 0.18 m), 1 instance instead of 4, same 8 triangles.
+  // Frame instances drop 15,000 -> ~3,750, total window instances
+  // ~19,700 -> ~8,500, with the recessed look unchanged.
+  const frameRingGeo = (() => {
+    const ow = R5W.windowW + 0.36; // winW + barT*2 (barT 0.18)
+    const oh = R5W.windowH + 0.36;
+    const s = new THREE.Shape();
+    s.moveTo(-ow / 2, -oh / 2); s.lineTo(ow / 2, -oh / 2);
+    s.lineTo(ow / 2, oh / 2); s.lineTo(-ow / 2, oh / 2); s.closePath();
+    const hole = new THREE.Path();
+    hole.moveTo(-R5W.windowW / 2, -R5W.windowH / 2);
+    hole.lineTo(R5W.windowW / 2, -R5W.windowH / 2);
+    hole.lineTo(R5W.windowW / 2, R5W.windowH / 2);
+    hole.lineTo(-R5W.windowW / 2, R5W.windowH / 2); hole.closePath();
+    s.holes.push(hole);
+    return new THREE.ShapeGeometry(s);
+  })();
+  // Entries: { x, y, z, rotY, rotX, sx, sy, sz } — absolute positions so
+  // the InstancedMeshes hang straight off the scene.
+  const geoWinFrames = [];
+  const geoWinGlassLit = [];
+  const geoWinGlassDark = [];
+  const geoWinAwnings = [];
+  let r5GeoBuildings = 0;
+  let r5LitWindows = 0;
+  function addGeoWindowsForBuilding(px, pz, bw, bd, height) {
+    // Faces: rotY, outward normal n, in-plane tangent t, wall offset.
+    const faces = [
+      { rotY: 0, n: [0, 0, 1], t: [1, 0, 0], off: bd / 2, w: bw },
+      { rotY: Math.PI, n: [0, 0, -1], t: [-1, 0, 0], off: bd / 2, w: bw },
+      { rotY: Math.PI / 2, n: [1, 0, 0], t: [0, 0, -1], off: bw / 2, w: bd },
+      { rotY: -Math.PI / 2, n: [-1, 0, 0], t: [0, 0, 1], off: bw / 2, w: bd },
+    ];
+    const winW = R5W.windowW;
+    const winH = R5W.windowH;
+    const glassDepth = 0.06;
+    for (const f of faces) {
+      if (f.w < R5W.minFaceWidth) continue; // too narrow for real windows
+      const cols = Math.max(1, Math.floor((f.w - 4) / R5W.colSpacing));
+      const span = (cols - 1) * R5W.colSpacing;
+      const floors = Math.max(0, Math.floor((height - R5W.groundFloorHeight - 1) / R5W.floorSpacing));
+      for (let fl = 0; fl < floors; fl++) {
+        const y = R5W.groundFloorHeight + R5W.floorSpacing * fl + winH / 2 + 0.2;
+        if (y + winH / 2 > height - 0.5) break;
+        // Per-floor lit clustering: one ratio per floor, windows roll
+        // against it (some floors mostly lit, some mostly dark).
+        const floorLitRatio = rng.pick(R5W.floorLitRatios);
+        for (let c = 0; c < cols; c++) {
+          const u = -span / 2 + c * R5W.colSpacing;
+          const lit = rng.next() < floorLitRatio;
+          // Window centre (glass face) in world space.
+          const cx = px + f.n[0] * f.off + f.t[0] * u;
+          const cz = pz + f.n[2] * f.off + f.t[2] * u;
+          // Glass pane: nearly flush (centre 0.03 m off the wall).
+          const glass = {
+            x: cx + f.n[0] * R5W.glassOffset, y,
+            z: cz + f.n[2] * R5W.glassOffset,
+            rotY: f.rotY, rotX: 0, sx: winW, sy: winH, sz: glassDepth,
+          };
+          if (lit) { geoWinGlassLit.push(glass); r5LitWindows += 1; }
+          else geoWinGlassDark.push(glass);
+          // Frame border: ONE ring at the frame face (frameProtrude off
+          // the wall) so the glass stays recessed behind it. The ring
+          // geometry is built once (frameRingGeo) and instanced per
+          // window — same border as the old 4 bars, 1 instance not 4.
+          const fc = R5W.frameProtrude;
+          geoWinFrames.push({
+            x: cx + f.n[0] * fc, y,
+            z: cz + f.n[2] * fc,
+            rotY: f.rotY, rotX: 0, sx: 1, sy: 1, sz: 1,
+          });
+          // Sloped awning above ~30% of upper-floor windows (casts shadow).
+          if (fl >= 2 && rng.chance(R5W.awningChance)) {
+            geoWinAwnings.push({
+              x: cx + f.n[0] * 0.55,
+              y: y + winH / 2 + 0.3,
+              z: cz + f.n[2] * 0.55,
+              rotY: f.rotY, rotX: 0.35, sx: winW + 0.5, sy: 0.08, sz: 1.1,
+            });
+          }
+        }
+      }
+    }
+  }
+
   function inMarinaBasin(cx, cz) {
     return cx > marina.minX - 10 && cx < marina.maxX && cz > marina.minZ && cz < marina.maxZ;
   }
@@ -491,10 +674,19 @@ export function buildWorld(scene, seedOrRng) {
         const group = new THREE.Group();
         group.position.set(px, 0, pz);
         scene.add(group);
+        // Round-5: a subset of buildings gets REAL geometry windows
+        // instead of painted ones — taller / downtown buildings preferred.
+        // Those buildings use a PLAIN facade texture so the two window
+        // styles never double up.
+        const useGeoWindows = rng.chance(
+          (isDowntown || height >= R5W.tallPreferHeight) ? R5W.downtownChance : R5W.buildingChance,
+        );
         // Textured facade: clone one of the 6 procedural variants and
         // repeat it by the building's dimensions. The texture carries the
         // windows, so the old per-floor window-band boxes are gone.
-        const districtTextures = facadeByDistrict[district] || facadeTextures;
+        const districtTextures = useGeoWindows
+          ? (plainByDistrict[district] || facadeTextures)
+          : (facadeByDistrict[district] || facadeTextures);
         const facadeTex = rng.pick(districtTextures).clone();
         facadeTex.needsUpdate = true;
         facadeTex.wrapS = facadeTex.wrapT = THREE.RepeatWrapping;
@@ -637,6 +829,11 @@ export function buildWorld(scene, seedOrRng) {
           addBox(matRoof, pt, ph2, bd * 0.92, -bw * 0.46 + pt / 2, height + 0.6 + ph2 / 2, 0, group);
           r4bParapets += 1;
         }
+        // Round-5: bake the recessed geometry windows for this building.
+        if (useGeoWindows) {
+          r5GeoBuildings += 1;
+          addGeoWindowsForBuilding(px, pz, bw, bd, height);
+        }
         buildings.push({
           minX: px - bw / 2, maxX: px + bw / 2,
           minZ: pz - bd / 2, maxZ: pz + bd / 2,
@@ -647,6 +844,45 @@ export function buildWorld(scene, seedOrRng) {
         }
       }
     }
+  }
+
+  // ---- Round-5: bake the recessed geometry windows ----
+  // Four InstancedMeshes (frame ring / lit glass / dark glass / awnings)
+  // from the placements collected during the building loop. frustumCulled
+  // is off: the instances span the whole city, so the unit-box bounds
+  // would cull them wrongly. Round-5 perf: frames are one ring geometry
+  // (8 tris) and glass is a flat plane (2 tris) — a box's side faces are
+  // never seen on a facade — and nothing here casts shadows: the pieces
+  // sit centimetres proud of the wall, so their shadows are invisible
+  // and the shadow pass would be pure cost. (The first round-5 build used
+  // boxes with shadow casting and ran ~10x slower than round 4 in
+  // headless SwiftShader; planes + Basic + the ring frame is the fix.)
+  {
+    const dummy = new THREE.Object3D();
+    dummy.rotation.order = 'YXZ';
+    const boxUnit = new THREE.BoxGeometry(1, 1, 1);
+    const planeUnit = new THREE.PlaneGeometry(1, 1);
+    function makeInstanced(entries, material, castShadow, geometry) {
+      if (!entries.length) return null;
+      const im = new THREE.InstancedMesh(geometry || boxUnit, material, entries.length);
+      entries.forEach((e, i) => {
+        dummy.position.set(e.x, e.y, e.z);
+        dummy.rotation.set(e.rotX || 0, e.rotY || 0, 0);
+        dummy.scale.set(e.sx, e.sy, e.sz);
+        dummy.updateMatrix();
+        im.setMatrixAt(i, dummy.matrix);
+      });
+      im.instanceMatrix.needsUpdate = true;
+      im.castShadow = castShadow;
+      im.receiveShadow = true;
+      im.frustumCulled = false;
+      scene.add(im);
+      return im;
+    }
+    makeInstanced(geoWinFrames, matGeoFrame, false, frameRingGeo);
+    makeInstanced(geoWinGlassLit, matGeoGlassLit, false, planeUnit);
+    makeInstanced(geoWinGlassDark, matGeoGlassDark, false, planeUnit);
+    makeInstanced(geoWinAwnings, matBalcony, false);
   }
 
   // ---- Rooftop billboard + helipad (round-3 polish) ----
@@ -1211,7 +1447,9 @@ export function buildWorld(scene, seedOrRng) {
   // edge; main.js calls updateClouds(dt) every frame.
   const clouds = [];
   const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(18, 16, 16), matSun);
-  sunMesh.position.set(420, 520, 210);
+  // Round-5: the solid sun ball sits with the low sunset sprites, not
+  // high in the sky (was 420, 520, 210).
+  sunMesh.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
   scene.add(sunMesh);
   for (let i = 0; i < CONFIG.world.cloudCount; i++) {
     const g = new THREE.Group();
@@ -1221,8 +1459,10 @@ export function buildWorld(scene, seedOrRng) {
     g.position.set(cx, cy, cz);
     scene.add(g);
     const puffs = rng.int(3, 5);
+    // Round-5: each cloud picks one warm tint (pink / orange / cream).
+    const cloudMat = rng.pick(cloudMats);
     for (let p = 0; p < puffs; p++) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(rng.range(9, 18), 10, 8), matCloud);
+      const s = new THREE.Mesh(new THREE.SphereGeometry(rng.range(9, 18), 10, 8), cloudMat);
       s.scale.y = 0.45;
       s.position.set(rng.range(-16, 16), rng.range(-2, 2), rng.range(-8, 8));
       g.add(s);
@@ -1304,6 +1544,15 @@ export function buildWorld(scene, seedOrRng) {
     // Round-4b: geometry variation counts (setbacks / balconies / pitched
     // roofs / parapets) — the test harness reads these to prove the pass.
     round4b: { setbacks: r4bSetbacks, balconies: r4bBalconies, pitchedRoofs: r4bPitched, parapets: r4bParapets },
+    // Round-5: recessed geometry-window counts — the test harness reads
+    // these to prove the pass.
+    round5: {
+      geometryWindows: geoWinGlassLit.length + geoWinGlassDark.length,
+      geometryBuildings: r5GeoBuildings,
+      windowFrames: geoWinFrames.length,
+      windowAwnings: geoWinAwnings.length,
+      litWindows: r5LitWindows,
+    },
     districts: CONFIG.districts,
     citySize: CONFIG.citySize,
     halfCity: half,

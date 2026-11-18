@@ -6,6 +6,7 @@
 // All randomness comes from the seeded generator passed in (an object with
 // next()/range()/pick(), or a factory function taking a numeric seed).
 // Never uses Math.random.
+import { CONFIG } from './config.js';
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -264,6 +265,26 @@ export class PoliceSystem {
     return { x: px + Math.sin(angle) * r, y: 0, z: pz + Math.cos(angle) * r };
   }
 
+  // Round-5 dusk: make the light bar read against the sunset by
+  // enlarging its glow sprites once the bar exists (main.js attaches the
+  // bar after spawn, so this is checked every update until it lands).
+  // Sprite scale is never touched by the flash-phase logic, so the boost
+  // persists across phase toggles; emissive levels live in vehicle.js.
+  // Stand-in cars have no mesh/bar, so this is a no-op for them.
+  _boostLightBar(car) {
+    if (!car || car._duskBarBoosted || !car.group || !car.lightBar) return;
+    car._duskBarBoosted = true;
+    const cfg = CONFIG.round5?.police || {};
+    const scale = cfg.lightBarGlowScale ?? 1.35;
+    for (const key of ['redGlowSprite', 'blueGlowSprite']) {
+      const s = car.lightBar[key];
+      if (s && s.scale) {
+        s.scale.x *= scale;
+        s.scale.y *= scale;
+      }
+    }
+  }
+
   _spawnCar(player) {
     const pos = this._spawnPositionNear(player, 35, 70);
     const car = this.createCar
@@ -271,6 +292,7 @@ export class PoliceSystem {
       : makePoliceCar({ position: pos }, this.rng);
     car.kind = 'police-car';
     car.siren = true;
+    this._boostLightBar(car);
     this.policeCars.push(car);
     return car;
   }
@@ -340,6 +362,8 @@ export class PoliceSystem {
 
     // --- Police cars: chase and ram. ---
     for (const car of this.policeCars) {
+      // Round-5 dusk: boost the light-bar glow once the bar is attached.
+      this._boostLightBar(car);
       const d = dist2D(car.position, player.position);
       // Round 4: the interceptor does not chase the tail — it aims at the
       // intercept point ahead of the player and tries to cut them off.

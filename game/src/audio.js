@@ -32,6 +32,7 @@ export class AudioEngine {
     this.ambientOn = false;
     this.ambientHum = null; // { osc, gain } — low city hum, always on
     this.ambientWaves = null; // { src, gain, lfo } — surf swell near the beach
+    this.ambientPad = null; // round 5: warm golden-hour chord pad, always on
     this._engineGear = 1;
     // Simple laid-back chord loop in A minor (frequencies, Hz).
     this.musicChords = [
@@ -325,6 +326,15 @@ export class AudioEngine {
     this._blip(1046.5, 0.4, 'sine', 0.18, 0.3);
   }
 
+  // Round-5: a warm golden-hour swell when the game starts — C major,
+  // slow and quiet, the sound of the sun going down over the Bay.
+  playSunsetSting() {
+    this._blip(261.63, 0.9, 'sine', 0.22, 0);
+    this._blip(329.63, 0.9, 'sine', 0.2, 0.08);
+    this._blip(392.0, 1.1, 'sine', 0.2, 0.16);
+    this._blip(523.25, 1.2, 'sine', 0.14, 0.3);
+  }
+
   playWantedUp() {
     this._blip(233.08, 0.18, 'square', 0.3, 0, 220);
     this._blip(311.13, 0.24, 'square', 0.3, 0.16, 294);
@@ -410,6 +420,29 @@ export class AudioEngine {
     waveSrc.start();
     lfo.start();
     this.ambientWaves = { src: waveSrc, gain: waveGain, lfo, base: 0 };
+    // Round-5: golden-hour pad — a quiet warm C-major chord (C4/E4/G4)
+    // that breathes on a slow LFO, so the dusk has a sound, not just a look.
+    const padFreqs = [261.63, 329.63, 392.0];
+    const padGain = this.ctx.createGain();
+    padGain.gain.value = 0.012;
+    const padLfo = this.ctx.createOscillator();
+    padLfo.type = 'sine';
+    padLfo.frequency.value = 0.05;
+    const padLfoGain = this.ctx.createGain();
+    padLfoGain.gain.value = 0.006;
+    padLfo.connect(padLfoGain);
+    padLfoGain.connect(padGain.gain);
+    const padOscs = padFreqs.map((freq) => {
+      const osc = this.ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(padGain);
+      osc.start();
+      return osc;
+    });
+    padGain.connect(this.master);
+    padLfo.start();
+    this.ambientPad = { oscs: padOscs, gain: padGain, lfo: padLfo };
   }
 
   // position: { x, z } (or null); district: the HUD district string.
@@ -432,12 +465,14 @@ export class AudioEngine {
     try {
       const h = this.ambientHum;
       const w = this.ambientWaves;
+      const p = this.ambientPad;
       setTimeout(() => {
-        try { h?.osc?.stop(); h?.noise?.stop(); w?.src?.stop(); w?.lfo?.stop(); } catch (_) { /* already stopped */ }
+        try { h?.osc?.stop(); h?.noise?.stop(); w?.src?.stop(); w?.lfo?.stop(); p?.oscs?.forEach((o) => o.stop()); p?.lfo?.stop(); } catch (_) { /* already stopped */ }
       }, 300);
     } catch (_) { /* context already closed */ }
     this.ambientHum = null;
     this.ambientWaves = null;
+    this.ambientPad = null;
   }
 
   // ---- ambient music loop: soft plucked chords, one bar every 1.6 s ----

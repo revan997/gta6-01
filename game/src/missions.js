@@ -22,6 +22,11 @@ function dist2D(a, b) {
   return Math.sqrt(dx * dx + dz * dz);
 }
 
+// Round-5: mission randomness is seeded from the readable mission name
+// (via random.js seedFromString) instead of a magic number, so the same
+// name always yields the same stream.
+import { seedFromString } from './random.js';
+
 function makeSeededRng(seed) {
   let s = (seed >>> 0) || 0x9e3779b9;
   const next = () => {
@@ -67,7 +72,7 @@ const MISSION_DEFS = [
     number: 1,
     id: 'first-run',
     name: 'First Run',
-    briefing: "Mama Lou: 'Rico, first job. Pick up the package at the Marina and bring it to North Beach. Keep it clean — and keep it quick.' Dante rides along to show you the ropes.",
+    briefing: "Mama Lou: 'Rico, first job. Pick up the package at the Marina and bring it to North Beach. Keep it clean — and keep it quick.' Dante rides along to show you the ropes. The sun's going down over the Bay — golden hour, Rico. Make it count.",
     reward: 500,
     objectives: [
       { id: 'pickup', text: 'Pick up the package at the Marina', location: 'marina', radius: 8 },
@@ -156,7 +161,7 @@ const MISSION_DEFS = [
 
 export class MissionManager {
   constructor(options = {}) {
-    this.rng = normaliseRng(options.rng, options.seed ?? 777);
+    this.rng = normaliseRng(options.rng, options.seed ?? seedFromString('solmar-bay-missions'));
     this.events = options.events || {}; // { onMissionStart, onObjective, onComplete, onFail }
     this.locations = { ...DEFAULT_LOCATIONS, ...(options.locations || {}) };
     // Round-3 polish: par times (seconds per mission) and the under-par
@@ -171,6 +176,8 @@ export class MissionManager {
     this.lastFailedMission = null;
     // Round 4: best clear time per mission (seconds), persisted by save v3.
     this.bestTimes = { ...(options.bestTimes || {}) };
+    // Round 5: under-par bonuses earned, persisted by save v4.
+    this.parBonusesEarned = 0;
   }
 
   _emit(name, payload) {
@@ -281,6 +288,8 @@ export class MissionManager {
   }
   // Round 4: best clear times, { missionNumber: seconds } (a copy).
   getBestTimes() { return { ...this.bestTimes }; }
+  // Round 5: under-par bonuses earned this profile (save v4).
+  getParBonusesEarned() { return this.parBonusesEarned; }
   getBestTime(number) {
     const t = this.bestTimes[number];
     return typeof t === 'number' ? t : null;
@@ -387,6 +396,7 @@ export class MissionManager {
     if (underPar) {
       parBonus = this.parBonus;
       this.lastReward += parBonus;
+      this.parBonusesEarned += 1; // round 5: counted for save v4
       if (typeof systems.addMoney === 'function') systems.addMoney(parBonus);
     }
     if (typeof def.onComplete === 'function') {

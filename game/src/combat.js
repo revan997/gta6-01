@@ -275,7 +275,9 @@ export class CombatSystem {
             z: origin.z + Math.cos(h) * WEAPONS.pistol.range,
           };
         })();
-    this.lastTracer = { from: { ...muzzle }, to: tracerTo, timer: 0.09 };
+    // Round-5: the tracer is drawn warm gold at dusk — the colour rides
+    // with the tracer record so the game loop draws the sunset tint.
+    this.lastTracer = { from: { ...muzzle }, to: tracerTo, timer: 0.09, color: 0xffb36b };
     if (typeof this.hooks.onMuzzle === 'function') this.hooks.onMuzzle(muzzle);
     this.hooks.audio?.playGunshot?.();
     // Shooting is a crime — the police hear it.

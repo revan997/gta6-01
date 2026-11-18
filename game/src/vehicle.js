@@ -14,29 +14,35 @@ export const VEHICLE_MODELS = ['coupe', 'sedan', 'pickup', 'van', 'sports', 'tax
 // happens in the browser, never at module import).
 let headGlowTex = null;
 let tailGlowTex = null;
+let blueGlowTex = null;
 let checkerTex = null;
 let taxiSignTex = null;
 function glowTextures() {
   if (!headGlowTex) {
     headGlowTex = makeGlowTexture('rgba(255,240,170,0.9)');
     tailGlowTex = makeGlowTexture('rgba(255,60,50,0.9)');
+    blueGlowTex = makeGlowTexture('rgba(70,120,255,0.9)');
     checkerTex = makeCheckerTexture(8, 2);
     taxiSignTex = makeSignTexture('TAXI', '#f7c948', '#111111');
   }
-  return { headGlowTex, tailGlowTex, checkerTex, taxiSignTex };
+  return { headGlowTex, tailGlowTex, blueGlowTex, checkerTex, taxiSignTex };
 }
 
 // Model dimensions (length x width x body height) and cabin proportions.
+// Round-5: bigger wheels + a per-model `stance` drop so the body sits
+// planted on the wheels — bodyY = wheels*2 + bodyH/2 - stance, so the
+// wheel tops overlap the body bottom by `stance` instead of the car
+// floating on tiny wheels. Length/width/topSpeed/accel are untouched.
 const MODEL_SHAPES = {
-  coupe: { length: 4.4, width: 1.9, bodyH: 0.62, cabinL: 2.0, cabinH: 0.5, cabinZ: -0.2, wheels: 0.34 },
-  sedan: { length: 4.8, width: 1.9, bodyH: 0.68, cabinL: 2.5, cabinH: 0.58, cabinZ: -0.1, wheels: 0.35 },
-  pickup: { length: 5.2, width: 2.0, bodyH: 0.72, cabinL: 1.7, cabinH: 0.62, cabinZ: 0.9, wheels: 0.38 },
-  van: { length: 5.0, width: 2.1, bodyH: 1.05, cabinL: 4.2, cabinH: 0.85, cabinZ: 0.1, wheels: 0.36 },
-  sports: { length: 4.5, width: 2.0, bodyH: 0.52, cabinL: 1.9, cabinH: 0.42, cabinZ: -0.3, wheels: 0.35 },
+  coupe: { length: 4.4, width: 1.9, bodyH: 0.58, cabinL: 2.0, cabinH: 0.5, cabinZ: -0.2, wheels: 0.38, stance: 0.06 },
+  sedan: { length: 4.8, width: 1.9, bodyH: 0.62, cabinL: 2.5, cabinH: 0.58, cabinZ: -0.1, wheels: 0.40, stance: 0.06 },
+  pickup: { length: 5.2, width: 2.0, bodyH: 0.66, cabinL: 1.7, cabinH: 0.62, cabinZ: 0.9, wheels: 0.42, stance: 0.05 },
+  van: { length: 5.0, width: 2.1, bodyH: 0.92, cabinL: 4.2, cabinH: 0.85, cabinZ: 0.1, wheels: 0.46, stance: 0.10 },
+  sports: { length: 4.5, width: 2.0, bodyH: 0.48, cabinL: 1.9, cabinH: 0.42, cabinZ: -0.3, wheels: 0.38, stance: 0.06 },
   // Round-4 models: the taxi rides on the sedan shape; the bus is long,
   // tall and wide, with a long glass band for windows.
-  taxi: { length: 4.8, width: 1.9, bodyH: 0.68, cabinL: 2.5, cabinH: 0.58, cabinZ: -0.1, wheels: 0.35 },
-  bus: { length: 9.5, width: 2.5, bodyH: 1.5, cabinL: 8.0, cabinH: 0.9, cabinZ: 0, wheels: 0.42 },
+  taxi: { length: 4.8, width: 1.9, bodyH: 0.62, cabinL: 2.5, cabinH: 0.58, cabinZ: -0.1, wheels: 0.40, stance: 0.06 },
+  bus: { length: 9.5, width: 2.5, bodyH: 1.42, cabinL: 8.0, cabinH: 0.9, cabinZ: 0, wheels: 0.50, stance: 0.08 },
 };
 
 function buildCarMesh(model, color) {
@@ -60,7 +66,9 @@ function buildCarMesh(model, color) {
 
   const L = shape.length;
   const W = shape.width;
-  const bodyY = shape.wheels * 2 + shape.bodyH / 2;
+  // Round-5 planted stance: the wheel tops overlap the body bottom by
+  // `stance`, so the car sits ON its wheels instead of floating above them.
+  const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
 
   // Main body. Pickup gets a bed instead of a full rear cabin.
   box(matBody, W, shape.bodyH, L, 0, bodyY, 0);
@@ -124,6 +132,36 @@ function buildCarMesh(model, color) {
       color: 0xffc861, emissive: 0xffb020, emissiveIntensity: 1.4,
     });
     box(matDest, 1.3, 0.32, 0.06, 0, cabY + 0.15, shape.cabinZ + shape.cabinL / 2 + 0.03);
+    // Round-5: roof AC pod — the bus roof was a bare glass slab.
+    box(matTrim, 1.6, 0.22, 3.2, 0, bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.11, 0);
+  }
+  // Round-5: distinct cab/hood for the low cars — a body-coloured hood
+  // panel ahead of the cabin (slightly below the cabin base), a wider
+  // grille (widened in the detail pass below) and a low front valance.
+  if (model === 'sedan' || model === 'coupe' || model === 'sports' || model === 'taxi') {
+    const cabFront = shape.cabinZ + shape.cabinL / 2;
+    const hoodL = Math.max(0.6, L / 2 - cabFront + 0.1);
+    const hoodZ = (cabFront + L / 2) / 2;
+    box(matBody, W - 0.24, 0.1, hoodL, 0, bodyY + shape.bodyH / 2 - 0.05, hoodZ);
+    box(matTrim, W - 0.1, 0.12, 0.14, 0, bodyY - shape.bodyH / 2 + 0.08, L / 2 + 0.02);
+  }
+  // Round-5: the van gets a real nose instead of a single tall box — a
+  // sloped windshield leaning back over the cab front, a short hood bulge
+  // low at the front, and a small roof vent behind the roof rack.
+  if (model === 'van') {
+    const shield = box(matGlass, W - 0.34, 0.72, 0.08, 0, bodyY + shape.bodyH / 2 + 0.12, L / 2 - 0.55);
+    shield.rotation.x = -0.3;
+    box(matBody, W - 0.2, 0.24, 0.8, 0, bodyY - shape.bodyH / 2 + 0.18, L / 2 - 0.35);
+    box(matTrim, 0.55, 0.12, 0.5, 0, bodyY + shape.bodyH / 2 + 0.06, -1.15);
+  }
+  // Round-5: side skirts on every model (the sports car already had them
+  // in round 4) — thin dark boxes along the lower body sides between the
+  // wheels, so the car reads lower and the wheels tuck under the body.
+  if (model !== 'sports') {
+    const skirtL = Math.max(1.2, L * 0.5);
+    const skirtY = bodyY - shape.bodyH / 2 + 0.07;
+    box(matTrim, 0.1, 0.14, skirtL, -W / 2 + 0.02, skirtY, 0);
+    box(matTrim, 0.1, 0.14, skirtL, W / 2 - 0.02, skirtY, 0);
   }
   // Headlights (front = +z) and taillights (rear = -z).
   box(matHead, 0.42, 0.16, 0.08, -W / 2 + 0.35, bodyY, L / 2 + 0.01);
@@ -140,16 +178,20 @@ function buildCarMesh(model, color) {
     sprite.position.set(x, y, z);
     sprite.scale.setScalar(scale);
     group.add(sprite);
-    return mat;
+    return sprite;
   }
-  glowSprite(glow.headGlowTex, -W / 2 + 0.35, bodyY, L / 2 + 0.15,
+  // Round-5: keep the headlight glow sprites + headlight material so
+  // traffic.js can run the headlights brighter at dusk.
+  const headSpriteL = glowSprite(glow.headGlowTex, -W / 2 + 0.35, bodyY, L / 2 + 0.15,
     glowCfg.headlightGlowScale ?? 1.5, glowCfg.headlightGlowOpacity ?? 0.75);
-  glowSprite(glow.headGlowTex, W / 2 - 0.35, bodyY, L / 2 + 0.15,
+  const headSpriteR = glowSprite(glow.headGlowTex, W / 2 - 0.35, bodyY, L / 2 + 0.15,
     glowCfg.headlightGlowScale ?? 1.5, glowCfg.headlightGlowOpacity ?? 0.75);
+  const headGlows = [headSpriteL.material, headSpriteR.material];
+  const headGlowSprites = [headSpriteL, headSpriteR];
   const tailGlowL = glowSprite(glow.tailGlowTex, -W / 2 + 0.35, bodyY, -L / 2 - 0.15,
-    glowCfg.tailGlowScale ?? 1.3, glowCfg.tailGlowIdle ?? 0.45);
+    glowCfg.tailGlowScale ?? 1.3, glowCfg.tailGlowIdle ?? 0.45).material;
   const tailGlowR = glowSprite(glow.tailGlowTex, W / 2 - 0.35, bodyY, -L / 2 - 0.15,
-    glowCfg.tailGlowScale ?? 1.3, glowCfg.tailGlowIdle ?? 0.45);
+    glowCfg.tailGlowScale ?? 1.3, glowCfg.tailGlowIdle ?? 0.45).material;
 
   // Detail pass: bumpers, grille, mirrors, door seams, license plate.
   const matPlate = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 });
@@ -157,7 +199,10 @@ function buildCarMesh(model, color) {
   box(matTrim, W, 0.14, 0.18, 0, bodyY - 0.1, L / 2 + 0.02);
   box(matTrim, W, 0.14, 0.18, 0, bodyY - 0.1, -L / 2 - 0.02);
   // Front grille (dark box at front centre, between the headlights).
-  box(matTrim, W * 0.35, 0.16, 0.06, 0, bodyY, L / 2 + 0.03);
+  // Round-5: the low cars get a wider grille to go with the hood panel.
+  const grilleW = (model === 'sedan' || model === 'coupe' || model === 'sports' || model === 'taxi')
+    ? W * 0.62 : W * 0.35;
+  box(matTrim, grilleW, 0.16, 0.06, 0, bodyY, L / 2 + 0.03);
   // Side mirrors (small boxes on both sides, near the cabin front).
   const mirrorZ = shape.cabinZ + shape.cabinL / 2 - 0.15;
   const mirrorY = bodyY + shape.bodyH / 2 + 0.18;
@@ -194,8 +239,14 @@ function buildCarMesh(model, color) {
     group.add(hub);
     wheels.push(wheel);
   }
+  // Round-5: wheel arches — a dark fender box over each wheel, just
+  // above the wheel top, so the wheels read as tucked into arches
+  // instead of bolted onto a flat box side.
+  for (const [wx, wz] of wheelSpots) {
+    box(matTrim, 0.36, 0.16, 1.0, wx, shape.wheels * 2 + 0.05, wz);
+  }
 
-  return { group, wheels, shape, tailMat: matTail, tailGlows: [tailGlowL, tailGlowR] };
+  return { group, wheels, shape, tailMat: matTail, tailGlows: [tailGlowL, tailGlowR], headMat: matHead, headGlows, headGlowSprites };
 }
 
 // Create one car in `scene`.
@@ -204,7 +255,7 @@ function buildCarMesh(model, color) {
 export function createCar(scene, model, color, x, z, heading) {
   const name = VEHICLE_MODELS.includes(model) ? model : 'sedan';
   const tune = CONFIG.vehicleModels[name] || CONFIG.vehicleModels.sedan;
-  const { group, wheels, shape, tailMat, tailGlows } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
+  const { group, wheels, shape, tailMat, tailGlows, headMat, headGlows, headGlowSprites } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
   group.position.set(x || 0, 0, z || 0);
   scene.add(group);
 
@@ -220,6 +271,9 @@ export function createCar(scene, model, color, x, z, heading) {
     wheels,
     tailMat, // round 3: brake lights flare by setting its emissiveIntensity
     tailGlows, // round 4: tail glow sprite materials, flared with braking
+    headMat, // round 5: headlight material, brightened at dusk by traffic.js
+    headGlows, // round 5: headlight glow sprite materials (dusk headlights)
+    headGlowSprites, // round 5: headlight glow sprites (dusk scale-up)
     braking: false, // round 3: true while the brakes are on
     skidding: false, // round 3: true on a hard handbrake turn at speed
     length: shape.length,
@@ -348,12 +402,17 @@ export function attachPoliceLightBar(car) {
   const shape = MODEL_SHAPES[car.model] || MODEL_SHAPES.sedan;
   const L = shape.length;
   const W = shape.width;
-  const bodyY = shape.wheels * 2 + shape.bodyH / 2;
+  // Round-5: same planted-stance bodyY as buildCarMesh, so the bar sits
+  // on the actual roof (0.05–0.10 lower than the old formula would put it).
+  const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
   const roofY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
   const matBase = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.6 });
   const matStripe = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.5 });
-  const matRed = new THREE.MeshStandardMaterial({ color: 0xcc0000, emissive: 0xff2222, emissiveIntensity: 2.2 });
-  const matBlue = new THREE.MeshStandardMaterial({ color: 0x0033cc, emissive: 0x2244ff, emissiveIntensity: 0.15 });
+  // Round-5 dusk: the bar lamps run brighter so they read against the
+  // sunset (on 3.6 / off 0.4, up from 2.2 / 0.15), with a red/blue glow
+  // sprite over each lamp that flashes with the phase.
+  const matRed = new THREE.MeshStandardMaterial({ color: 0xcc0000, emissive: 0xff2222, emissiveIntensity: 3.6 });
+  const matBlue = new THREE.MeshStandardMaterial({ color: 0x0033cc, emissive: 0x2244ff, emissiveIntensity: 0.4 });
 
   function add(material, w, h, d, x, y, z) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -367,21 +426,41 @@ export function attachPoliceLightBar(car) {
   add(matBase, 0.95, 0.08, 0.42, 0, roofY + 0.02, shape.cabinZ);
   add(matRed, 0.42, 0.13, 0.32, -0.25, roofY + 0.1, shape.cabinZ);
   add(matBlue, 0.42, 0.13, 0.32, 0.25, roofY + 0.1, shape.cabinZ);
+  // Round-5: glow sprites over the lamps (phase 0: red on, blue dim).
+  const glow = glowTextures();
+  function barGlow(tex, x, opacity) {
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.set(x, roofY + 0.14, shape.cabinZ);
+    sprite.scale.setScalar(1.1);
+    car.group.add(sprite);
+    return sprite;
+  }
+  const redGlowSprite = barGlow(glow.tailGlowTex, -0.25, 0.9);
+  const blueGlowSprite = barGlow(glow.blueGlowTex, 0.25, 0.12);
   // White side stripes along the body.
   add(matStripe, 0.03, 0.14, L * 0.55, -W / 2 - 0.01, bodyY + 0.02, 0);
   add(matStripe, 0.03, 0.14, L * 0.55, W / 2 + 0.01, bodyY + 0.02, 0);
 
-  car.lightBar = { red: matRed, blue: matBlue };
+  car.lightBar = {
+    red: matRed, blue: matBlue,
+    redGlow: redGlowSprite.material, blueGlow: blueGlowSprite.material,
+    redGlowSprite, blueGlowSprite,
+  };
   return car.lightBar;
 }
 
 // Set the police light-bar flash phase. Phase 0: red bright / blue dim;
 // phase 1: red dim / blue bright. Safe no-op on a car with no light bar.
+// Round-5 dusk levels: bright 3.6 / dim 0.4 (was 2.2 / 0.15), and the
+// bar glow sprites flash with the lamps when the car has them.
 export function setPoliceLightPhase(car, phase) {
   if (!car || !car.lightBar) return;
   const blueOn = phase === 1;
-  car.lightBar.red.emissiveIntensity = blueOn ? 0.15 : 2.2;
-  car.lightBar.blue.emissiveIntensity = blueOn ? 2.2 : 0.15;
+  car.lightBar.red.emissiveIntensity = blueOn ? 0.4 : 3.6;
+  car.lightBar.blue.emissiveIntensity = blueOn ? 3.6 : 0.4;
+  if (car.lightBar.redGlow) car.lightBar.redGlow.opacity = blueOn ? 0.12 : 0.9;
+  if (car.lightBar.blueGlow) car.lightBar.blueGlow.opacity = blueOn ? 0.9 : 0.12;
 }
 
 // Nearest car to `point` ({x, z} or THREE.Vector3) within `maxDistance`.

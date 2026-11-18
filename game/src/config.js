@@ -27,11 +27,13 @@ export const CONFIG = {
   },
 
   // ---- Colours (hex) ----
+  // Round-5 (Lane A): the default palette is now a dramatic sunset, not
+  // a pale blue day — the sky, fog, sun and hemi light are all warm.
   colors: {
-    sky: 0x7ec8e3,
-    skyHorizon: 0xcfeef7,
-    sun: 0xfff2c4,
-    fog: 0xa8d8ea,
+    sky: 0xff8a3c,
+    skyHorizon: 0xffc46b,
+    sun: 0xffb36b,
+    fog: 0xd96a35,
     ground: 0x8a9a6b,
     road: 0x3a3f46,
     roadLine: 0xf5d76e,
@@ -51,23 +53,26 @@ export const CONFIG = {
     hydrant: 0xc23a2a,
     curb: 0x8f8880,
     // Round-2 polish: sky gradient, sunset palette, awning colours.
-    skyTop: 0x4a90d9,
-    skyHorizon: 0xd8f0f8,
-    sunsetTop: 0x5a3a6e,
-    sunsetHorizon: 0xe8833a,
-    sunsetFog: 0xe08a4a,
+    // Round-5: the default sky IS the sunset (deep violet zenith, gold
+    // horizon); stageEnd reuses the same deep palette.
+    skyTop: 0x2e1a4e,
+    skyHorizon: 0xffc46b,
+    sunsetTop: 0x2e1a4e,
+    sunsetHorizon: 0xff7a2a,
+    sunsetFog: 0xd96a35,
     awningPalette: [0xc23a2a, 0x2e86c1, 0x1e8449, 0xe67e22, 0x8e44ad],
     grassPatch: [0x7d8f60, 0x93a86e, 0x6b8256, 0xa8b878],
   },
 
-  // ---- Lighting (round-2 polish) ----
-  // The sun sits lower than round 1 so shadows are long and visible, and
-  // the shadow frustum is tight because main.js re-centres the light on
-  // the camera focus every frame (a city-wide frustum made shadows faint).
+  // ---- Lighting (round-2 polish, round-5 sunset defaults) ----
+  // Round-5: the sun sits low (~14° elevation) so shadows are long and
+  // warm; the shadow frustum is tight because main.js re-centres the
+  // light on the camera focus every frame (a city-wide frustum made
+  // shadows faint). Values mirror CONFIG.round5.lighting.
   lighting: {
-    sunIntensity: 2.9,
-    hemiIntensity: 0.85,
-    sunOffset: [110, 95, 60], // light position relative to the shadow focus
+    sunIntensity: 3.1,
+    hemiIntensity: 0.7,
+    sunOffset: [165, 50, 85], // light position relative to the shadow focus
     shadowFrustum: 120, // half-extent (metres) of the shadow camera box
   },
 
@@ -177,18 +182,79 @@ export const CONFIG = {
   // These close the audit's remaining visual gap (flat boxes, flat green).
   round4b: {
     // Stepped towers: tall downtown buildings get a narrower upper tier.
-    setbacks: { minHeight: 40, chance: 0.65, widthFracMin: 0.55, widthFracMax: 0.68, heightFracMin: 0.3, heightFracMax: 0.45 },
+    // Round-5: chance raised 0.65 -> 0.75 so more towers read in profile.
+    setbacks: { minHeight: 40, chance: 0.75, widthFracMin: 0.55, widthFracMax: 0.68, heightFracMin: 0.3, heightFracMax: 0.45 },
     // Balconies on mid-rise residential facades (south face, a few floors).
     balconies: { minHeight: 14, maxHeight: 30, chance: 0.5, perBuildingMin: 2, perBuildingMax: 4 },
     // Pitched (pyramid) roofs on low buildings instead of a flat cap.
     pitchedRoof: { maxHeight: 14, chance: 0.5, heightFracMin: 0.18, heightFracMax: 0.3 },
     // Parapet rim around the roof edge on mid/high buildings.
-    parapet: { minHeight: 14, chance: 0.4, height: 0.5, thickness: 0.25 },
+    // Round-5: chance raised 0.4 -> 0.55 so more roofs read in profile.
+    parapet: { minHeight: 14, chance: 0.55, height: 0.5, thickness: 0.25 },
     // Ground + sidewalk procedural texture tiling.
     groundTex: { repeat: 9, patchCount: 90 },
     sidewalkTex: { repeat: 24 },
     // Sunset sun glow sprite (toward the sun light direction).
     sun: { glowScale: 300, glowColor: 0xff9a3c, discScale: 90, x: 520, y: 110, z: 280 },
+  },
+
+  // ---- Round-5 polish (Lane A): dramatic sunset sky + recessed windows ----
+  // world.js / render.js read this block; the plain CONFIG.lighting and
+  // CONFIG.colors defaults above mirror it so main.js (which reads those
+  // directly) picks the sunset up with no change.
+  round5: {
+    exposure: 1.12, // render.js tone-mapping exposure (was 1.05)
+    // Multi-stop sunset gradient (zenith -> horizon). paintSky(top,
+    // horizon) uses these mids unless the caller passes its own.
+    sky: {
+      mids: [
+        { stop: 0.30, hex: 0x7a2d6e }, // magenta
+        { stop: 0.52, hex: 0xc13a5e }, // rose
+        { stop: 0.72, hex: 0xff7a2a }, // deep orange band
+        { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
+      ],
+    },
+    // Sun sprites: low, big and warm, aligned with the low sun light.
+    sun: {
+      x: 730, y: 215, z: 375,
+      glowScale: 430, glowColor: 0xff8a2a,
+      discScale: 150, discColor: 0xfff0b0,
+      haloScale: 700, haloOpacity: 0.35,
+    },
+    lighting: {
+      sunOffset: [165, 50, 85], // ~14° elevation, long warm shadows
+      sunColor: 0xffb36b,
+      sunIntensity: 3.1,
+      hemiSky: 0xffb080,
+      hemiGround: 0x7a5a40,
+      hemiIntensity: 0.7,
+      fog: 0xd96a35, fogNear: 260, fogFar: 900,
+      background: 0xff8a3c, // warm horizon orange
+    },
+    // Clouds: warm tints (pink / orange / cream) with a slight warm
+    // emissive so shadowed sides never go grey.
+    clouds: {
+      tints: [0xffc0a0, 0xffd9b0, 0xffe8c8],
+      emissiveIntensity: 0.3,
+    },
+    // Real recessed geometry windows (InstancedMesh, see world.js).
+    geometryWindows: {
+      buildingChance: 0.15, // low-rise / non-downtown buildings
+      downtownChance: 0.35, // downtown or height >= tallPreferHeight
+      tallPreferHeight: 20,
+      minFaceWidth: 18, // faces narrower than this get no geometry windows
+      colSpacing: 6, // metres between window columns
+      floorSpacing: 3.2, // metres between window floors
+      groundFloorHeight: 3.2, // shopfront zone — no geometry windows
+      windowW: 1.7,
+      windowH: 2.0,
+      frameProtrude: 0.14, // frame outer face stands this far off the wall
+      glassOffset: 0.03, // glass pane centre stands this far off the wall
+      // Per-floor lit ratios (one picked per floor, so floors cluster
+      // mostly-lit or mostly-dark); mean ~0.31 lit overall.
+      floorLitRatios: [0.05, 0.2, 0.4, 0.6],
+      awningChance: 0.3, // upper floors only (floor index >= 2)
+    },
   },
 
   // ---- Player movement (metres / second) ----
