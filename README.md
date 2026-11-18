@@ -189,6 +189,21 @@ dark bed-liner floor and a tailgate seam so it reads as a pickup (cab
 + open bed) from the chase view. Pressing L always frames the nearest
 landmark; the tour bus now stops at the Pyramid too; saves are v6.
 
+## Round 8 — sculpted car bodies, stepped-tower skyline, V camera distance
+
+Round 8 closes the gaps round 7 left open: car bodies are sculpted
+(fender flares, arch liners, a glasshouse and crowned rooflines, with a
+vehicle fill light and a paint boost so the sculpt reads at dusk); the
+skyline gains a second building archetype — stepped (ziggurat) towers
+on downtown blocks — plus varied rooflines on ordinary towers
+(pitched, mansard, crowned and stepped-parapet), and the district
+label near a stepped tower reads "Stepped Quarter"; pressing V cycles
+the chase-camera distance (near / mid / far, default mid) with a HUD
+toast; police rams now spark at the bumper contact point; road/wind
+noise scales with speed under the engine hum; saves are v7 (the
+chase-camera distance is persisted, v6 and older saves still load and
+default to mid).
+
 ## Credits
 
 Built for the make.fun gta6-01 bounty. Solmar Bay is an original work:

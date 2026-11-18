@@ -6,7 +6,7 @@
 // instead of crashing on an old save.
 
 export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 // Version 1, 2 and 3 saves are still readable: they migrate with the v2
 // fields (playTimeSeconds, timesPlayed), the v3 fields (totalEarned,
 // bestTimes, missionsCompletedCount, gamesPlayed), the v4 field
@@ -14,9 +14,12 @@ export const SAVE_VERSION = 6;
 // Round 7 (v6): landmarksVisited now covers three landmarks — the
 // Solmar Pyramid joins the Spire and the Bridge — so a v6 save records
 // Pyramid visits; older saves migrate with the new landmark unvisited.
+// Round 8 (v7): chaseDistanceLevel (0 near / 1 mid / 2 far) is
+// persisted; v6 and older saves load with the default 'mid' (1), so
+// every earlier save still works unchanged.
 // MissionsCompletedCount is recomputed from the completed list when it is
 // missing, so even a v1 save reports the right count on load.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6];
+export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6, 7];
 
 function safeParse(text) {
   try {
@@ -108,6 +111,12 @@ export class SaveSystem {
         : (state.landmarksVisited instanceof Set ? [...state.landmarksVisited] : []),
       // Round 4: best clear time per mission (seconds, one decimal).
       bestTimes,
+      // Round 8 (v7): the chase-camera distance preference (0 near /
+      // 1 mid / 2 far) — read from the state or the live player, so the
+      // V-key choice survives a reload. Clamped, never a balance field.
+      chaseDistanceLevel: Math.max(0, Math.min(2, Math.round(
+        state.chaseDistanceLevel ?? state.player?.chaseDistanceLevel ?? 1,
+      ))),
     };
     try {
       store.setItem(this.key, JSON.stringify(data));
@@ -130,7 +139,7 @@ export class SaveSystem {
     }
     if (!raw) return null;
     const data = safeParse(raw);
-    // Accept v1–v5; older saves migrate with the new fields as 0 / [].
+    // Accept v1–v6; older saves migrate with the new fields as 0 / [].
     if (!isPlainObject(data) || !SUPPORTED_SAVE_VERSIONS.includes(data.version)) return null;
     return {
       version: data.version,
@@ -163,6 +172,11 @@ export class SaveSystem {
       landmarksVisited: Array.isArray(data.landmarksVisited) ? [...data.landmarksVisited] : [],
       // Round 4: best times are new in v3 — v1/v2 saves simply have none.
       bestTimes: isPlainObject(data.bestTimes) ? { ...data.bestTimes } : {},
+      // Round 8 (v7): chase-camera distance — v6 and older saves have
+      // none and migrate to the default 'mid' (1).
+      chaseDistanceLevel: typeof data.chaseDistanceLevel === 'number'
+        ? Math.max(0, Math.min(2, Math.round(data.chaseDistanceLevel)))
+        : 1,
     };
   }
 
@@ -180,6 +194,20 @@ export class SaveSystem {
       bestTimesCount: Object.keys(data.bestTimes || {}).length,
       // Round 6: landmarks visited on this profile.
       landmarksVisited: (data.landmarksVisited || []).length,
+      // Round 8: chase-camera distance preference (v7; default 'mid').
+      chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
+    };
+  }
+
+  // Round-8 re-touch: debug helper — the save version and the persisted
+  // chase level in one probe (null when there is no valid save).
+  getSaveInfo() {
+    const data = this.load();
+    if (!data) return null;
+    return {
+      version: data.version,
+      chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
+      savedAt: data.savedAt || null,
     };
   }
 
@@ -210,6 +238,13 @@ export class SaveSystem {
       if (typeof saveData.heading === 'number') player.heading = saveData.heading;
     }
     if (typeof systems.setMoney === 'function') systems.setMoney(saveData.money);
+    // Round 8 (v7): restore the chase-camera distance preference on
+    // the live player when the save carries one (v6 and older saves
+    // carry none and keep the default 'mid').
+    if (player && typeof saveData.chaseDistanceLevel === 'number'
+      && typeof player.setChaseDistance === 'function') {
+      player.setChaseDistance(saveData.chaseDistanceLevel);
+    }
     if (systems.missions?.fromSaveData) {
       const toStart = systems.missions.fromSaveData({
         completed: saveData.completedMissions,
@@ -242,6 +277,7 @@ const defaultSystem = new SaveSystem();
 export function saveGame(state) { return defaultSystem.save(state); }
 export function loadGame() { return defaultSystem.load(); }
 export function hasSaveGame() { return defaultSystem.hasSave(); }
+export function getSaveInfo() { return defaultSystem.getSaveInfo(); }
 export function clearSaveGame() { return defaultSystem.clearSave(); }
 
 export default SaveSystem;

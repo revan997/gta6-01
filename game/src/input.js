@@ -15,6 +15,12 @@ let listenersAttached = false;
 function onKeyDown(event) {
   if (!heldKeys.has(event.code)) pressedKeys.add(event.code);
   heldKeys.add(event.code);
+  // Round-8: V cycles the chase-camera distance (near / mid / far).
+  // Pressed-edge only (event.repeat is filtered by the game loop's
+  // keydown handler, but this singleton also guards it): holding V
+  // must not spin through the levels. The level is read by main.js
+  // via input.getChaseDistanceLevel() / player.setChaseDistance().
+  if (event.code === 'KeyV' && !event.repeat) cycleChaseDistance();
   // Keep the page from scrolling on game keys.
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(event.code)) {
     event.preventDefault();
@@ -39,6 +45,49 @@ let wheelDelta = 0;
 function onWheel(event) {
   wheelDelta += event.deltaY || 0;
 }
+
+// Round-8: chase-camera distance level (0 near / 1 mid / 2 far), cycled
+// by the V key. The level lives here so the game loop can read it every
+// frame without owning input state; player.js setChaseDistance() is the
+// same three levels expressed as distance/height multipliers, and
+// main.js applies whichever side it reads (input.chaseDistanceLevel).
+// In-game help line (the controls hint in index.html is owned by
+// another lane — the coordinator adds "V camera distance" there; this
+// export is the same text, kept next to the binding so it cannot drift):
+//   V — chase camera near / mid / far
+export const CHASE_DISTANCE_HELP = 'V — chase camera near / mid / far';
+let chaseDistanceLevel = 1; // 'mid', matching player.js DEFAULT_CHASE_DISTANCE_LEVEL
+function cycleChaseDistance() {
+  chaseDistanceLevel = (chaseDistanceLevel + 1) % 3;
+  notifyChaseDistanceListeners();
+  return chaseDistanceLevel;
+}
+// Round-8 re-touch: chase-distance listeners — main.js registers one to
+// show the level name in the HUD when V cycles. Each listener is called
+// with the new level name ('near' / 'mid' / 'far'). Returns an
+// unsubscribe function; a throwing listener is swallowed so a HUD bug
+// can never break input. Only the V cycle notifies — programmatic
+// setChaseDistanceLevel() (load / restore) stays silent.
+const chaseDistanceListeners = new Set();
+function setChaseDistanceListener(fn) {
+  if (typeof fn !== 'function') return null;
+  chaseDistanceListeners.add(fn);
+  return () => { chaseDistanceListeners.delete(fn); };
+}
+function notifyChaseDistanceListeners() {
+  const name = CHASE_DISTANCE_NAMES[chaseDistanceLevel];
+  for (const fn of [...chaseDistanceListeners]) {
+    try { fn(name); } catch (_) { /* listener errors must not break input */ }
+  }
+}
+function getChaseDistanceLevel() { return chaseDistanceLevel; }
+function setChaseDistanceLevel(level) {
+  const n = Math.round(level);
+  if (n >= 0 && n <= 2) chaseDistanceLevel = n;
+  return chaseDistanceLevel;
+}
+const CHASE_DISTANCE_NAMES = ['near', 'mid', 'far'];
+function getChaseDistanceName() { return CHASE_DISTANCE_NAMES[chaseDistanceLevel]; }
 
 function onPointerLockChange() {
   pointerLocked = document.pointerLockElement === attachedCanvas;
@@ -178,7 +227,7 @@ function consumePressedCode(code) {
   return false;
 }
 
-export { consumePressed };
+export { consumePressed, setChaseDistanceListener };
 
 export const input = {
   attach,
@@ -194,6 +243,15 @@ export const input = {
   consumeMouseDelta,
   consumeWheelDelta,
   consumePressed,
+  cycleChaseDistance,
+  getChaseDistanceLevel,
+  setChaseDistanceLevel,
+  getChaseDistanceName,
+  setChaseDistanceListener,
+  chaseDistanceHelp: CHASE_DISTANCE_HELP,
+  get chaseDistanceLevel() {
+    return chaseDistanceLevel;
+  },
   get pointerLocked() {
     return pointerLocked;
   },

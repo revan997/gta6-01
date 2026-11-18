@@ -307,6 +307,44 @@ export const CONFIG = {
     exposure: 1.28,
   },
 
+  // ---- Round-8 polish (Lane B): skyline diversity ----
+  // A second building archetype (stepped / ziggurat tower) on downtown
+  // blocks, plus varied rooflines on ordinary box towers, so the
+  // skyline stops reading as flat-roofed boxes + 3 landmarks.
+  // world.js reads this block; round4b / round7 are untouched.
+  round8: {
+    steppedTower: {
+      chance: 0.5, // weighted pick vs a plain box tower, downtown only
+      minHeight: 34, // only tall downtown towers step up
+      tierFracs: [0.55, 0.28, 0.17], // base / middle / top tier heights
+      tierShrinkMin: 0.68, // middle tier width as a fraction of the base
+      tierShrinkMax: 0.78,
+      topShrinkMin: 0.62, // top tier width as a fraction of the middle
+      topShrinkMax: 0.72,
+      crownHeight: 1.6, // lantern crown box on the top tier
+      // Round-8 re-touch: crown beacon — one small warm lamp on top of
+      // the lantern crown per stepped tower, so the ziggurats read at
+      // dusk. world.js reads these; the sizes are never hardcoded there.
+      beacon: { height: 0.7, size: 0.55 },
+    },
+    roofline: {
+      pitchedChance: 0.75, // raised from round4b 0.5 — more pyramid roofs
+      pitchedMaxHeight: 18, // raised from round4b 14: the low-building
+      // population is small in this seed's draw, so 14 capped pitched
+      // roofs at ~5; 18 lets more low roofs read as pyramids
+      crownChance: 0.32, // rooftop crown box + lantern, tall towers
+      crownMinHeight: 20,
+      crownHeight: 1.8, // crown box height on ordinary towers
+      mansardChance: 0.3, // flat-topped mansard frustum, mid-rise
+      mansardMinHeight: 14,
+      mansardMaxHeight: 30,
+      steppedParapetChance: 0.35, // share of parapets built stepped
+      parapetHeightMin: 0.5, // parapet height now varies per building
+      parapetHeightMax: 1.4,
+    },
+    steppedQuarterRadius: 45, // metres from a stepped tower: "Stepped Quarter"
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

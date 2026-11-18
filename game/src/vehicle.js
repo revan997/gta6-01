@@ -67,6 +67,21 @@ function buildCarMesh(model, color) {
   let sculptHood = false;
   let sculptWindshield = false;
   let sculptHubCaps = 0;
+  // Round-8 sculpt counters: fender flares, arch liners and glasshouse
+  // panels, counted honestly from the built group and reported via
+  // car.sculpt (traffic.js getSculptedCarsReport reads them).
+  let sculptFenders = 0;
+  let sculptArchLiners = 0;
+  let sculptGlasshouse = 0;
+  // Round-8: roof-crown lift per model — the curved crown rises this far
+  // above the flat roofline, so anything mounted on the roof (taxi sign,
+  // roof rack, roof vent) must sit this much higher or it clips the
+  // crown. These numbers are the single source of truth: the domes
+  // below scale by crownLift and report it as sculpt.crownH.
+  const CROWN_LIFT = { coupe: 0.15, sedan: 0.15, taxi: 0.15, sports: 0.15, pickup: 0.15, van: 0.12, bus: 0 };
+  const crownLift = CROWN_LIFT[model] || 0;
+  let sculptRoofCrown = false;
+  let sculptCrownH = 0;
   const matBody = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.45 });
   const matGlass = new THREE.MeshStandardMaterial({ color: 0x1a2a38, roughness: 0.15, metalness: 0.6 });
   const matTrim = new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.7 });
@@ -91,11 +106,41 @@ function buildCarMesh(model, color) {
     return mesh;
   }
 
+  // Round-8: a box rotated around X and/or Z — the side-glass taper
+  // primitive. rotZ leans the top edge sideways (inward on the side it
+  // sits on), so the glasshouse narrows toward the roof instead of
+  // standing as a vertical slab.
+  function tiltedBox(material, w, h, d, x, y, z, rotX, rotZ) {
+    const mesh = box(material, w, h, d, x, y, z);
+    if (rotX) mesh.rotation.x = rotX;
+    if (rotZ) mesh.rotation.z = rotZ;
+    return mesh;
+  }
+
+  // Round-8: a shallow half-dome — the curved-form primitive. A unit
+  // hemisphere scaled flat, used for fender flares (over a wheel) and
+  // the roof crown (over the cabin). `geo` is shared across the meshes
+  // that use it, so one geometry serves all four fenders / the crown.
+  function dome(geo, material, sx, sy, sz, x, y, z) {
+    const mesh = new THREE.Mesh(geo, material);
+    mesh.scale.set(sx, sy, sz);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    group.add(mesh);
+    return mesh;
+  }
+
   const L = shape.length;
   const W = shape.width;
   // Round-5 planted stance: the wheel tops overlap the body bottom by
   // `stance`, so the car sits ON its wheels instead of floating above them.
   const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
+  // Round-8: the roofline the police light bar and the roof crown sit
+  // on — the top of the cabin glass for cars with a cabin, the body top
+  // for the van. The bus keeps its flat roof (crownH 0, no crown).
+  const roofTopY = model === 'van'
+    ? bodyY + shape.bodyH / 2 + 0.02
+    : bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
 
   // Main body. Pickup gets a bed instead of a full rear cabin.
   box(matBody, W, shape.bodyH, L, 0, bodyY, 0);
@@ -139,11 +184,13 @@ function buildCarMesh(model, color) {
     box(matTrim, W - 0.3, 0.16, 0.3, 0, bodyY - shape.bodyH / 2 + 0.08, -L / 2 + 0.15);
   }
   // Round-4: roof racks on the workhorses (pickup cabin roof, van roof
-  // centre — clear of the van's front/rear glass boxes).
+  // centre — clear of the van's front/rear glass boxes). Round-8: the
+  // rails sit on the crown lift, so they clear the curved roof crown
+  // instead of clipping it (pickup +0.15, van +0.12).
   if (model === 'pickup' || model === 'van') {
     const rackY = model === 'pickup'
-      ? bodyY + shape.bodyH / 2 + shape.cabinH + 0.06
-      : bodyY + shape.bodyH / 2 + 0.12;
+      ? bodyY + shape.bodyH / 2 + shape.cabinH + 0.06 + crownLift
+      : bodyY + shape.bodyH / 2 + 0.12 + crownLift;
     const rackL = model === 'pickup' ? shape.cabinL * 0.9 : 1.8;
     const rackZ = model === 'pickup' ? shape.cabinZ : 0;
     for (const sx of [-1, 1]) box(matTrim, 0.07, 0.07, rackL, sx * (W / 2 - 0.35), rackY, rackZ);
@@ -164,7 +211,10 @@ function buildCarMesh(model, color) {
       group.add(band);
     }
     const signMat = new THREE.MeshStandardMaterial({ map: glow.taxiSignTex, roughness: 0.6 });
-    box(signMat, 0.75, 0.24, 0.32, 0, bodyY + shape.bodyH / 2 + shape.cabinH + 0.08, shape.cabinZ);
+    // Round-8 fix: the sign seats on the curved roof crown, not the flat
+    // roof — raised by crownLift (0.15) so its base sits exactly on the
+    // crown top (cabin top + 0.11) instead of clipping into the dome.
+    box(signMat, 0.75, 0.24, 0.32, 0, bodyY + shape.bodyH / 2 + shape.cabinH + 0.08 + crownLift, shape.cabinZ);
   }
   if (model === 'bus') {
     const cabY = bodyY + shape.bodyH / 2 + shape.cabinH / 2 - 0.04;
@@ -186,6 +236,17 @@ function buildCarMesh(model, color) {
     sculptWindshield = true;
     // Round-5: roof AC pod — the bus roof was a bare glass slab.
     box(matTrim, 1.6, 0.22, 3.2, 0, bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.11, 0);
+    // Round-8: the bus stays the boxiest model, but its front is now
+    // shaped — a sloped nose panel under the windshield, nose-down, so
+    // the front reads as a face instead of a vertical wall — and the
+    // long glass band tapers inward toward the roof on both sides.
+    angledBox(matBody, W - 0.3, 0.5, 0.1, 0, bodyY + 0.1,
+      shape.cabinZ + shape.cabinL / 2 + 0.02, 0.22);
+    for (const sx of [-1, 1]) {
+      tiltedBox(matGlass, 0.05, shape.cabinH * 0.62, 6.5,
+        sx * (W / 2 - 0.06), cabY, 0, 0, sx * 0.08);
+      sculptGlasshouse += 1;
+    }
   }
   // Round-5: distinct cab/hood for the low cars — a body-coloured hood
   // panel ahead of the cabin (slightly below the cabin base), a wider
@@ -208,14 +269,39 @@ function buildCarMesh(model, color) {
     angledBox(matGlass, W - 0.34, shape.cabinH * 0.88, 0.07, 0,
       bodyY + shape.bodyH / 2 + shape.cabinH * 0.38, cabFront + 0.02, SCULPT.windshieldSlope);
     sculptWindshield = true;
-    box(matBody, W - 0.3, 0.07, shape.cabinL * (model === 'coupe' || model === 'sports' ? 0.55 : 0.62),
-      0, roofY, shape.cabinZ + 0.05);
+    // Round-8: the flat roof panel is now a curved crown — a shallow
+    // half-dome over the cabin, so the roofline arcs instead of slabbing
+    // across the glasshouse. Same footprint as the old panel (net 0
+    // meshes); the crown rises 0.15 above the roof line, which is why
+    // the police light bar (vehicle.js attachPoliceLightBar) seats on
+    // sculpt.crownH instead of the flat roof.
+    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      matBody, (W - 0.3) / 2, crownLift, shape.cabinL * (model === 'coupe' || model === 'sports' ? 0.3 : 0.34),
+      0, roofY - 0.035, shape.cabinZ + 0.05);
+    sculptRoofCrown = true;
+    sculptCrownH = crownLift;
+    // Round-8: tapered side glass — a thin glass panel on each cabin
+    // side, leaning inward toward the roof, so the glasshouse narrows
+    // toward the crown instead of standing as a vertical glass slab.
+    // The panels sit just proud of the cabin glass box sides.
+    const cabinGlassY = bodyY + shape.bodyH / 2 + shape.cabinH / 2 - 0.04;
+    for (const sx of [-1, 1]) {
+      tiltedBox(matGlass, 0.05, shape.cabinH * 0.62, shape.cabinL * 0.72,
+        sx * (W / 2 - 0.13), cabinGlassY, shape.cabinZ, 0, sx * 0.14);
+      sculptGlasshouse += 1;
+    }
     if (model === 'sedan' || model === 'taxi') {
       // Short trunk deck behind the cabin, sloping gently down to the rear.
       const cabRear = shape.cabinZ - shape.cabinL / 2;
       const trunkL = Math.max(0.5, cabRear + L / 2 - 0.05);
       angledBox(matBody, W - 0.26, 0.08, trunkL, 0, bodyY + shape.bodyH / 2 - 0.02,
         (cabRear - L / 2) / 2, SCULPT.trunkSlope);
+      // Round-8: sloped rear glass on the sedan/taxi too (the coupe and
+      // sports already had a fastback), so the glasshouse closes with
+      // glass at the back, not a flat glass-box rear face.
+      angledBox(matGlass, W - 0.4, 0.5, 0.07, 0,
+        bodyY + shape.bodyH / 2 + shape.cabinH * 0.32, cabRear - 0.02, SCULPT.rearGlassSlope);
+      sculptGlasshouse += 1;
     }
     if (model === 'coupe' || model === 'sports') {
       // Fastback rear glass: slopes down from the roof toward the tail,
@@ -223,6 +309,7 @@ function buildCarMesh(model, color) {
       const cabRear = shape.cabinZ - shape.cabinL / 2;
       angledBox(matGlass, W - 0.4, 0.55, 0.07, 0,
         bodyY + shape.bodyH / 2 + shape.cabinH * 0.32, cabRear - 0.02, SCULPT.rearGlassSlope);
+      sculptGlasshouse += 1;
     }
   }
   // Round-5: the van gets a real nose instead of a single tall box — a
@@ -237,7 +324,24 @@ function buildCarMesh(model, color) {
     angledBox(matBody, W - 0.2, 0.1, 0.9, 0, bodyY + shape.bodyH / 2 - 0.18, L / 2 - 0.45, SCULPT.vanHoodSlope);
     sculptHood = true;
     box(matBody, W - 0.2, 0.24, 0.8, 0, bodyY - shape.bodyH / 2 + 0.18, L / 2 - 0.35);
-    box(matTrim, 0.55, 0.12, 0.5, 0, bodyY + shape.bodyH / 2 + 0.06, -1.15);
+    // Round-8 fix: the roof vent sat buried in the van's roof crown
+    // (dome top +0.12 over the roof) — raised by crownLift so its base
+    // sits on the crown top instead of clipping into the dome.
+    box(matTrim, 0.55, 0.12, 0.5, 0, bodyY + shape.bodyH / 2 + 0.06 + crownLift, -1.15);
+    // Round-8: tapered side glass along the van's flanks (leaning
+    // inward toward the roof) and a shallow curved crown over the cargo
+    // roof behind the front glass, so the van reads as a shaped van
+    // instead of one tall box. The crown sits low (0.12) so the roof
+    // rack rails still sit on top of it.
+    for (const sx of [-1, 1]) {
+      tiltedBox(matGlass, 0.05, 0.5, 2.2, sx * (W / 2 - 0.04),
+        bodyY + shape.bodyH / 2 + 0.22, -0.3, 0, sx * 0.07);
+      sculptGlasshouse += 1;
+    }
+    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      matBody, (W - 0.2) / 2, crownLift, 1.2, 0, bodyY + shape.bodyH / 2, -0.6);
+    sculptRoofCrown = true;
+    sculptCrownH = crownLift;
   }
   // Round-6: pickup cab glasshouse — sloped hood ahead of the cab, a
   // sloped windshield at the cab front, and a body-coloured roof panel
@@ -251,8 +355,20 @@ function buildCarMesh(model, color) {
     angledBox(matGlass, W - 0.34, shape.cabinH * 0.88, 0.07, 0,
       bodyY + shape.bodyH / 2 + shape.cabinH * 0.38, cabFront + 0.02, SCULPT.windshieldSlope);
     sculptWindshield = true;
-    box(matBody, W - 0.32, 0.07, shape.cabinL * 0.72, 0,
-      bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.035, shape.cabinZ);
+    // Round-8: curved cab roof crown (replaces the flat cab roof panel,
+    // net 0 meshes) plus tapered side glass on the cab, so the red
+    // pickup still reads cab + open bed but the cab itself is shaped.
+    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      matBody, (W - 0.32) / 2, crownLift, shape.cabinL * 0.36, 0,
+      bodyY + shape.bodyH / 2 + shape.cabinH - 0.04, shape.cabinZ);
+    sculptRoofCrown = true;
+    sculptCrownH = crownLift;
+    for (const sx of [-1, 1]) {
+      tiltedBox(matGlass, 0.05, shape.cabinH * 0.62, shape.cabinL * 0.72,
+        sx * (W / 2 - 0.13), bodyY + shape.bodyH / 2 + shape.cabinH / 2,
+        shape.cabinZ, 0, sx * 0.14);
+      sculptGlasshouse += 1;
+    }
   }
   // Round-5: side skirts on every model (the sports car already had them
   // in round 4) — thin dark boxes along the lower body sides between the
@@ -347,23 +463,52 @@ function buildCarMesh(model, color) {
     sculptHubCaps += 1;
     wheels.push(wheel);
   }
-  // Round-5: wheel arches — a dark fender box over each wheel, just
-  // above the wheel top, so the wheels read as tucked into arches
-  // instead of bolted onto a flat box side.
+  // Round-8: wheel arches — the round-5 flat fender boxes are replaced
+  // by ROUNDED fender flares (flattened half-domes in body colour, one
+  // shared geometry per car, arched over each wheel top) plus dark arch
+  // liners: thin dark discs set just inside each wheel, slightly larger
+  // than the tyre, so the wheel sits IN a recessed well instead of
+  // beside a flat body-colour wall. The round-5 planted stance is
+  // untouched — the wheel tops still overlap the body bottom by `stance`.
+  // Net mesh delta vs round 6: +4 liners per 4-wheel car (+6 for the
+  // 6-wheel bus); the domes replace the old arch boxes 1-for-1.
+  const fenderGeo = new THREE.SphereGeometry(shape.wheels * 1.28, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
+  const linerGeo = new THREE.CylinderGeometry(shape.wheels * 1.18, shape.wheels * 1.18, 0.06, 14);
+  linerGeo.rotateZ(Math.PI / 2);
   for (const [wx, wz] of wheelSpots) {
-    box(matTrim, 0.36, 0.16, 1.0, wx, shape.wheels * 2 + 0.05, wz);
+    const side = wx < 0 ? -1 : 1;
+    dome(fenderGeo, matBody, 0.42, 0.72, 1.0, side * (W / 2 - 0.08), wy, wz);
+    sculptFenders += 1;
+    const liner = new THREE.Mesh(linerGeo, matTrim);
+    liner.position.set(side * (W / 2 - 0.17), wy, wz);
+    group.add(liner);
+    sculptArchLiners += 1;
   }
 
   // Round-6 sculpt summary, counted honestly from the built group:
   // `angled` counts every mesh with a non-zero X/Z rotation (sloped
   // hood, windshield, fastback/trunk, van shield). The stance probe's
   // children[0] body box is untouched — it is still the first mesh.
+  // Round-8 adds the fender / arch-liner / glasshouse counts, the roof
+  // crown flag + height, and the roofline Y the police light bar seats
+  // on — all counted from the meshes built above, never guessed.
   const sculpt = {
     angled: group.children.filter((m) => m.rotation.x !== 0 || m.rotation.z !== 0).length,
     hood: sculptHood,
     windshield: sculptWindshield,
     hubCaps: sculptHubCaps,
     silhouette: model,
+    fenders: sculptFenders,
+    archLiners: sculptArchLiners,
+    glasshouse: sculptGlasshouse,
+    roofCrown: sculptRoofCrown,
+    crownH: sculptCrownH,
+    roofY: roofTopY,
+    // Round-8: front-bumper contact point, in car-local space — combat.js
+    // ramming sparks use this (half the length + the bumper lip, at
+    // bumper height) instead of the car centre.
+    bumperFrontZ: L / 2 + 0.12,
+    bumperY: bodyY - 0.1,
   };
   return { group, wheels, shape, sculpt, tailMat: matTail, tailGlows: [tailGlowL, tailGlowR], headMat: matHead, headGlows, headGlowSprites };
 }
@@ -526,6 +671,14 @@ export function attachPoliceLightBar(car) {
   // on the actual roof (0.05–0.10 lower than the old formula would put it).
   const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
   const roofY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
+  // Round-8: the bar seats on the sculpted roofline — on top of the
+  // curved roof crown when the car has one (sedan interceptor: crownH
+  // 0.15), not on the flat roof the round-5 formula assumed. The crown
+  // lift comes from car.sculpt so the bar can never float above or sink
+  // into the crown; police.js seatPoliceLightBar() re-asserts the same
+  // seats every frame until the bar exists.
+  const crownLift = (car.sculpt && car.sculpt.roofCrown) ? (car.sculpt.crownH || 0.15) : 0;
+  const barY = roofY + crownLift;
   const matBase = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.6 });
   const matStripe = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.5 });
   // Round-5 dusk: the bar lamps run brighter so they read against the
@@ -543,15 +696,18 @@ export function attachPoliceLightBar(car) {
   }
 
   // Bar base + one red (driver side) and one blue (passenger side) lamp.
-  add(matBase, 0.95, 0.08, 0.42, 0, roofY + 0.02, shape.cabinZ);
-  add(matRed, 0.42, 0.13, 0.32, -0.25, roofY + 0.1, shape.cabinZ);
-  add(matBlue, 0.42, 0.13, 0.32, 0.25, roofY + 0.1, shape.cabinZ);
+  // Round-8: every piece sits on barY (roof + crown lift) instead of
+  // the flat roofY, and the meshes are kept on the lightBar record so
+  // police.js can re-seat them on the roofline.
+  const barBase = add(matBase, 0.95, 0.08, 0.42, 0, barY + 0.02, shape.cabinZ);
+  const redLamp = add(matRed, 0.42, 0.13, 0.32, -0.25, barY + 0.1, shape.cabinZ);
+  const blueLamp = add(matBlue, 0.42, 0.13, 0.32, 0.25, barY + 0.1, shape.cabinZ);
   // Round-5: glow sprites over the lamps (phase 0: red on, blue dim).
   const glow = glowTextures();
   function barGlow(tex, x, opacity) {
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity });
     const sprite = new THREE.Sprite(mat);
-    sprite.position.set(x, roofY + 0.14, shape.cabinZ);
+    sprite.position.set(x, barY + 0.14, shape.cabinZ);
     sprite.scale.setScalar(1.1);
     car.group.add(sprite);
     return sprite;
@@ -566,6 +722,10 @@ export function attachPoliceLightBar(car) {
     red: matRed, blue: matBlue,
     redGlow: redGlowSprite.material, blueGlow: blueGlowSprite.material,
     redGlowSprite, blueGlowSprite,
+    // Round-8: the bar meshes + the roofline they seat on, so police.js
+    // seatPoliceLightBar() can re-seat the bar on the crowned roof.
+    base: barBase, redLamp, blueLamp,
+    roofY, crownLift, barY, cabinZ: shape.cabinZ,
   };
   return car.lightBar;
 }

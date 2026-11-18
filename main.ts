@@ -67,6 +67,29 @@ if (!existsSync(gameFavicon)) {
   console.log(`sunset palette: skyTop #${cfg.colors.skyTop.toString(16).padStart(6, '0')} horizon #${cfg.colors.skyHorizon.toString(16).padStart(6, '0')} (round 7 burnt sienna)`);
   console.log(`landmarks: Solmar Spire at (${cfg.round6.landmarks.spire.x}, ${cfg.round6.landmarks.spire.z}), ${cfg.round6.landmarks.spire.height} m; Marina Bridge x ${cfg.round6.landmarks.bridge.x0}..${cfg.round6.landmarks.bridge.x1} at z ${cfg.round6.landmarks.bridge.z}; Solmar Pyramid at (${cfg.round7.landmarks.pyramid.x}, ${cfg.round7.landmarks.pyramid.z}), ${cfg.round7.landmarks.pyramid.height} m`);
 }
+// Round 8: the stepped-tower skyline must be present — a second
+// building archetype (stepped / ziggurat towers) plus varied rooflines
+// on ordinary towers. A copy that lost CONFIG.round8 would ship the
+// round-7 skyline of flat-roofed boxes + 3 landmarks. Fail loudly here
+// instead of at the intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const r8 = cfg?.round8;
+  const r8Ok = r8?.steppedTower
+    && typeof r8.steppedTower.chance === 'number'
+    && typeof r8.steppedTower.minHeight === 'number'
+    && Array.isArray(r8.steppedTower.tierFracs) && r8.steppedTower.tierFracs.length >= 3
+    && r8?.roofline
+    && typeof r8.roofline.pitchedChance === 'number'
+    && typeof r8.roofline.mansardChance === 'number'
+    && typeof r8.roofline.steppedParapetChance === 'number'
+    && typeof r8.steppedQuarterRadius === 'number';
+  if (!r8Ok) {
+    throw new Error('missing input: CONFIG.round8 stepped towers / rooflines not found in game/src/config.js');
+  }
+  console.log(`round 8: stepped towers (chance ${r8.steppedTower.chance}, minHeight ${r8.steppedTower.minHeight} m, ${r8.steppedTower.tierFracs.length} tiers) + rooflines (pitched ${r8.roofline.pitchedChance}, mansard ${r8.roofline.mansardChance}, stepped parapet ${r8.roofline.steppedParapetChance}); stepped quarter radius ${r8.steppedQuarterRadius} m`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

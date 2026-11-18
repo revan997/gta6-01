@@ -109,6 +109,51 @@ export class CombatSystem {
     return impact;
   }
 
+  // Round-8: the ramming impact point — where a car-to-car ram actually
+  // makes contact, for the spark flash. `attacker` is the ramming car
+  // (a Lane A car object: position, heading, length, sculpt). The
+  // contact point is the attacker's FRONT BUMPER, not its centre: the
+  // sculpted body bounds (sculpt.bumperFrontZ / bumperY, half the car
+  // length plus the bumper lip, at bumper height) projected forward
+  // from the attacker's position along its heading. When a `target` car
+  // is given, the point is pulled back onto the segment between the
+  // bumper and the target's centre, so the sparks never appear past
+  // the car that was hit. Returns { position, timer } and records it
+  // as lastImpact (kind 'ram') so the game loop flashes it like any
+  // other hit — no new render path needed. Pure geometry, no damage.
+  ramImpactPoint(attacker, target = null) {
+    if (!attacker?.position) return null;
+    const heading = attacker.heading || 0;
+    const halfLen = (attacker.length || 4.8) / 2;
+    const reach = attacker.sculpt?.bumperFrontZ ?? (halfLen + 0.12);
+    const y = attacker.sculpt?.bumperY ?? 0.55;
+    let px = attacker.position.x + Math.sin(heading) * reach;
+    let pz = attacker.position.z + Math.cos(heading) * reach;
+    if (target?.position) {
+      // Clamp the spark to the segment bumper -> target centre: if the
+      // target is closer than the bumper reach (overlapping cars), the
+      // spark sits halfway between them instead of past the target.
+      const dx = target.position.x - attacker.position.x;
+      const dz = target.position.z - attacker.position.z;
+      const along = Math.sin(heading) * dx + Math.cos(heading) * dz;
+      const clamped = Math.max(0, Math.min(reach, along));
+      px = attacker.position.x + Math.sin(heading) * clamped;
+      pz = attacker.position.z + Math.cos(heading) * clamped;
+    }
+    return { x: px, y, z: pz };
+  }
+
+  // Record a ramming impact (attacker car rams target car): computes
+  // the bumper contact point, stores it as the last impact with kind
+  // 'ram', and returns it. The caller (police ram / collision in the
+  // game loop) plays the spark from the returned position.
+  recordRamImpact(attacker, target = null) {
+    const position = this.ramImpactPoint(attacker, target);
+    if (!position) return null;
+    this.lastImpact = { position, timer: 0.14, kind: 'ram' };
+    return this.lastImpact;
+  }
+
   // Round-4b combo: consecutive landed hits inside a 2 s window.
   getCombo() { return this.combo; }
 
@@ -374,6 +419,8 @@ export class CombatSystem {
       if (target.kind === 'pedestrian') this.hooks.traffic?.removePedestrian?.(target);
     }
     // Round 3: record the hit point so the game loop can flash it.
+    // Round 8: the kind rides along (punch/shot here, 'ram' from
+    // recordRamImpact) so the flash can colour a ram spark differently.
     if (target?.position) {
       this.lastImpact = {
         position: {
@@ -382,6 +429,7 @@ export class CombatSystem {
           z: target.position.z,
         },
         timer: 0.12,
+        kind,
       };
     }
     this.lastHit = result;

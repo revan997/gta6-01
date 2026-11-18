@@ -130,13 +130,13 @@ const MISSION_DEFS = [
     reward: 1500,
     objectives: [
       { id: 'tail', text: 'Tail the courier from the Palms Hotel — do not get spotted', location: 'palmsHotel', radius: 6, tail: true, duration: 60 },
-      { id: 'report', text: 'The courier stopped at the Lookout — report back to Mama Lou', location: 'mamaLou', radius: 8 },
+      { id: 'report', text: 'The courier stopped at the Lookout — report at the Stepped Quarter plaza', location: 'steppedPlaza', radius: 8 },
     ],
     failText: 'Spotted — the courier burned the route.',
     introCard: 'One courier. One route. One mistake and the whole thing is blown.',
     objectiveFlavour: [
       "Mama Lou: 'Stay back. Stay patient. A shadow does not hurry.'",
-      "Mama Lou: 'The Lookout, was it? Good. Now come home and tell me everything.'",
+      "Mama Lou: 'The Lookout, was it? Good. Meet Priya at the Stepped Quarter plaza and tell her everything.'",
     ],
   },
   {
@@ -186,6 +186,18 @@ export class MissionManager {
   }
 
   _location(world, name) {
+    // Round 8: the stepped-tower plaza is a REAL position from
+    // world.js (world.steppedPlaza, or world.locations.steppedPlaza
+    // wired by main.js) — never a hardcoded guess. When this city
+    // has no stepped tower (an older world build, or standalone),
+    // the rendezvous falls back to Mama Lou's.
+    if (name === 'steppedPlaza') {
+      const plaza = (world && world.steppedPlaza)
+        || (world && world.locations && world.locations.steppedPlaza)
+        || (this.locations && this.locations.steppedPlaza);
+      if (plaza) return plaza;
+      return this._location(world, 'mamaLou');
+    }
     if (world) {
       if (typeof world.getLocation === 'function') {
         const found = world.getLocation(name);
@@ -236,6 +248,13 @@ export class MissionManager {
     };
     this.lastReward = 0;
     this.lastFailedMission = null;
+    // Round-8 fix: a mission that STARTS on a tail objective (Mission 4)
+    // never ran _startTail — it only fired when ADVANCING into one — so
+    // update() read this.current.tailFrom as undefined and crashed on
+    // the first frame. Seed the tail route up front when the first
+    // objective tails. _location() falls back to the default places
+    // when world is undefined, so a save-restore start is safe too.
+    if (def.objectives[0] && def.objectives[0].tail) this._startTail(world);
     if (def.startWanted && systems.police) systems.police.addWanted?.(def.startWanted);
     // Round 4: the intro card rides the start payload, and the first
     // objective's flavour toast rides with it, so the game loop can show
@@ -459,6 +478,10 @@ export class MissionManager {
 
     // --- Tailing objective: follow the courier, stay out of his sight. ---
     if (obj.tail) {
+      // Round-8 fix (belt and braces): if the tail route was never
+      // seeded (e.g. a mission restored mid-tail), initialise it from
+      // the objective's route instead of crashing on undefined tailFrom.
+      if (!this.current.tailFrom || !this.current.tailTo) this._startTail(world);
       // Move the courier slowly along hotel -> lookout.
       this.current.tailProgress = clamp((this.current.tailProgress || 0) + (step * 6) / 200, 0, 1);
       const from = this.current.tailFrom;

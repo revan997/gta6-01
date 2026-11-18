@@ -212,6 +212,17 @@ export function createRenderContext(canvas) {
     CONFIG.lighting.hemiIntensity,
   );
 
+  // Round-8: a cheap vehicle fill light — one dim, shadowless
+  // directional light from the low sun's opposite side (cool, faint),
+  // so car paint and the new fender/glasshouse sculpt keep a readable
+  // edge at dusk instead of going black on the shadow side. One extra
+  // light, no shadows, no per-car cost; main.js aims it at the camera
+  // focus alongside the sun (followSun owns the sun; the fill is fixed
+  // in the same direction family and needs no per-frame work).
+  const vehicleFillLight = new THREE.DirectionalLight(0x8fa8c8, 0.35);
+  vehicleFillLight.position.set(-60, 40, -80);
+  vehicleFillLight.castShadow = false;
+
   function resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -228,7 +239,49 @@ export function createRenderContext(canvas) {
     renderer.setSize(width, height);
   }
 
-  return { renderer, camera, sunLight, hemiLight, resize, setSize };
+  return { renderer, camera, sunLight, hemiLight, vehicleFillLight, resize, setSize };
+}
+
+// Round-8: add the vehicle fill light to a scene in one call — the
+// one-line wiring main.js uses (scene.add is owned by the caller, like
+// sunLight/hemiLight above). Returns the light, or null when no scene
+// is given. Also raises car-paint response at dusk: any material passed
+// in gets envMapIntensity 1.35, so the sculpted paint keeps a warm
+// sheen from the sunset instead of flattening to matte.
+export function addVehicleFillLight(scene) {
+  if (!scene || typeof scene.add !== 'function') return null;
+  const fill = new THREE.DirectionalLight(0x8fa8c8, 0.35);
+  fill.position.set(-60, 40, -80);
+  fill.castShadow = false;
+  scene.add(fill);
+  return fill;
+}
+
+export function boostCarPaint(material) {
+  if (!material || typeof material !== 'object') return material;
+  // envMapIntensity only matters once an env map exists; setting it is
+  // harmless without one and lifts the paint the moment one is added.
+  material.envMapIntensity = 1.35;
+  return material;
+}
+
+// Round-8: boost the paint of every standard material on a car — the
+// wiring that actually calls boostCarPaint(). main.js runs this once
+// per car at spawn (makeCar), so the sculpted fenders / glasshouse /
+// roof crowns keep a warm dusk sheen. Only MeshStandardMaterial is
+// touched (sprites and glow materials are left alone); returns how many
+// materials were boosted, 0 when the car has no mesh group.
+export function boostCarPaintForCar(car) {
+  if (!car?.group || typeof car.group.traverse !== 'function') return 0;
+  let boosted = 0;
+  car.group.traverse((obj) => {
+    const mat = obj?.material;
+    if (mat && mat.isMeshStandardMaterial) {
+      boostCarPaint(mat);
+      boosted += 1;
+    }
+  });
+  return boosted;
 }
 
 export default createRenderContext;

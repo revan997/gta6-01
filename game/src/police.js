@@ -298,6 +298,11 @@ export class PoliceSystem {
     return { x: px + Math.sin(angle) * r, y: 0, z: pz + Math.cos(angle) * r };
   }
 
+  // Round-8: re-seat a police light bar on the sculpted roofline — see
+  // seatPoliceLightBar() below the class. Called from _boostLightBar,
+  // which already runs every update until the bar exists — main.js
+  // attaches the bar after spawn, so the seat lands the first frame
+  // the bar is there.
   // Round-5 dusk: make the light bar read against the sunset by
   // enlarging its glow sprites once the bar exists (main.js attaches the
   // bar after spawn, so this is checked every update until it lands).
@@ -307,6 +312,9 @@ export class PoliceSystem {
   _boostLightBar(car) {
     if (!car || car._duskBarBoosted || !car.group || !car.lightBar) return;
     car._duskBarBoosted = true;
+    // Round-8: seat the bar on the sculpted (crowned) roofline first —
+    // the glow boost below must not run on a bar sunk into the crown.
+    seatPoliceLightBar(car);
     const cfg = CONFIG.round5?.police || {};
     const scale = cfg.lightBarGlowScale ?? 1.35;
     for (const key of ['redGlowSprite', 'blueGlowSprite']) {
@@ -419,6 +427,11 @@ export class PoliceSystem {
         helpers.damagePlayer(4 * step * 10, 'police-ram');
         const pv = player.vehicle || player.car;
         if (pv) pv.speed = (pv.speed || 0) * (1 - 0.6 * step);
+        // Round-8: ram sparks — record the bumper contact point on the
+        // combat system (via the helpers channel main.js wires up), so
+        // the game loop flashes it at the impact point. Guarded so a
+        // missing recordRamImpact can never break the chase.
+        try { helpers.combat?.recordRamImpact?.(car, pv || null); } catch (_) { /* sparks are cosmetic */ }
       }
       // A police car that touches the player on foot busts them.
       if (d < 2.5 && !playerInCar) this._bust(player);
@@ -532,6 +545,30 @@ export class PoliceSystem {
 
 export function createPoliceSystem(options = {}) {
   return new PoliceSystem(options);
+}
+
+// Round-8: re-seat a police light bar on the sculpted roofline. The
+// round-8 car bodies carry a curved roof crown (car.sculpt.roofCrown /
+// crownH), so a bar placed at the flat-roof height would sink into the
+// crown. This reads the bar's own stored roofY/crownLift (set by
+// vehicle.js attachPoliceLightBar) and moves the base, both lamps and
+// both glow sprites onto barY. Idempotent and safe on stand-in cars
+// (no lightBar meshes) and on cars whose bar predates the crown.
+export function seatPoliceLightBar(car) {
+  if (!car || !car.lightBar) return false;
+  const bar = car.lightBar;
+  if (bar.base === undefined && bar.redLamp === undefined) return false;
+  const barY = typeof bar.barY === 'number'
+    ? bar.barY
+    : (bar.roofY || 0) + (bar.crownLift || 0);
+  const cabinZ = bar.cabinZ ?? 0;
+  if (bar.base) bar.base.position.set(0, barY + 0.02, cabinZ);
+  if (bar.redLamp) bar.redLamp.position.set(-0.25, barY + 0.1, cabinZ);
+  if (bar.blueLamp) bar.blueLamp.position.set(0.25, barY + 0.1, cabinZ);
+  if (bar.redGlowSprite) bar.redGlowSprite.position.set(-0.25, barY + 0.14, cabinZ);
+  if (bar.blueGlowSprite) bar.blueGlowSprite.position.set(0.25, barY + 0.14, cabinZ);
+  bar.seatedOnRoof = true;
+  return true;
 }
 
 export default PoliceSystem;

@@ -74,18 +74,19 @@ const server = createServer((request, response) => {
   // tell the dev server is up without fetching the game.
   if (pathname === '/__health') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: true, round: 7, root }));
+    response.end(JSON.stringify({ ok: true, round: 8, root }));
     return;
   }
   // Round-6: a version endpoint — the build identity (game, round,
   // landmark count) for the test harness and for a human checking which
   // polish pass is being served. No file access, no state.
   // Round 7: round 7, three landmarks, luminous Spire, burnt-sienna sky.
+  // Round 8: round 8, stepped towers, varied rooflines, sculpted car bodies.
   if (pathname === '/__version') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({
-      game: 'solmar-bay', competition: 'gta6-01', round: 7,
-      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky'],
+      game: 'solmar-bay', competition: 'gta6-01', round: 8,
+      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines'],
       root,
     }));
     return;

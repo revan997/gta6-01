@@ -16,6 +16,52 @@ export function seedFromString(str) {
   return h >>> 0;
 }
 
+// Round-8: weighted pick over [{ value, weight }] (or [value, weight]
+// tuples) using a caller-supplied rng-like ({ next() }). Pure helper so
+// archetype selection in world.js reads as data, not inline roll code.
+// Round-8 re-touch: invalid inputs now throw a clear error instead of
+// silently returning a wrong value — empty pairs or a zero total weight
+// used to return undefined / the first value, hiding caller bugs.
+// Behaviour for valid inputs is unchanged.
+export function weightedChoice(rng, pairs) {
+  if (!pairs || pairs.length === 0) {
+    throw new Error('weightedChoice: pairs must be a non-empty array');
+  }
+  const weights = pairs.map((p) => (Array.isArray(p) ? p[1] : p.weight) || 0);
+  const idx = weightedChoiceIndex(rng, weights);
+  const chosen = pairs[idx];
+  return Array.isArray(chosen) ? chosen[0] : chosen.value;
+}
+
+// Round-8 re-touch: weighted pick over a plain weights array — returns
+// the winning INDEX. Throws a clear error on an empty array, a
+// non-finite or negative weight, a missing rng, or a zero total weight.
+// weightedChoice() above is built on this, so both share one roll.
+export function weightedChoiceIndex(rng, weights) {
+  if (!rng || typeof rng.next !== 'function') {
+    throw new Error('weightedChoiceIndex: rng with a next() method is required');
+  }
+  if (!Array.isArray(weights) || weights.length === 0) {
+    throw new Error('weightedChoiceIndex: weights must be a non-empty array');
+  }
+  let total = 0;
+  for (const w of weights) {
+    if (typeof w !== 'number' || !Number.isFinite(w) || w < 0) {
+      throw new Error('weightedChoiceIndex: weights must be finite numbers >= 0');
+    }
+    total += w;
+  }
+  if (total <= 0) {
+    throw new Error('weightedChoiceIndex: total weight must be greater than 0');
+  }
+  let roll = rng.next() * total;
+  for (let i = 0; i < weights.length; i++) {
+    roll -= weights[i];
+    if (roll <= 0) return i;
+  }
+  return weights.length - 1;
+}
+
 // Round-6: pure interpolation helpers for the landmark camera focus
 // (main.js eases the camera toward a landmark with lerp) and for any
 // 0..1 clamp a caller needs without importing a whole utility module.
@@ -155,7 +201,7 @@ export function createRng(seed) {
     return out.slice(0, take);
   }
 
-  return { next, range, int, pick, weightedPick, chance, gaussian, noise2, shuffle, sample, seedFromString, clamp01, lerp, seed: seed >>> 0 };
+  return { next, range, int, pick, weightedPick, weightedChoice: (pairs) => weightedChoice({ next }, pairs), chance, gaussian, noise2, shuffle, sample, seedFromString, clamp01, lerp, seed: seed >>> 0 };
 }
 
 export default createRng;

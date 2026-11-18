@@ -15,7 +15,7 @@ import { createRng, clamp01, lerp, smoothstep } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
 import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
-import { createRenderContext } from './render.js';
+import { createRenderContext, boostCarPaintForCar } from './render.js';
 import { input } from './input.js';
 import { TrafficManager } from './traffic.js';
 import { PoliceSystem } from './police.js';
@@ -48,10 +48,14 @@ const completeReward = document.getElementById('mission-complete-reward');
 const rng = createRng(SEED);
 const scene = new THREE.Scene();
 const renderCtx = createRenderContext(canvas);
-const { renderer, camera, sunLight, hemiLight } = renderCtx;
+const { renderer, camera, sunLight, hemiLight, vehicleFillLight } = renderCtx;
 scene.add(sunLight);
 scene.add(sunLight.target);
 scene.add(hemiLight);
+// Round-8: the vehicle fill light (render.js) — one dim shadowless light
+// from the sun's opposite side, so sculpted car paint keeps a readable
+// edge on its shadow side at dusk.
+if (vehicleFillLight) scene.add(vehicleFillLight);
 
 const world = buildWorld(scene, rng);
 
@@ -68,6 +72,11 @@ world.locations = {
   palmsHotel: { x: 120, y: 0, z: -120, label: 'Palms Hotel' },
   harbour: { x: 200, y: 0, z: 200, label: 'Harbour' },
   lookout: { x: -40, y: 0, z: -120, label: 'Lookout' },
+  // Round 8: the stepped-tower plaza — the first stepped tower's
+  // position straight from world.js, never a hardcoded guess. When
+  // the city has no stepped tower this entry is null and missions
+  // fall back to Mama Lou's (see missions.js _location).
+  steppedPlaza: world.steppedPlaza || null,
 };
 world.getLocation = (name) => world.locations[name] || null;
 
@@ -168,6 +177,9 @@ function makeCar(spec) {
   // driving code reads car.model after construction.
   if (spec.model) car.model = spec.model;
   car.driver = spec.driver || 'ai';
+  // Round-8: boost the sculpted paint (envMapIntensity 1.35) so the
+  // fenders / glasshouse keep a warm sheen at dusk — see render.js.
+  boostCarPaintForCar(car);
   // Police interceptors get a flashing roof light bar (round-2 polish).
   if (car.driver === 'police') attachPoliceLightBar(car);
   spawnedCars.add(car);
@@ -356,8 +368,11 @@ function flashMuzzle(pos) {
   muzzleTimer = 0.06;
 }
 
-function flashImpact(pos) {
+function flashImpact(pos, kind) {
   if (!pos) return;
+  // Round-8: a ram spark flashes gold-white (the bumper contact point),
+  // while punch/shot hits stay orange — the kind rides on lastImpact.
+  impactMesh.material.color.set(kind === 'ram' ? 0xffd94a : 0xff8c2a);
   impactMesh.position.set(pos.x, pos.y, pos.z);
   impactMesh.scale.setScalar(1.8);
   impactMesh.visible = true;
@@ -449,6 +464,14 @@ function startPlaying() {
       // Round 6: restore the landmarks visited on this profile, so a
       // returning player is not re-credited for the same landmark.
       for (const n of loaded.landmarksVisited || []) player.landmarksVisited.add(n);
+      // Round-8 (save v7): restore the chase-camera distance preference
+      // (v6 and older saves carry none and load() defaults to 'mid', 1).
+      // The input singleton keeps its own copy of the level, so sync it
+      // too — otherwise a V press in the menu would leave the two apart.
+      if (typeof loaded.chaseDistanceLevel === 'number') {
+        player.setChaseDistance(loaded.chaseDistanceLevel);
+        if (typeof input.setChaseDistanceLevel === 'function') input.setChaseDistanceLevel(player.chaseDistanceLevel);
+      }
       if (loaded.position) {
         player.teleport(loaded.position.x, loaded.position.z, loaded.heading ?? player.heading);
         camYaw = player.heading + Math.PI;
@@ -528,6 +551,7 @@ function saveProgress(currentMission) {
     gamesPlayed, // round 4: save v3 field
     parBonuses: missions.getParBonusesEarned(), // round 5: save v4 field
     landmarksVisited: [...(player.landmarksVisited || [])], // round 6: save v5 field
+    chaseDistanceLevel: player.chaseDistanceLevel, // round 8: save v7 field
   });
 }
 
@@ -609,8 +633,8 @@ function updateCamera(dt) {
   // Round-5: mouse wheel zooms the chase camera (each notch ~8%).
   const wheel = input.consumeWheelDelta ? input.consumeWheelDelta() : 0;
   if (wheel) camZoom = Math.max(0.8, Math.min(1.35, camZoom * (1 + wheel * 0.0008)));
-  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1) * camZoom;
-  const height = driving ? CONFIG.camera.drivingHeight : CONFIG.camera.onFootHeight;
+  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1) * camZoom * (player.chaseDistanceMul || 1);
+  const height = (driving ? CONFIG.camera.drivingHeight : CONFIG.camera.onFootHeight) * (player.chaseHeightMul || 1);
   // Round-3 polish: the field of view opens up at speed while the
   // throttle is held, so fast driving feels fast.
   const feel = CONFIG.drivingFeel;
@@ -736,6 +760,22 @@ window.addEventListener('keydown', (event) => {
     if (state === 'playing') {
       camFar = !camFar;
       showMessage(camFar ? 'Camera: far.' : 'Camera: near.');
+    }
+    return;
+  }
+  // Round-8: V cycles the chase-camera distance (near -> mid -> far).
+  // player.cycleChaseDistance() owns the level; the input singleton
+  // keeps its own copy, so sync it after the cycle. This handler is
+  // registered before input.attach(), so it runs first — and input.js
+  // ALSO cycles its level on V, which would double-step: stop the
+  // event here so the input listener never sees this press.
+  if (code === 'KeyV') {
+    if (state === 'playing') {
+      const level = player.cycleChaseDistance();
+      if (typeof input.setChaseDistanceLevel === 'function') input.setChaseDistanceLevel(player.chaseDistanceLevel);
+      showMessage(`Camera: ${level.name}.`);
+      if (typeof hud.showChaseDistanceToast === 'function') hud.showChaseDistanceToast(level.name);
+      event.stopImmediatePropagation();
     }
     return;
   }
@@ -892,6 +932,9 @@ function update(dt) {
   // 4. police. (In a staged shot the police never damage the player:
   // a ram during the settle/wait would waste the staged run.)
   police.update(dt, world, player, {
+    // Round-8: combat rides along so the police ram branch can record
+    // the bumper contact point for the spark flash (recordRamImpact).
+    combat,
     damagePlayer: (amount, source) => {
       if (SHOT_MODE) return;
       combat.damagePlayer(amount, source);
@@ -952,7 +995,7 @@ function update(dt) {
   }
   // Round-3 polish: the hit-impact flash at the point a shot or punch lands.
   const impact = combat.consumeImpact();
-  if (impact) flashImpact(impact.position);
+  if (impact) flashImpact(impact.position, impact.kind);
   if (impactTimer > 0) {
     impactTimer -= dt;
     impactMesh.scale.setScalar(Math.max(0.3, 1.8 * (impactTimer / 0.12)));
@@ -1001,6 +1044,11 @@ function update(dt) {
     combo: combat.getCombo(), // round-4b: the combo label follows this
     policeOfficers: police.getOfficers(), // round 4
     district: world.districtAt(player.position.x, player.position.z) || '',
+    // Round 8: near a stepped tower the district label reads
+    // "Stepped Quarter" (hud.js names it from this flag).
+    steppedQuarter: (world.steppedTowers || []).some((t) => Math.hypot(
+      player.position.x - t.x, player.position.z - t.z,
+    ) <= (CONFIG.round8?.steppedQuarterRadius ?? 45)),
     timeOfDay,
     message: messageText || undefined,
     ammo: combat.getAmmo(),
@@ -1247,6 +1295,19 @@ window.__solmar = {
       visited: [...(player.landmarksVisited || [])],
       pickupSculpt: pickup ? (pickup.sculpt || null) : null,
       cars: cars.map((c) => ({ model: c.model || c.kind || null, sculpt: c.sculpt || null })),
+    };
+  },
+  // Round-8 probes: skyline diversity — the stepped-tower archetype,
+  // the new roofline types, and the stepped-tower positions, read
+  // straight off the world object (runtime counts, not config claims).
+  get round8() {
+    return {
+      ...(world.round8 || null),
+      round4b: world.round4b || null,
+      steppedTowers: (world.steppedTowers || []).map((t) => ({
+        x: t.x, z: t.z, height: t.height, w: t.w, d: t.d, tiers: t.tiers,
+      })),
+      steppedPlaza: world.steppedPlaza || null,
     };
   },
 };

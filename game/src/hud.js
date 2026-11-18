@@ -65,6 +65,8 @@ export class HUD {
     this._progressEls = null; // round 4: mission progress bar, built lazily
     this._cashLayer = null; // round 4: floating "+$N" layer, built lazily
     this._hitMarkerEl = null; // round 4: centre hit-marker X, built lazily
+    this._chaseToastEl = null; // round-8 re-touch: chase-distance toast, built lazily
+    this._chaseToastTimer = null;
   }
 
   _el(name) {
@@ -213,6 +215,31 @@ export class HUD {
     this._landmarkTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(1, seconds) * 1000);
   }
 
+  // Round-8 re-touch: transient "Camera: far" toast when V cycles the
+  // chase distance. Built lazily like the landmark label, so index.html
+  // needs no new slot; re-showing refreshes the ~1.5 s fade timer.
+  // main.js calls it guarded by a typeof check.
+  showChaseDistanceToast(name, seconds = 1.5) {
+    if (!this.doc || typeof this.doc.createElement !== 'function' || !name) return;
+    if (!this._chaseToastEl) {
+      const district = this._el('district');
+      const parent = district?.parentNode || this.doc.body;
+      if (!parent) return;
+      const el = this.doc.createElement('div');
+      el.id = 'hud-chase-distance';
+      el.style.cssText = 'position:absolute;top:112px;left:50%;transform:translateX(-50%);'
+        + 'font-size:14px;font-weight:bold;letter-spacing:2px;color:#ffffff;'
+        + 'text-shadow:0 2px 6px rgba(0,0,0,0.9);pointer-events:none;display:none;';
+      parent.appendChild(el);
+      this._chaseToastEl = el;
+    }
+    const el = this._chaseToastEl;
+    el.textContent = 'Camera: ' + String(name);
+    el.style.display = '';
+    if (this._chaseToastTimer) clearTimeout(this._chaseToastTimer);
+    this._chaseToastTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(0.5, seconds) * 1000);
+  }
+
   // update(state) — the single HUD entry point, called once per frame.
   update(state = {}) {
     if (!state) return;
@@ -241,7 +268,10 @@ export class HUD {
     this._lastWanted = wanted;
 
     // --- District label (round 3): where Rico is standing right now. ---
-    this._setText('district', state.district || '');
+    // Round 8: near a stepped tower (main.js passes steppedQuarter)
+    // the label names the new archetype quarter instead of the
+    // underlying district, so the stepped towers read as a place.
+    this._setText('district', state.steppedQuarter ? 'Stepped Quarter' : (state.district || ''));
 
     // --- Health / armour bars. ---
     const maxHealth = state.maxHealth || 100;

@@ -13,6 +13,20 @@ const PANTS = 0x2a2f3a;
 const SHOES = 0x1c1c1c;
 const HAIR = 0x14100c;
 
+// Round-8 chase-camera distances (Lane A): the sculpted body reads
+// best from slightly farther back and higher than the old default, so
+// the default level is 'mid' at 1.04x distance / 1.08x height over the
+// CONFIG.camera driving values. main.js multiplies its driving
+// distance/height by these factors; the V key (input.js) cycles the
+// levels near -> mid -> far. Levels are data, not balance — they only
+// move the camera.
+export const CHASE_DISTANCE_LEVELS = [
+  { name: 'near', distanceMul: 0.88, heightMul: 0.94 },
+  { name: 'mid', distanceMul: 1.04, heightMul: 1.08 },
+  { name: 'far', distanceMul: 1.22, heightMul: 1.16 },
+];
+export const DEFAULT_CHASE_DISTANCE_LEVEL = 1; // 'mid'
+
 export function createPlayer(scene, world, spawn) {
   const start = spawn || (world && world.spawns ? world.spawns.player : { x: 40, y: 0, z: 40 });
   const group = new THREE.Group();
@@ -100,6 +114,67 @@ export function createPlayer(scene, world, spawn) {
     // Round-6: landmarks Rico has visited this session (names from
     // world.landmarks.list). main.js persists them into the save file.
     landmarksVisited: new Set(),
+    // Round-8: chase-camera distance level (0 near / 1 mid / 2 far).
+    // Defaults to 'mid' (1.04x distance, 1.08x height) so the sculpted
+    // car body reads from chase view; save.js persists the level (v7)
+    // and main.js applies it through setChaseDistance() on load.
+    chaseDistanceLevel: DEFAULT_CHASE_DISTANCE_LEVEL,
+    chaseDistanceMul: CHASE_DISTANCE_LEVELS[DEFAULT_CHASE_DISTANCE_LEVEL].distanceMul,
+    chaseHeightMul: CHASE_DISTANCE_LEVELS[DEFAULT_CHASE_DISTANCE_LEVEL].heightMul,
+
+    // Round-8: set the chase-camera distance level — accepts an index
+    // (0/1/2) or a name ('near'/'mid'/'far'); anything else leaves the
+    // level unchanged. Returns the active level record
+    // { name, distanceMul, heightMul }, which main.js multiplies onto
+    // CONFIG.camera.drivingDistance / drivingHeight. The input lane
+    // calls this (via the V key) — it never touches driving itself.
+    setChaseDistance(level) {
+      let idx = -1;
+      if (typeof level === 'number') idx = Math.round(level);
+      else if (typeof level === 'string') {
+        idx = CHASE_DISTANCE_LEVELS.findIndex((l) => l.name === level.toLowerCase());
+      }
+      if (idx < 0 || idx >= CHASE_DISTANCE_LEVELS.length) return this.getChaseDistance();
+      this.chaseDistanceLevel = idx;
+      const rec = CHASE_DISTANCE_LEVELS[idx];
+      this.chaseDistanceMul = rec.distanceMul;
+      this.chaseHeightMul = rec.heightMul;
+      return { ...rec };
+    },
+
+    // Round-8: the active chase-distance level record.
+    getChaseDistance() {
+      const rec = CHASE_DISTANCE_LEVELS[this.chaseDistanceLevel] || CHASE_DISTANCE_LEVELS[1];
+      return { ...rec };
+    },
+
+    // Round-8: cycle near -> mid -> far -> near. Returns the new level
+    // record — the V-key handler in main.js shows its name in the HUD.
+    cycleChaseDistance() {
+      return this.setChaseDistance((this.chaseDistanceLevel + 1) % CHASE_DISTANCE_LEVELS.length);
+    },
+
+    // Round-8 re-touch: plain status snapshot for the HUD / save / debug
+    // probes — the chase-distance level is observable here without
+    // digging into internals. Returns a fresh object every call; the
+    // position is copied, never the live Vector3.
+    getStatus() {
+      const chase = this.getChaseDistance();
+      return {
+        name: this.name,
+        health: this.health,
+        maxHealth: this.maxHealth,
+        onFoot: this.onFoot,
+        inCar: !this.onFoot,
+        currentCar: this.currentCar ? this.currentCar.model : null,
+        position: { x: this.position.x, y: this.position.y, z: this.position.z },
+        heading: this.heading,
+        chaseDistanceLevel: this.chaseDistanceLevel,
+        chaseDistanceName: chase.name,
+        chaseDistance: chase,
+        landmarksVisited: this.landmarksVisited ? [...this.landmarksVisited] : [],
+      };
+    },
 
     // Round-6: mark a landmark visited when Rico comes within `radius`
     // metres of it. `landmarks` is an array of { name, x, z }. Returns

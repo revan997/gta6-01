@@ -289,6 +289,23 @@ export class TrafficManager {
     };
   }
 
+  // Round-8: tag a real sculpted car for the sculpt report — the
+  // traffic cars and the tour bus already come from the Lane A factory
+  // (createCar), so they carry car.sculpt; this just folds their
+  // fender / arch-liner / glasshouse counts into the running totals
+  // getSculptedCarsReport() reads. Stand-in cars have no sculpt and
+  // are skipped, so the totals only ever count real sculpted bodies.
+  _tagSculpted(car) {
+    if (!car || !car.sculpt) return;
+    const sc = car.sculpt;
+    this._sculptTotals = this._sculptTotals || { cars: 0, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0 };
+    this._sculptTotals.cars += 1;
+    this._sculptTotals.fenders += sc.fenders || 0;
+    this._sculptTotals.archLiners += sc.archLiners || 0;
+    this._sculptTotals.glasshouse += sc.glasshouse || 0;
+    if (sc.roofCrown) this._sculptTotals.roofCrowns += 1;
+  }
+
   // Round-5 dusk: traffic cars run their headlights — brighter headlight
   // glow sprites + stronger headlight emissive on real 3D cars. Applied
   // once per car (guarded by _duskHeadlightsApplied); stand-in cars have
@@ -344,6 +361,7 @@ export class TrafficManager {
     bus._tourPause = TOUR_DWELL; // dwell at the Spire before departing
     bus.tourStop = first.label;
     this._applyDuskHeadlights(bus);
+    this._tagSculpted(bus); // round-8: the tour bus counts in the sculpt report
     this.tourBus = bus;
     return bus;
   }
@@ -417,6 +435,7 @@ export class TrafficManager {
     car.speedPhase = this.rng.range(0, Math.PI * 2);
     // Round-5 dusk: headlights on for moving traffic.
     this._applyDuskHeadlights(car);
+    this._tagSculpted(car); // round-8: fold the sculpt counts into the report totals
     car.roadIndex = pick.roadIndex;
     car.roadT = pick.roadT;
     car.roadDirection = direction;
@@ -478,6 +497,7 @@ export class TrafficManager {
       car.driver = 'parked';
       car.speed = 0;
       car.targetSpeed = 0;
+      this._tagSculpted(car); // round-8: parked cars are sculpted too
       car.roadIndex = pick.roadIndex;
       car.roadT = pick.roadT;
       car.roadDirection = direction;
@@ -767,6 +787,50 @@ export class TrafficManager {
     return list;
   }
 
+  // Round-8: the sculpt report — the same sculpted cars as
+  // getSculptedCars(), plus the round-8 counts the test harness probes:
+  // fender flares, arch liners and glasshouse panels per car and in
+  // total, and how many cars carry a curved roof crown. The per-car
+  // entries carry the raw car.sculpt object, so a probe can check any
+  // single model (e.g. the bus must have 6 fenders / 6 arch liners).
+  // Totals are recomputed from the live list every call (not just the
+  // spawn-time _sculptTotals), so despawned cars drop out of the count.
+  // Round-8 re-touch: the totals summary now covers EVERY sculpt
+  // feature (hood / windshield / hub caps / angled panels too), so the
+  // harness can assert the whole fleet in one probe.
+  getSculptedCarsReport() {
+    const cars = this.getSculptedCars();
+    const totals = {
+      cars: cars.length, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0,
+      hood: 0, windshield: 0, hubCaps: 0, angled: 0,
+    };
+    const perModel = {};
+    for (const car of cars) {
+      const sc = car.sculpt || {};
+      totals.fenders += sc.fenders || 0;
+      totals.archLiners += sc.archLiners || 0;
+      totals.glasshouse += sc.glasshouse || 0;
+      if (sc.roofCrown) totals.roofCrowns += 1;
+      if (sc.hood) totals.hood += 1;
+      if (sc.windshield) totals.windshield += 1;
+      totals.hubCaps += sc.hubCaps || 0;
+      totals.angled += sc.angled || 0;
+      const key = car.model || 'unknown';
+      perModel[key] = {
+        fenders: sc.fenders || 0,
+        archLiners: sc.archLiners || 0,
+        glasshouse: sc.glasshouse || 0,
+        roofCrown: Boolean(sc.roofCrown),
+        angled: sc.angled || 0,
+      };
+    }
+    return {
+      cars: cars.map((c) => ({ model: c.model, sculpt: c.sculpt || null })),
+      totals,
+      perModel,
+    };
+  }
+
   // Remove a pedestrian (hit / shot). Returns true when one was removed.
   removePedestrian(ped) {
     const before = this.pedestrians.length;
@@ -782,6 +846,7 @@ export class TrafficManager {
     this._time = 0;
     this.tourBus = null;
     this._tourSpawned = false;
+    this._sculptTotals = null; // round-8: sculpt totals rebuild on respawn
   }
 }
 

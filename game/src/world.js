@@ -5,7 +5,7 @@
 // they never rebuild the city.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { createRng } from './random.js';
+import { createRng, weightedChoice } from './random.js';
 import { makeBeaconTexture, makeCanvasTexture, makeGlowTexture, makeHaloTexture, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
@@ -34,6 +34,11 @@ export function buildWorld(scene, seedOrRng) {
   // Round-7 config (Solmar Pyramid landmark) — falls back to the
   // hard-coded pyramid defaults below if the block is missing.
   const R7 = CONFIG.round7 || {};
+  // Round-8 config (stepped towers + varied rooflines) — falls back to
+  // the hard-coded defaults below if the block is missing.
+  const R8 = CONFIG.round8 || {};
+  const R8Step = R8.steppedTower || {};
+  const R8Roof = R8.roofline || {};
   const R6Sun = R6.sun || R5.sun;
   const sunCfg = {
     x: R6Sun.x !== undefined ? R6Sun.x : R5.sun.x,
@@ -344,6 +349,11 @@ export function buildWorld(scene, seedOrRng) {
   // Round-4b: balcony slabs (light concrete) + pitched terracotta roofs.
   const matBalcony = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 1 });
   const matRoofPitched = new THREE.MeshStandardMaterial({ color: 0x9a5a3a, roughness: 1 });
+  // Round-8: ONE shared mansard frustum (4-sided, flat-topped) — every
+  // mansard roof scales this unit geometry, no geometry per building.
+  // Top radius 0.35 / bottom 0.71 gives a ~1 m square footprint at
+  // scale 1 (rotated PI/4 so its faces align with the walls).
+  const mansardGeo = new THREE.CylinderGeometry(0.35, 0.71, 1, 4);
   const matTrunk = new THREE.MeshStandardMaterial({ color: C.palmTrunk, roughness: 1 });
   const matLeaf = new THREE.MeshStandardMaterial({ color: C.palmLeaf, roughness: 0.9 });
   const matPole = new THREE.MeshStandardMaterial({ color: C.lampPole, roughness: 0.6, metalness: 0.5 });
@@ -547,6 +557,14 @@ export function buildWorld(scene, seedOrRng) {
   let r4bBalconies = 0;
   let r4bPitched = 0;
   let r4bParapets = 0;
+  // Round-8 variation counts (exposed via round4b + round8 on the
+  // returned world object, so the test harness can probe them).
+  let r8Stepped = 0;
+  let r8Crowns = 0;
+  let r8Mansards = 0;
+  let r8SteppedParapets = 0;
+  let r8Beacons = 0; // round-8 re-touch: one crown beacon per stepped tower
+  const steppedTowers = []; // { x, z, height, w, d, tiers } — the new archetype
   const parkGaps = [];
   const edges = [-half, ...lines, half];
   const windowMatLit = new THREE.MeshStandardMaterial({
@@ -602,7 +620,14 @@ export function buildWorld(scene, seedOrRng) {
   const geoWinAwnings = [];
   let r5GeoBuildings = 0;
   let r5LitWindows = 0;
-  function addGeoWindowsForBuilding(px, pz, bw, bd, height) {
+  // `yBase` (round 8) lifts the window grid for an upper tier of a
+  // stepped tower — tier windows start at the tier's base, not the
+  // ground, so they never sink inside the tier below. `groundSkip`
+  // (round 8) is the window-free zone above the tier base: 3.2 m for a
+  // ground floor (shopfront zone), 1.2 m for an upper tier, so a short
+  // top tier still gets a window row. Defaults keep every existing
+  // single-box call identical.
+  function addGeoWindowsForBuilding(px, pz, bw, bd, height, yBase = 0, groundSkip = R5W.groundFloorHeight) {
     // Faces: rotY, outward normal n, in-plane tangent t, wall offset.
     const faces = [
       { rotY: 0, n: [0, 0, 1], t: [1, 0, 0], off: bd / 2, w: bw },
@@ -617,10 +642,10 @@ export function buildWorld(scene, seedOrRng) {
       if (f.w < R5W.minFaceWidth) continue; // too narrow for real windows
       const cols = Math.max(1, Math.floor((f.w - 4) / R5W.colSpacing));
       const span = (cols - 1) * R5W.colSpacing;
-      const floors = Math.max(0, Math.floor((height - R5W.groundFloorHeight - 1) / R5W.floorSpacing));
+      const floors = Math.max(0, Math.floor((height - groundSkip - 1) / R5W.floorSpacing));
       for (let fl = 0; fl < floors; fl++) {
-        const y = R5W.groundFloorHeight + R5W.floorSpacing * fl + winH / 2 + 0.2;
-        if (y + winH / 2 > height - 0.5) break;
+        const y = yBase + groundSkip + R5W.floorSpacing * fl + winH / 2 + 0.2;
+        if (y + winH / 2 > yBase + height - 0.5) break;
         // Per-floor lit clustering: one ratio per floor, windows roll
         // against it (some floors mostly lit, some mostly dark).
         const floorLitRatio = rng.pick(R5W.floorLitRatios);
@@ -702,6 +727,40 @@ export function buildWorld(scene, seedOrRng) {
         const group = new THREE.Group();
         group.position.set(px, 0, pz);
         scene.add(group);
+        // Round-8: stepped / ziggurat archetype — a second silhouette
+        // beyond the box tower, on tall downtown blocks only. Picked by
+        // weighted choice (stepped vs plain box) via the round-8 helper
+        // in random.js. The eligibility uses the true Downtown
+        // rectangle from CONFIG (not the label default — unzoned edge
+        // blocks also label as Downtown, and stepping those would put
+        // ziggurats on the city rim instead of the skyline core).
+        // Reserved landmark blocks were already skipped above, so a
+        // stepped tower can never sit on the Spire or Pyramid block.
+        // Tier fractions sum to 1, so the total height stays `height`
+        // and the collision box below is unchanged.
+        const dd = CONFIG.districts.downtown;
+        const inDowntownRect = dd && cx >= dd.minX && cx <= dd.maxX && cz >= dd.minZ && cz <= dd.maxZ;
+        const stepChance = R8Step.chance ?? 0.35;
+        const isStepped = inDowntownRect && height >= (R8Step.minHeight ?? 34)
+          && weightedChoice(rng, [
+            { value: 'stepped', weight: stepChance },
+            { value: 'box', weight: 1 - stepChance },
+          ]) === 'stepped';
+        const tierFracs = R8Step.tierFracs || [0.55, 0.28, 0.17];
+        const tierHeights = isStepped ? tierFracs.map((f) => height * f) : [height];
+        const baseHeight = tierHeights[0];
+        let tier2W = 0;
+        let tier2D = 0;
+        let tier3W = 0;
+        let tier3D = 0;
+        if (isStepped) {
+          const midFrac = rng.range(R8Step.tierShrinkMin ?? 0.68, R8Step.tierShrinkMax ?? 0.78);
+          const topFrac = rng.range(R8Step.topShrinkMin ?? 0.62, R8Step.topShrinkMax ?? 0.72);
+          tier2W = bw * midFrac;
+          tier2D = bd * midFrac;
+          tier3W = tier2W * topFrac;
+          tier3D = tier2D * topFrac;
+        }
         // Round-5: a subset of buildings gets REAL geometry windows
         // instead of painted ones — taller / downtown buildings preferred.
         // Those buildings use a PLAIN facade texture so the two window
@@ -726,17 +785,66 @@ export function buildWorld(scene, seedOrRng) {
         const buildingMesh = new THREE.Mesh(boxGeo, [
           facadeMat, facadeMat, matRoof, matRoof, facadeMat, facadeMat,
         ]);
-        buildingMesh.scale.set(bw, height, bd);
-        buildingMesh.position.set(0, height / 2, 0);
+        // Stepped towers: this mesh is only the base tier (baseHeight);
+        // the upper tiers are stacked on it just below.
+        buildingMesh.scale.set(bw, baseHeight, bd);
+        buildingMesh.position.set(0, baseHeight / 2, 0);
         buildingMesh.castShadow = true;
         buildingMesh.receiveShadow = true;
         group.add(buildingMesh);
-        // Roof cap.
-        addBox(matRoof, bw * 0.92, 0.6, bd * 0.92, 0, height + 0.3, 0, group);
+        if (isStepped) {
+          // Tier 2 + tier 3: shrinking stacked boxes with a roof-ledge
+          // slab at each step, then a small lantern crown on top — a
+          // ziggurat silhouette no box tower has. All shared materials
+          // (facadeMat / matRoof / matLamp) and shared boxGeo: no new
+          // material or geometry per tower.
+          let tierY = tierHeights[0];
+          for (let ti = 1; ti < 3; ti++) {
+            const tw = ti === 1 ? tier2W : tier3W;
+            const td = ti === 1 ? tier2D : tier3D;
+            const th = tierHeights[ti];
+            const tier = new THREE.Mesh(boxGeo, [
+              facadeMat, facadeMat, matRoof, matRoof, facadeMat, facadeMat,
+            ]);
+            tier.scale.set(tw, th, td);
+            tier.position.set(0, tierY + th / 2, 0);
+            tier.castShadow = true;
+            tier.receiveShadow = true;
+            group.add(tier);
+            addBox(matRoof, tw * 0.94, 0.6, td * 0.94, 0, tierY + th + 0.3, 0, group);
+            tierY += th;
+          }
+          // Lantern crown: a small roof box + a warm emissive lantern
+          // (shared matLamp) so the stepped tower glows at dusk.
+          const crownH = R8Step.crownHeight ?? 1.6;
+          addBox(matRoof, tier3W * 0.5, crownH, tier3D * 0.5, 0, height + 0.6 + crownH / 2, 0, group);
+          addBox(matLamp, tier3W * 0.28, 0.9, tier3D * 0.28, 0, height + 0.6 + crownH + 0.45, 0, group);
+          // Round-8 re-touch: crown beacon — one small warm lamp on top
+          // of the lantern, so the ziggurat reads at dusk. Sizes come
+          // from CONFIG.round8.steppedTower.beacon, never hardcoded here.
+          const beaconCfg = R8Step.beacon || {};
+          const beaconH = beaconCfg.height ?? 0.7;
+          const beaconSize = beaconCfg.size ?? 0.55;
+          const beaconY = height + 0.6 + crownH + 0.9 + beaconH / 2;
+          addBox(matLamp, beaconSize, beaconH, beaconSize, 0, beaconY, 0, group);
+          r8Beacons += 1;
+          r8Stepped += 1;
+          steppedTowers.push({
+            x: px, z: pz, height, w: bw, d: bd, tiers: 3,
+            topW: tier3W, topD: tier3D, beaconY,
+          });
+        }
+        // Roof cap (box towers only — a stepped tower already gets a
+        // ledge slab on each tier, and a full-width cap at the top
+        // would float wider than its top tier).
+        if (!isStepped) addBox(matRoof, bw * 0.92, 0.6, bd * 0.92, 0, height + 0.3, 0, group);
         // Round-4 rooftop clutter: AC units on most roofs (up to two),
         // a stair bulkhead on some low roofs, and water towers / antennas
         // on any roof above tallMinHeight — not just the tallest tower.
-        const acCount = rng.chance(R4.rooftop.acChance) ? rng.int(1, R4.rooftop.acMax) : 0;
+        // Stepped towers skip the clutter: their tiers + lantern crown
+        // are the roof dressing, and AC boxes sized for the base would
+        // hang off the narrow top tier.
+        const acCount = !isStepped && rng.chance(R4.rooftop.acChance) ? rng.int(1, R4.rooftop.acMax) : 0;
         for (let a = 0; a < acCount; a++) {
           addBox(matRoof, rng.range(2, 3.5), 1.1, rng.range(2, 3),
             rng.range(-bw / 4, bw / 4), height + 1.1, rng.range(-bd / 4, bd / 4), group);
@@ -745,7 +853,7 @@ export function buildWorld(scene, seedOrRng) {
           addBox(matRoof, rng.range(3, 4.5), 2.4, rng.range(3, 4),
             rng.range(-bw / 5, bw / 5), height + 1.8, rng.range(-bd / 5, bd / 5), group);
         }
-        if (height > R4.rooftop.tallMinHeight) {
+        if (!isStepped && height > R4.rooftop.tallMinHeight) {
           if (rng.chance(R4.rooftop.towerChance)) {
             const tx = rng.range(-bw / 4, bw / 4);
             const tz = rng.range(-bd / 4, bd / 4);
@@ -809,7 +917,7 @@ export function buildWorld(scene, seedOrRng) {
         // on tall downtown blocks, balconies on mid-rise fronts, pyramid
         // roofs on low buildings, and a parapet rim on mid/high roofs.
         let hasPitchedRoof = false;
-        if (height >= R4b.setbacks.minHeight && rng.chance(R4b.setbacks.chance)) {
+        if (!isStepped && height >= R4b.setbacks.minHeight && rng.chance(R4b.setbacks.chance)) {
           const fw = bw * rng.range(R4b.setbacks.widthFracMin, R4b.setbacks.widthFracMax);
           const fd = bd * rng.range(R4b.setbacks.widthFracMin, R4b.setbacks.widthFracMax);
           const fh = height * rng.range(R4b.setbacks.heightFracMin, R4b.setbacks.heightFracMax);
@@ -837,7 +945,14 @@ export function buildWorld(scene, seedOrRng) {
             addBox(matPole, 3.2, 0.9, 0.08, bx, floorY + 0.55, bd / 2 + 1.25, group);
           }
         }
-        if (height <= R4b.pitchedRoof.maxHeight && !isDowntown && rng.chance(R4b.pitchedRoof.chance)) {
+        // Round-8: pitched roofs are more frequent (round-8 chance,
+        // 0.75, up from round-4b 0.5) so many more low roofs read as
+        // pyramids instead of flat caps. The old !isDowntown guard is
+        // dropped: true downtown towers are >= 28 m so they never
+        // qualify at maxHeight 14 anyway — the guard only excluded
+        // low unzoned-edge buildings (which label as Downtown by
+        // default) from ever getting a pitched roof.
+        if (height <= (R8Roof.pitchedMaxHeight ?? R4b.pitchedRoof.maxHeight) && rng.chance(R8Roof.pitchedChance ?? R4b.pitchedRoof.chance)) {
           hasPitchedRoof = true;
           const ph = height * rng.range(R4b.pitchedRoof.heightFracMin, R4b.pitchedRoof.heightFracMax);
           const pyramid = new THREE.Mesh(
@@ -848,26 +963,71 @@ export function buildWorld(scene, seedOrRng) {
           group.add(pyramid);
           r4bPitched += 1;
         }
-        if (!hasPitchedRoof && height >= R4b.parapet.minHeight && rng.chance(R4b.parapet.chance)) {
-          const pt = R4b.parapet.thickness;
-          const ph2 = R4b.parapet.height;
-          addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, bd * 0.46 - pt / 2, group);
-          addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, -bd * 0.46 + pt / 2, group);
-          addBox(matRoof, pt, ph2, bd * 0.92, bw * 0.46 - pt / 2, height + 0.6 + ph2 / 2, 0, group);
-          addBox(matRoof, pt, ph2, bd * 0.92, -bw * 0.46 + pt / 2, height + 0.6 + ph2 / 2, 0, group);
-          r4bParapets += 1;
+        // Round-8 rooflines: tall towers get a crown box + lantern or
+        // (mid-rise) a flat-topped mansard frustum instead of a plain
+        // parapet; the parapet itself now varies in height per building
+        // and is sometimes built stepped (tall north/south walls, low
+        // east/west walls). All three new types count toward
+        // newRoofline, so the skyline silhouette varies roof by roof.
+        if (!hasPitchedRoof && !isStepped && height >= R4b.parapet.minHeight) {
+          let hasNewRoofline = false;
+          if (height >= (R8Roof.crownMinHeight ?? 20) && rng.chance(R8Roof.crownChance ?? 0.32)) {
+            hasNewRoofline = true;
+            const cw = Math.min(bw, bd) * 0.34;
+            const ch = R8Roof.crownHeight ?? 1.8;
+            addBox(matRoof, cw, ch, cw, 0, height + 0.6 + ch / 2, 0, group);
+            addBox(matLamp, cw * 0.55, 0.9, cw * 0.55, 0, height + 0.6 + ch + 0.45, 0, group);
+            r8Crowns += 1;
+          } else if (height >= (R8Roof.mansardMinHeight ?? 14)
+            && height <= (R8Roof.mansardMaxHeight ?? 30)
+            && rng.chance(R8Roof.mansardChance ?? 0.3)) {
+            hasNewRoofline = true;
+            const ph = height * 0.12;
+            const mansard = new THREE.Mesh(mansardGeo, matRoofPitched);
+            mansard.rotation.y = Math.PI / 4;
+            mansard.scale.set(Math.max(bw, bd) * 0.87, ph, Math.max(bw, bd) * 0.87);
+            mansard.position.set(0, height + 0.6 + ph / 2, 0);
+            mansard.castShadow = true;
+            group.add(mansard);
+            r8Mansards += 1;
+          }
+          if (!hasNewRoofline && rng.chance(R4b.parapet.chance)) {
+            const pt = R4b.parapet.thickness;
+            const ph2 = rng.range(R8Roof.parapetHeightMin ?? 0.5, R8Roof.parapetHeightMax ?? 1.4);
+            const steppedParapet = rng.chance(R8Roof.steppedParapetChance ?? 0.35);
+            const sideH = steppedParapet ? ph2 * 0.55 : ph2;
+            addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, bd * 0.46 - pt / 2, group);
+            addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, -bd * 0.46 + pt / 2, group);
+            addBox(matRoof, pt, sideH, bd * 0.92, bw * 0.46 - pt / 2, height + 0.6 + sideH / 2, 0, group);
+            addBox(matRoof, pt, sideH, bd * 0.92, -bw * 0.46 + pt / 2, height + 0.6 + sideH / 2, 0, group);
+            if (steppedParapet) {
+              addBox(matRoof, bw * 0.3, ph2 * 0.5, bd * 0.3, 0, height + 0.6 + ph2 * 0.25, 0, group);
+              r8SteppedParapets += 1;
+            }
+            r4bParapets += 1;
+          }
         }
         // Round-5: bake the recessed geometry windows for this building.
+        // A stepped tower windows each tier separately (upper tiers use
+        // a 1.2 m base skip instead of the 3.2 m shopfront zone, so a
+        // short top tier still gets a window row where its faces are
+        // wide enough — addGeoWindowsForBuilding skips narrow faces).
         if (useGeoWindows) {
           r5GeoBuildings += 1;
-          addGeoWindowsForBuilding(px, pz, bw, bd, height);
+          if (isStepped) {
+            addGeoWindowsForBuilding(px, pz, bw, bd, tierHeights[0]);
+            addGeoWindowsForBuilding(px, pz, tier2W, tier2D, tierHeights[1], tierHeights[0], 1.2);
+            addGeoWindowsForBuilding(px, pz, tier3W, tier3D, tierHeights[2], tierHeights[0] + tierHeights[1], 1.2);
+          } else {
+            addGeoWindowsForBuilding(px, pz, bw, bd, height);
+          }
         }
         buildings.push({
           minX: px - bw / 2, maxX: px + bw / 2,
           minZ: pz - bd / 2, maxZ: pz + bd / 2,
           height, district, x: px, z: pz, w: bw, d: bd,
         });
-        if (isDowntown && (!tallestDowntown || height > tallestDowntown.height)) {
+        if (isDowntown && !isStepped && (!tallestDowntown || height > tallestDowntown.height)) {
           tallestDowntown = { x: px, z: pz, height, w: bw, d: bd };
         }
       }
@@ -1802,7 +1962,27 @@ export function buildWorld(scene, seedOrRng) {
     updateAmbient,
     // Round-4b: geometry variation counts (setbacks / balconies / pitched
     // roofs / parapets) — the test harness reads these to prove the pass.
-    round4b: { setbacks: r4bSetbacks, balconies: r4bBalconies, pitchedRoofs: r4bPitched, parapets: r4bParapets },
+    // Round 8 extends the same object with the new skyline counts so
+    // one probe covers both passes.
+    round4b: {
+      setbacks: r4bSetbacks, balconies: r4bBalconies, pitchedRoofs: r4bPitched, parapets: r4bParapets,
+      steppedTowers: r8Stepped, crownLanterns: r8Crowns, mansards: r8Mansards,
+      steppedParapets: r8SteppedParapets,
+      newRoofline: r8Crowns + r8Mansards + r8SteppedParapets,
+    },
+    // Round-8: skyline diversity — the stepped-tower archetype, the new
+    // roofline types, and the stepped-tower positions (the plaza is the
+    // first stepped tower; missions / HUD read it from here).
+    round8: {
+      steppedTowers: r8Stepped, crownLanterns: r8Crowns, mansards: r8Mansards,
+      steppedParapets: r8SteppedParapets, beacons: r8Beacons,
+      newRoofline: r8Crowns + r8Mansards + r8SteppedParapets,
+      pitchedRoofs: r4bPitched, parapets: r4bParapets,
+    },
+    steppedTowers, // [{ x, z, height, w, d, tiers, topW, topD }]
+    steppedPlaza: steppedTowers.length
+      ? { x: steppedTowers[0].x, y: 0, z: steppedTowers[0].z, label: 'Stepped Quarter Plaza' }
+      : null,
     // Round-5: recessed geometry-window counts — the test harness reads
     // these to prove the pass.
     round5: {

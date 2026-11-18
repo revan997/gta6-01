@@ -33,6 +33,13 @@ export class AudioEngine {
     this.ambientHum = null; // { osc, gain } — low city hum, always on
     this.ambientWaves = null; // { src, gain, lfo } — surf swell near the beach
     this.ambientPad = null; // round 5: warm golden-hour chord pad, always on
+    // Round-8: road/wind noise — a looping band-passed noise node whose
+    // gain and filter frequency scale with speed, mixed low under the
+    // engine hum. Built lazily by startRoadNoise(); setRoadNoise() is
+    // called from setEngineSpeed() so it follows the car every frame.
+    this.roadNoise = null; // { src, gain, filter }
+    this.roadNoiseOn = false;
+    this._roadNoiseLevel = 0; // round-8: last normalised road-noise level (0..1), for getRoadNoiseLevel()
     this._engineGear = 1;
     // Simple laid-back chord loop in A minor (frequencies, Hz).
     this.musicChords = [
@@ -132,6 +139,68 @@ export class AudioEngine {
     src.start(t0);
   }
 
+  // ---- road / wind noise (round 8) ----
+  // A looping band-passed noise bed, mixed LOW under the engine (max
+  // gain 0.05, vs engine ~0.20): at idle it is silent, at speed it
+  // breathes up and its filter opens (400 -> 1400 Hz) so fast driving
+  // sounds like wind over the sculpted body, not just a louder engine.
+  // startRoadNoise() builds the loop once; setRoadNoise(n) scales it
+  // (n = normalised speed 0..1, or m/s with isMs); stopRoadNoise()
+  // fades it out. Safe no-ops before any AudioContext exists.
+
+  startRoadNoise() {
+    if (this.roadNoiseOn) return;
+    if (!this.ensureContext()) return;
+    this.roadNoiseOn = true;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._loopNoiseBuffer(2);
+    src.loop = true;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 0.7;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 0.0;
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.master);
+    src.start();
+    this.roadNoise = { src, gain, filter };
+  }
+
+  // n: normalised speed 0..1, or a speed in m/s when `isMs` is set.
+  // Call every frame while driving; also called from setEngineSpeed()
+  // so the road noise follows the engine without a second call site.
+  setRoadNoise(n, isMs = false) {
+    if (!this.roadNoiseOn || !this.ctx || !this.roadNoise) return;
+    const speed = isMs ? clamp(n / 40, 0, 1) : clamp(n, 0, 1);
+    // Round-8: remember the live level so getRoadNoiseLevel() reports
+    // the actual wind bed (0 at a crawl, ~1 flat out), not just on/off.
+    this._roadNoiseLevel = speed;
+    const t = this.ctx.currentTime;
+    // Silent below a crawl (0.04), up to 0.05 flat out — always under
+    // the engine hum, never a hiss on its own.
+    this.roadNoise.gain.gain.setTargetAtTime(speed < 0.04 ? 0 : 0.012 + speed * 0.038, t, 0.25);
+    this.roadNoise.filter.frequency.setTargetAtTime(400 + speed * 1000, t, 0.25);
+  }
+
+  // Round-8: the live road-noise level (0..1) from the last
+  // setRoadNoise() call — 0 when the bed is off or the car is crawling.
+  getRoadNoiseLevel() {
+    return this.roadNoiseOn ? (this._roadNoiseLevel ?? 0) : 0;
+  }
+
+  stopRoadNoise() {
+    if (!this.roadNoiseOn) return;
+    this.roadNoiseOn = false;
+    try {
+      const node = this.roadNoise;
+      if (this.ctx) node?.gain?.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
+      setTimeout(() => { try { node?.src?.stop(); } catch (_) { /* already stopped */ } }, 400);
+    } catch (_) { /* context already closed */ }
+    this.roadNoise = null;
+  }
+
   // ---- engine hum: pitch follows speed (0..1 normalised, or km/h) ----
 
   startEngine() {
@@ -159,6 +228,9 @@ export class AudioEngine {
     this.engineGain.connect(this.master);
     this.engineOsc.start();
     this.engineOsc2.start();
+    // Round-8: the road/wind bed starts with the engine (silent at
+    // idle until setEngineSpeed() scales it with speed).
+    this.startRoadNoise();
   }
 
   // speed: normalised 0..1, or a speed in m/s when `isMs` is set.
@@ -179,6 +251,9 @@ export class AudioEngine {
     this.engineOsc2.frequency.setTargetAtTime(freq * 2, t, 0.08);
     this.engineFilter.frequency.setTargetAtTime(420 + n * 1600, t, 0.1);
     this.engineGain.gain.setTargetAtTime(0.10 + n * 0.10, t, 0.1);
+    // Round-8: the road/wind bed follows the same normalised speed,
+    // mixed low under the engine (see startRoadNoise/setRoadNoise).
+    this.setRoadNoise(n);
   }
 
   // Current gearbox step (1–5), derived from the last setEngineSpeed call.
@@ -187,6 +262,7 @@ export class AudioEngine {
   stopEngine() {
     if (!this.engineOn) return;
     this.engineOn = false;
+    this.stopRoadNoise(); // round-8: the wind bed stops with the engine
     const t = this.ctx ? this.ctx.currentTime : 0;
     try {
       this.engineGain?.gain.setTargetAtTime(0, t, 0.1);
@@ -545,6 +621,7 @@ export class AudioEngine {
 
   stopAll() {
     this.stopEngine();
+    this.stopRoadNoise(); // round-8: belt and braces — engine stop covers it
     this.stopSiren();
     this.stopMusic();
     this.stopAmbient();
