@@ -82,6 +82,12 @@ const LANDMARK_RADIO = {
     'Dispatch: suspect is under the Spire — seal off Downtown, all units.',
     'Dispatch: eyes on the Spire — the suspect is circling the tower.',
   ],
+  // Round 7: the Solmar Pyramid — dispatch names it when the chase runs
+  // past the south-west block.
+  'Solmar Pyramid': [
+    'Dispatch: suspect is at the Pyramid — hold the south-west block, do not let him slip to the beach.',
+    'Dispatch: Pyramid unit — the suspect is circling the gold cap, cut him off at the plaza.',
+  ],
   'Marina Bridge': [
     'Dispatch: suspect is on the Marina Bridge — block both ends, do not let him cross.',
     'Dispatch: bridge unit — the suspect is over the basin, cut him off at the far side.',

@@ -189,7 +189,9 @@ export class HUD {
   // a few seconds when Rico first reaches a landmark (the Spire or the
   // Marina Bridge). Built lazily like the combo label, so index.html
   // needs no new slot. Re-showing the same landmark refreshes the timer.
-  showLandmark(name, seconds = 5) {
+  // Round 7: an optional `progress` string ("2/3") is shown after the
+  // name so the player can see how many landmarks are visited.
+  showLandmark(name, seconds = 5, progress = null) {
     if (!this.doc || typeof this.doc.createElement !== 'function' || !name) return;
     if (!this._landmarkEl) {
       const district = this._el('district');
@@ -204,7 +206,8 @@ export class HUD {
       this._landmarkEl = el;
     }
     const el = this._landmarkEl;
-    el.textContent = '★ ' + String(name).toUpperCase() + ' ★';
+    el.textContent = '★ ' + String(name).toUpperCase() + ' ★'
+      + (progress ? ' · ' + String(progress) : '');
     el.style.display = '';
     if (this._landmarkTimer) clearTimeout(this._landmarkTimer);
     this._landmarkTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(1, seconds) * 1000);

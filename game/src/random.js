@@ -28,6 +28,15 @@ export function lerp(a, b, t) {
   return a + (b - a) * clamp01(t);
 }
 
+// Round-7: smoothstep easing (0..1 in, 0..1 out, zero slope at both
+// ends) for camera moves that should ease in AND out — the landmark
+// focus blend in main.js uses it so the L-key swing starts and lands
+// softly instead of snapping. Pure function, deterministic.
+export function smoothstep(a, b, x) {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+}
+
 // Create a generator from a numeric seed.
 // Returns { next(), range(min, max), int(min, max), pick(array), chance(p) }.
 export function createRng(seed) {

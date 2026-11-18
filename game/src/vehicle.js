@@ -109,6 +109,15 @@ function buildCarMesh(model, color) {
     box(matBody, 0.08, 0.32, bedL, -(W / 2 - 0.06), wallY, bedZ);
     box(matBody, 0.08, 0.32, bedL, W / 2 - 0.06, wallY, bedZ);
     box(matBody, W - 0.3, 0.32, 0.08, 0, wallY, bedZ - bedL / 2);
+    // Round-7: dark bed-liner floor + tailgate seam, so the bed reads
+    // OPEN from the rear 3/4 chase view instead of a solid trunk. The
+    // liner sits just proud of the body top inside the walls (visible
+    // over the tailgate from a normal chase camera); the seam is a thin
+    // dark strip on the tailgate's rear face at mid-height. Two meshes,
+    // both matTrim — no new materials, no rotated boxes (sculpt probe
+    // counts unchanged).
+    box(matTrim, W - 0.24, 0.03, bedL - 0.1, 0, bodyY + shape.bodyH / 2 + 0.015, bedZ);
+    box(matTrim, W - 0.34, 0.035, 0.02, 0, wallY, bedZ - bedL / 2 - 0.045);
     box(matGlass, W - 0.3, shape.cabinH, shape.cabinL, 0, bodyY + shape.bodyH / 2 + shape.cabinH / 2, shape.cabinZ);
   } else if (model === 'van') {
     // Tall single-box van: body is the cabin.

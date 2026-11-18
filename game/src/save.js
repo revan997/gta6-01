@@ -6,14 +6,17 @@
 // instead of crashing on an old save.
 
 export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 // Version 1, 2 and 3 saves are still readable: they migrate with the v2
 // fields (playTimeSeconds, timesPlayed), the v3 fields (totalEarned,
 // bestTimes, missionsCompletedCount, gamesPlayed), the v4 field
 // (parBonuses) and the v5 field (landmarksVisited) defaulting to 0 / {}.
+// Round 7 (v6): landmarksVisited now covers three landmarks — the
+// Solmar Pyramid joins the Spire and the Bridge — so a v6 save records
+// Pyramid visits; older saves migrate with the new landmark unvisited.
 // MissionsCompletedCount is recomputed from the completed list when it is
 // missing, so even a v1 save reports the right count on load.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5];
+export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6];
 
 function safeParse(text) {
   try {

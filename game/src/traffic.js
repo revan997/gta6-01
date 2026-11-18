@@ -83,6 +83,9 @@ export const TOUR_STOPS = [
   { x: 320, z: -240, label: 'Marina Bridge (east end)' },
   { x: 240, z: -80, label: 'Marina Promenade' },
   { x: 0, z: 0, label: 'Downtown Plaza' },
+  // Round 7: the Solmar Pyramid joins the loop last, so the tour bus
+  // drives past all three landmarks before returning to the Spire.
+  { x: -80, z: 80, label: 'Solmar Pyramid' },
 ];
 const TOUR_SPEED = 9; // m/s, a slow sightseeing cruise
 const TOUR_DWELL = 3; // seconds paused at each stop

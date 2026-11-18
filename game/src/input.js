@@ -19,6 +19,8 @@ function onKeyDown(event) {
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(event.code)) {
     event.preventDefault();
   }
+  // Round 7: a key pressed while the tab is unfocused can leave a stale
+  // wheel delta behind — the blur handler clears it (see attach below).
 }
 
 function onKeyUp(event) {
@@ -51,7 +53,7 @@ function attach(canvas) {
   attachedCanvas = canvas || null;
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', () => { heldKeys.clear(); pressedKeys.clear(); });
+  window.addEventListener('blur', () => { heldKeys.clear(); pressedKeys.clear(); wheelDelta = 0; });
   document.addEventListener('mousemove', onMouseMove);
   window.addEventListener('wheel', onWheel, { passive: true }); // round 5: camera zoom
   document.addEventListener('pointerlockchange', onPointerLockChange);

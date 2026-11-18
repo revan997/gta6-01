@@ -56,9 +56,10 @@ export const CONFIG = {
     // Round-5: the default sky IS the sunset (deep violet zenith, gold
     // horizon); stageEnd reuses the same deep palette.
     // Round-6: zenith warmed violet -> warm plum (less magenta).
-    skyTop: 0x40203a,
+    // Round-7 (Lane A): zenith warmed again plum -> burnt sienna.
+    skyTop: 0x4a2a20,
     skyHorizon: 0xffc46b,
-    sunsetTop: 0x40203a,
+    sunsetTop: 0x4a2a20,
     sunsetHorizon: 0xff7a2a,
     sunsetFog: 0xd96a35,
     awningPalette: [0xc23a2a, 0x2e86c1, 0x1e8449, 0xe67e22, 0x8e44ad],
@@ -209,9 +210,12 @@ export const CONFIG = {
     // horizon) uses these mids unless the caller passes its own.
     // Round-6: mids warmed — magenta/rose replaced by warm mauve /
     // burnt orange so the sky reads golden sunset, not pink.
+    // Round-7: the 0.30 stop goes warmer still (mauve -> sienna) —
+    // paintSky() reads THESE mids (R5.sky.mids), not round6.sky.mids,
+    // so this is the value that actually renders.
     sky: {
       mids: [
-        { stop: 0.30, hex: 0x8a3a4a }, // warm mauve
+        { stop: 0.30, hex: 0x9a4a2e }, // warm sienna/terracotta (round 7)
         { stop: 0.52, hex: 0xd84a2e }, // burnt orange
         { stop: 0.72, hex: 0xff7a2a }, // deep orange band
         { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
@@ -268,9 +272,9 @@ export const CONFIG = {
   // CONFIG.colors / CONFIG.round5 values above mirror it.
   round6: {
     sky: {
-      top: 0x40203a, // warm plum zenith
+      top: 0x4a2a20, // burnt sienna zenith (round 7: was warm plum 0x40203a)
       mids: [
-        { stop: 0.30, hex: 0x8a3a4a }, // warm mauve
+        { stop: 0.30, hex: 0x9a4a2e }, // warm sienna / terracotta (round 7: was warm mauve 0x8a3a4a)
         { stop: 0.52, hex: 0xd84a2e }, // burnt orange
         { stop: 0.72, hex: 0xff7a2a }, // deep orange band
         { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
@@ -287,6 +291,20 @@ export const CONFIG = {
       spire: { x: 80, z: -80, height: 95, radiusTop: 7, radiusBottom: 13 },
       bridge: { x0: 150, x1: 330, z: -240, spans: 7 },
     },
+  },
+
+  // ---- Round-7 polish (Lane B): second skyline variation ----
+  // A stepped pyramid tower (Solmar Pyramid) on the empty block centred
+  // (-80, 80), south-west of the Spire, so the skyline has a third
+  // signature silhouette beyond the Spire and the Bridge. world.js reads
+  // this block; the round6 block above is untouched.
+  round7: {
+    landmarks: {
+      pyramid: { x: -80, z: 80, height: 64, tiers: 4 },
+    },
+    // The burnt-sienna zenith is darker than the plum, so the exposure
+    // lifts slightly (1.28, was 1.25) to keep the sky luminous.
+    exposure: 1.28,
   },
 
   // ---- Player movement (metres / second) ----

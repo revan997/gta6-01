@@ -168,7 +168,10 @@ export function createRenderContext(canvas) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   // Round-5: 1.12 (was 1.05) so the sunset colours stay rich — ACES
   // washes them out at the old exposure.
-  renderer.toneMappingExposure = CONFIG.round5 ? CONFIG.round5.exposure : 1.12;
+  // Round 7: the burnt-sienna zenith is darker than the plum, so the
+  // exposure lifts slightly (CONFIG.round7.exposure, 1.28) to keep the
+  // sky luminous; falls back to the round-5 value when the block is gone.
+  renderer.toneMappingExposure = CONFIG.round7?.exposure ?? (CONFIG.round5 ? CONFIG.round5.exposure : 1.12);
 
   const camera = new THREE.PerspectiveCamera(
     CONFIG.camera.fov,

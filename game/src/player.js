@@ -112,8 +112,12 @@ export function createPlayer(scene, world, spawn) {
         if (!lm || typeof lm.x !== 'number' || typeof lm.z !== 'number') continue;
         const key = lm.name || (lm.x + ',' + lm.z);
         if (this.landmarksVisited.has(key)) continue;
+        // Round 7: tall landmarks are visitable from a little further
+        // away — their visual prominence earns a wider radius (Spire
+        // 95 m -> ~37 m, Pyramid 64 m -> ~33 m, Bridge stays 25 m).
+        const r = radius + (lm.height ? Math.min(15, lm.height / 8) : 0);
         const d = Math.hypot((this.position.x || 0) - lm.x, (this.position.z || 0) - lm.z);
-        if (d <= radius) {
+        if (d <= r) {
           this.landmarksVisited.add(key);
           return lm.name || key;
         }

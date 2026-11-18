@@ -165,14 +165,29 @@ earned, games finished) before you press START.
 ## Screenshots
 
 The `screenshots/` folder holds staged shots from the test harness
-(menu, driving, chase, pause). The test itself (`round6-test.mjs` in
+(menu, driving, chase, pause). The test itself (`round7-test.mjs` in
 the workdir) loads the game in headless Chromium, drives it (menu →
 START → driving → carjack → wanted 1 → police spawn → mission advance
 → pause/resume), lands a live punch, completes mission 1, checks the
-save round-trip, triggers a busted, proves the round-6 warm sunset sky,
-sculpted cars, the Solmar Spire and the Marina Bridge, and requires zero
-console errors, zero warnings, zero failed requests and zero external
-requests in two separate full runs.
+save round-trip, triggers a busted, proves the round-7 luminous Solmar
+Spire, the burnt-sienna zenith, the Solmar Pyramid and the red pickup's
+open bed, and requires zero console errors, zero warnings, zero failed
+requests and zero external requests in two separate full runs.
+
+## Round 7 — luminous Spire, warmer zenith, skyline variation
+
+Round 7 closes the three gaps round 6 left open: the Solmar Spire
+tower is now luminous (an unlit warm-gradient glass material with lit
+window rows, wider glow bands and a soft additive halo, so the tower
+body reads as lit glass from the driving view instead of near-black
+metal); the sky zenith is burnt sienna (`0x4a2a20`, with the 0.30 mid
+stop warmed mauve → sienna) so the whole sky reads as a warm sunset
+from every camera angle, not just the driving view; and the skyline
+gains a third silhouette — the Solmar Pyramid, a 64 m stepped tower
+with a glowing gold cap at (-80, 80) — while the red pickup gets a
+dark bed-liner floor and a tailgate seam so it reads as a pickup (cab
++ open bed) from the chase view. Pressing L always frames the nearest
+landmark; the tour bus now stops at the Pyramid too; saves are v6.
 
 ## Credits
 

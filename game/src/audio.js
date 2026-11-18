@@ -339,11 +339,14 @@ export class AudioEngine {
   // rises and resolves, played once when Rico first reaches a landmark
   // (the Spire or the Marina Bridge). Warm and unhurried, like the
   // sunset sting, so it reads as a reward, not an alarm.
-  playLandmark() {
+  // Round-7: the Solmar Pyramid gets a brighter top note (a high fifth
+  // above the triad) so its discovery sounds distinct from the Spire.
+  playLandmark(name) {
     this._blip(523.25, 0.35, 'triangle', 0.32, 0);
     this._blip(659.25, 0.35, 'triangle', 0.3, 0.12);
     this._blip(783.99, 0.6, 'sine', 0.28, 0.24);
     this._blip(1046.5, 0.7, 'sine', 0.16, 0.4);
+    if (name === 'Solmar Pyramid') this._blip(1318.5, 0.8, 'sine', 0.18, 0.55);
   }
 
   playWantedUp() {

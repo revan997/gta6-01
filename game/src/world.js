@@ -31,6 +31,9 @@ export function buildWorld(scene, seedOrRng) {
   // Round-6 config (warmer sky, lower sun, landmarks) — falls back to
   // round-5 values where round-6 does not override.
   const R6 = CONFIG.round6 || {};
+  // Round-7 config (Solmar Pyramid landmark) — falls back to the
+  // hard-coded pyramid defaults below if the block is missing.
+  const R7 = CONFIG.round7 || {};
   const R6Sun = R6.sun || R5.sun;
   const sunCfg = {
     x: R6Sun.x !== undefined ? R6Sun.x : R5.sun.x,
@@ -680,6 +683,10 @@ export function buildWorld(scene, seedOrRng) {
       // so the seeded layout of later blocks is disturbed as little as
       // possible.
       if (cx === 80 && cz === -80) continue; // Solmar Spire reserve
+      // Round-7: the block centred (-80, 80) is reserved for the
+      // Solmar Pyramid landmark (built after the loop) — no normal
+      // buildings here. Same pattern as the Spire reserve above.
+      if (cx === -80 && cz === 80) continue; // Solmar Pyramid reserve
       const district = districtAt(cx, cz) || 'Downtown';
       const isDowntown = district === 'Downtown';
       const count = rng.int(CONFIG.world.buildingsPerBlockMin, CONFIG.world.buildingsPerBlockMax);
@@ -927,21 +934,65 @@ export function buildWorld(scene, seedOrRng) {
   spireBase.position.y = 0.5;
   spireBase.receiveShadow = true;
   spireGroup.add(spireBase);
+  // Round-7 (Lane A): the tower body is LUMINOUS, not glass. The old
+  // matGlass (MeshStandardMaterial, metalness 0.55, no env map) read as
+  // near-black from most angles, so the tower now gets its own
+  // MeshBasicMaterial (unlit — bright from every angle) with a canvas
+  // texture: a vertical warm gradient (deep amber base -> bright gold
+  // crown) with lit window rows wrapping the whole circumference, so
+  // it reads as lit glass from ALL sides, not just at the crown.
+  // One texture, one material, zero per-window meshes.
+  const spireTex = makeCanvasTexture(256, 512, (ctx, w, h) => {
+    // Vertical gradient (canvas top = tower top after flipY).
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0.00, '#ffd98a'); // bright gold at the crown
+    grad.addColorStop(0.15, '#ffc46b');
+    grad.addColorStop(0.45, '#f08a2e'); // amber mid-body
+    grad.addColorStop(0.75, '#c85a1e');
+    grad.addColorStop(1.00, '#8a3a14'); // deep amber-brown at the base
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    // Lit window rows wrapping the tower: deterministic lit/dark
+    // pattern (no rng), so the same build always paints the same tower.
+    for (let row = 0, y = 16; y < h - 12; row++, y += 16) {
+      for (let col = 0, x = 3; x < w - 8; col++, x += 16) {
+        const lit = ((col * 7 + row * 13) % 10) < 7; // ~70% lit
+        ctx.fillStyle = lit ? 'rgba(255,233,168,0.95)' : 'rgba(90,42,18,0.55)';
+        ctx.fillRect(x, y, 10, 7);
+      }
+    }
+    // Faint vertical mullions so the glass reads as panelled, not flat.
+    ctx.fillStyle = 'rgba(60,20,5,0.15)';
+    for (let x = 0; x < w; x += 16) ctx.fillRect(x, 0, 1, h);
+  });
+  spireTex.wrapS = THREE.RepeatWrapping;
+  const matSpire = new THREE.MeshBasicMaterial({ map: spireTex });
   const spireTower = new THREE.Mesh(
     new THREE.CylinderGeometry(spireCfg.radiusTop, spireCfg.radiusBottom, spireCfg.height, 24),
-    matGlass);
+    matSpire);
   spireTower.position.y = spireCfg.height / 2;
   spireTower.castShadow = true;
   spireTower.receiveShadow = true;
   spireGroup.add(spireTower);
-  // Lit window bands: thin emissive rings every ~12 m. The tower
-  // tapers, so each ring's radius is interpolated to sit just proud
-  // of the glass at its height.
-  const matSpireBand = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
-  for (let y = 12; y <= spireCfg.height - 11; y += 12) {
+  // Soft vertical glow: a slightly larger faint additive shell around
+  // the tower so it reads from the driving view at distance. It casts
+  // no shadow and writes no depth; the tower itself occludes its far side.
+  const spireGlow = new THREE.Mesh(
+    new THREE.CylinderGeometry(spireCfg.radiusTop + 0.7, spireCfg.radiusBottom + 0.7, spireCfg.height, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xff9a3c, transparent: true, opacity: 0.10,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+  spireGlow.position.y = spireCfg.height / 2;
+  spireGroup.add(spireGlow);
+  // Lit window bands: brighter, wider rings every ~10 m (8 rings, was
+  // 7 thin ones every 12 m). The tower tapers, so each ring's radius
+  // is interpolated to sit just proud of the glass at its height.
+  const matSpireBand = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+  for (let y = 8; y <= spireCfg.height - 11; y += 10) {
     const r = spireCfg.radiusBottom
       + (spireCfg.radiusTop - spireCfg.radiusBottom) * (y / spireCfg.height);
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.15, r + 0.15, 0.8, 24), matSpireBand);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.15, r + 0.15, 1.6, 24), matSpireBand);
     band.position.y = y;
     spireGroup.add(band);
   }
@@ -1031,10 +1082,59 @@ export function buildWorld(scene, seedOrRng) {
     lampGlow.position.set(lx, ly + 4.2, bridgeCfg.z - 2.6);
     bridgeGroup.add(lampGlow);
   }
+  // (c) Solmar Pyramid — stepped pyramid tower, third skyline
+  // silhouette. Four stacked tapering sandstone tiers (18 + 16 + 14 +
+  // 12 m = 60 m) with a warm lit ledge at each step and a glowing gold
+  // pyramid cap (~64 m total). Its block (centred -80, 80, south-west
+  // of the Spire) was left empty by the building loop above, so nothing
+  // underneath it needs removing. Deterministic (no rng consumed).
+  // Cheap: shared boxGeo, two local materials, 9 meshes.
+  const pyramidCfg = (R7.landmarks && R7.landmarks.pyramid)
+    || { x: -80, z: 80, height: 64, tiers: 4 };
+  const pyramidGroup = new THREE.Group();
+  pyramidGroup.position.set(pyramidCfg.x, 0, pyramidCfg.z);
+  scene.add(pyramidGroup);
+  const matPyramid = new THREE.MeshStandardMaterial({ color: 0xb97e46, roughness: 0.85 });
+  const matPyramidLit = new THREE.MeshBasicMaterial({ color: 0xffd98a });
+  // Tier widths taper 36 -> 28 -> 20 -> 12; heights 18 / 16 / 14 / 12.
+  const pyramidTiers = [
+    { w: 36, h: 18 }, { w: 28, h: 16 }, { w: 20, h: 14 }, { w: 12, h: 12 },
+  ];
+  let pyramidY = 0;
+  for (const tier of pyramidTiers) {
+    const tierMesh = new THREE.Mesh(boxGeo, matPyramid);
+    tierMesh.scale.set(tier.w, tier.h, tier.w);
+    tierMesh.position.y = pyramidY + tier.h / 2;
+    tierMesh.castShadow = true;
+    tierMesh.receiveShadow = true;
+    pyramidGroup.add(tierMesh);
+    // Warm lit ledge at the tier top, slightly proud of the tier, so
+    // each step reads as a glowing cornice at dusk.
+    const ledge = new THREE.Mesh(boxGeo, matPyramidLit);
+    ledge.scale.set(tier.w + 0.8, 0.6, tier.w + 0.8);
+    ledge.position.y = pyramidY + tier.h + 0.3;
+    pyramidGroup.add(ledge);
+    pyramidY += tier.h;
+  }
+  // Glowing gold pyramid cap (4-sided cone), rotated so its faces
+  // align with the tiers. Base square ~12 m across, matching the top
+  // tier; apex at pyramidY + 4 = 64 m.
+  const pyramidCap = new THREE.Mesh(new THREE.ConeGeometry(8.5, 4, 4), matPyramidLit);
+  pyramidCap.rotation.y = Math.PI / 4;
+  pyramidCap.position.y = pyramidY + 2;
+  pyramidGroup.add(pyramidCap);
+  // Collision footprint so the player / car cannot pass through it.
+  buildings.push({
+    minX: pyramidCfg.x - 18, maxX: pyramidCfg.x + 18,
+    minZ: pyramidCfg.z - 18, maxZ: pyramidCfg.z + 18,
+    height: pyramidCfg.height, district: 'Downtown',
+    x: pyramidCfg.x, z: pyramidCfg.z, w: 36, d: 36,
+  });
   const landmarks = {
     spire: { x: spireCfg.x, z: spireCfg.z, height: spireCfg.height },
     bridge: { x0: bridgeCfg.x0, x1: bridgeCfg.x1, z: bridgeCfg.z, spans: bridgeCfg.spans },
-    count: 2,
+    pyramid: { x: pyramidCfg.x, z: pyramidCfg.z, height: pyramidCfg.height },
+    count: 3,
   };
 
   // ---- Rooftop billboard + helipad (round-3 polish) ----
@@ -1716,6 +1816,12 @@ export function buildWorld(scene, seedOrRng) {
     // these to prove the pass.
     landmarks,
     round6: { skyWarm: true, landmarks: 2, spireHeight: 95, bridgeSpans: 7 },
+    // Round-7: Solmar Pyramid landmark — the test harness reads these
+    // to prove the pass. spireLuminous is a RUNTIME check of the
+    // tower's actual material (unlit MeshBasicMaterial), not a config
+    // claim — it is false if the tower ever goes back to the dark metal
+    // Standard material.
+    round7: { landmarks: 3, pyramidHeight: 64, pyramidTiers: 4, spireLuminous: spireTower.material.isMeshBasicMaterial === true },
     districts: CONFIG.districts,
     citySize: CONFIG.citySize,
     halfCity: half,

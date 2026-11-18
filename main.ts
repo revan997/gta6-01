@@ -46,22 +46,26 @@ if (!existsSync(gameFavicon)) {
     throw new Error(`missing input: game/favicon.ico at ${gameFavicon} is not a valid ICO file (bad magic bytes)`);
   }
 }
-// Round 6: the warm sunset palette must be present — the submission's
-// sky is a warm orange/gold sunset (round 6 shifted it warmer than the
-// round-5 magenta/rose, and lowered the sun), and a copy that lost
-// CONFIG.round6 would ship the old magenta sky. Fail loudly here
-// instead of at the intake check.
+// Round 7: the burnt-sienna sunset palette must be present — the
+// submission's sky is a warm burnt-sienna/orange sunset (round 7 warmed
+// the zenith again, plum 0x40203a -> burnt sienna 0x4a2a20, and the
+// 0.30 mid stop mauve -> sienna), the Spire tower is luminous, and the
+// Solmar Pyramid (third landmark) is registered. A copy that lost
+// CONFIG.round7 would ship the old plum sky and two landmarks. Fail
+// loudly here instead of at the intake check.
 {
   const configMod = await import(join(gameDir, 'src', 'config.js'));
   const cfg = configMod?.CONFIG;
-  const sunsetOk = cfg?.colors?.skyTop === 0x40203a
+  const sunsetOk = cfg?.colors?.skyTop === 0x4a2a20
     && Array.isArray(cfg?.round5?.sky?.mids) && cfg.round5.sky.mids.length >= 4
-    && cfg?.round6?.sky && cfg?.round6?.landmarks?.spire;
+    && cfg.round5.sky.mids[0]?.hex === 0x9a4a2e
+    && cfg?.round6?.sky && cfg?.round6?.landmarks?.spire
+    && cfg?.round7?.landmarks?.pyramid;
   if (!sunsetOk) {
-    throw new Error('missing input: CONFIG.round6 warm sunset palette / landmarks not found in game/src/config.js');
+    throw new Error('missing input: CONFIG.round7 burnt-sienna palette / Solmar Pyramid not found in game/src/config.js');
   }
-  console.log(`sunset palette: skyTop #${cfg.colors.skyTop.toString(16).padStart(6, '0')} horizon #${cfg.colors.skyHorizon.toString(16).padStart(6, '0')} (round 6 warm)`);
-  console.log(`landmarks: Solmar Spire at (${cfg.round6.landmarks.spire.x}, ${cfg.round6.landmarks.spire.z}), ${cfg.round6.landmarks.spire.height} m; Marina Bridge x ${cfg.round6.landmarks.bridge.x0}..${cfg.round6.landmarks.bridge.x1} at z ${cfg.round6.landmarks.bridge.z}`);
+  console.log(`sunset palette: skyTop #${cfg.colors.skyTop.toString(16).padStart(6, '0')} horizon #${cfg.colors.skyHorizon.toString(16).padStart(6, '0')} (round 7 burnt sienna)`);
+  console.log(`landmarks: Solmar Spire at (${cfg.round6.landmarks.spire.x}, ${cfg.round6.landmarks.spire.z}), ${cfg.round6.landmarks.spire.height} m; Marina Bridge x ${cfg.round6.landmarks.bridge.x0}..${cfg.round6.landmarks.bridge.x1} at z ${cfg.round6.landmarks.bridge.z}; Solmar Pyramid at (${cfg.round7.landmarks.pyramid.x}, ${cfg.round7.landmarks.pyramid.z}), ${cfg.round7.landmarks.pyramid.height} m`);
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)

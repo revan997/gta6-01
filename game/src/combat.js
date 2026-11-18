@@ -404,8 +404,12 @@ export class CombatSystem {
       const d = Math.hypot((position.x || 0) - lm.x, (position.z || 0) - lm.z);
       if (d <= radius) {
         this.landmarkBonusClaims.add(key);
-        this.landmarkBonusTotal += 25;
-        return { landmark: lm.name || key, bonus: 25 };
+        // Round 7: the showdown bonus scales with the landmark's height
+        // — taller landmarks pay more (Spire 95 m -> $35, Pyramid
+        // 64 m -> $30, Bridge / unmeasured -> $25).
+        const bonus = lm.height ? (lm.height >= 90 ? 35 : lm.height >= 60 ? 30 : 25) : 25;
+        this.landmarkBonusTotal += bonus;
+        return { landmark: lm.name || key, bonus };
       }
     }
     return null;

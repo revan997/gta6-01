@@ -11,7 +11,7 @@
 // No network anywhere: everything is local files, Web Audio synthesis only.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { createRng, clamp01, lerp } from './random.js';
+import { createRng, clamp01, lerp, smoothstep } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
 import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
@@ -71,13 +71,15 @@ world.locations = {
 };
 world.getLocation = (name) => world.locations[name] || null;
 
-// ---- round-6 landmarks --------------------------------------------------
-// The Solmar Spire and the Marina Bridge (world.landmarks, Lane L).
+// ---- round-6/7 landmarks -------------------------------------------------
+// The Solmar Spire, the Marina Bridge (round 6) and the Solmar Pyramid
+// (round 7) — world.landmarks, Lane L / Lane B.
 // Each entry carries the VISIT point (x, z — where Rico stands to
-// "visit" it: the Spire's base, the Bridge's western abutment) and the
-// FOCUS point (focusX/Z/Y — where the L key points the camera: the
-// Spire's crown, the Bridge's mid-span). Defensive: an older world
-// build returns no landmarks, and every caller guards on an empty list.
+// "visit" it: the Spire's base, the Bridge's western abutment, the
+// Pyramid's base) and the FOCUS point (focusX/Z/Y — where the L key
+// points the camera: the Spire's crown, the Bridge's mid-span, the
+// Pyramid's gold cap). Defensive: an older world build returns no
+// landmarks, and every caller guards on an empty list.
 const landmarkList = (() => {
   const lm = world.landmarks || null;
   const list = [];
@@ -93,6 +95,13 @@ const landmarkList = (() => {
       name: 'Marina Bridge',
       x: lm.bridge.x0, z: lm.bridge.z, // western abutment — reachable on foot
       focusX: (lm.bridge.x0 + lm.bridge.x1) / 2, focusZ: lm.bridge.z, focusY: 8,
+    });
+  }
+  if (lm?.pyramid) {
+    list.push({
+      name: 'Solmar Pyramid',
+      x: lm.pyramid.x, z: lm.pyramid.z,
+      focusX: lm.pyramid.x, focusZ: lm.pyramid.z, focusY: lm.pyramid.height || 64,
     });
   }
   return list;
@@ -630,10 +639,11 @@ function updateCamera(dt) {
   let lookY = (focus.y || 0) + 1.4;
   // Round 6: the L key points the camera at a landmark — while the
   // focus window is open, the look target blends toward the landmark
-  // (ease in/out over 0.5 s), then blends back to the player.
+  // (ease in/out over 0.5 s, smoothstepped in round 7 so the swing
+  // starts and lands softly), then blends back to the player.
   if (landmarkFocus && performance.now() < landmarkFocus.until) {
     const remaining = landmarkFocus.until - performance.now();
-    const w = clamp01(Math.min((4000 - remaining) / 500, remaining / 500));
+    const w = smoothstep(0, 1, clamp01(Math.min((4000 - remaining) / 500, remaining / 500)));
     lookX = lerp(lookX, landmarkFocus.x, w);
     lookZ = lerp(lookZ, landmarkFocus.z, w);
     lookY = lerp(lookY, landmarkFocus.y, w);
@@ -730,7 +740,11 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   // Round 6: L looks at the nearest landmark — the camera swings to
-  // frame the Solmar Spire or the Marina Bridge for a few seconds.
+  // frame the nearest landmark for a few seconds.
+  // Round 7: NO cycling — L always frames the NEAREST landmark. (An
+  // earlier round-7 draft cycled to the next landmark while a focus was
+  // active, but that made L unpredictable: walking to the Pyramid and
+  // pressing L framed the Bridge instead. Nearest is the contract.)
   if (code === 'KeyL') {
     if (state === 'playing' && landmarkList.length) {
       const nearest = nearestLandmark(player.position);
@@ -902,9 +916,10 @@ function update(dt) {
   if (landmarkList.length && typeof player.checkLandmark === 'function') {
     const visited = player.checkLandmark(landmarkList, 25);
     if (visited) {
-      hud.showLandmark?.(visited, 5);
-      if (typeof audio.playLandmark === 'function') audio.playLandmark();
-      showMessage(`Landmark visited: ${visited}.`);
+      const progress = `${player.landmarksVisited.size}/${landmarkList.length}`;
+      hud.showLandmark?.(visited, 5, progress);
+      if (typeof audio.playLandmark === 'function') audio.playLandmark(visited);
+      showMessage(`Landmark visited: ${visited} (${progress}).`);
       saveProgress(missions.getCurrentMissionNumber?.() ?? null);
     }
   }
@@ -1087,7 +1102,9 @@ function stageEnd() {
   sunLight.intensity = 2.4;
   sunLight.position.set(-260, 70, 260);
   hemiLight.intensity = 0.85;
-  renderer.toneMappingExposure = 1.25;
+  // Round 7: the mission-complete vista uses the round-7 exposure
+  // (1.28) so the burnt-sienna sky stays luminous at the end screen.
+  renderer.toneMappingExposure = CONFIG.round7?.exposure ?? 1.25;
   // Player on the camera side of the parked car, facing the water.
   // Both stand ON the x=200 road: the marina shore blocks hold buildings
   // (the previous spot put them behind one).
@@ -1182,6 +1199,8 @@ window.__solmar = {
   },
   // Round-6 probes: the warm sunset sky, sculpted cars, the Solmar
   // Spire and the Marina Bridge — the three gaps round 6 exists to close.
+  // Round 7 warmed the zenith again (0x40203a -> 0x4a2a20), so the
+  // `warm` flag now checks the round-7 burnt-sienna zenith.
   get round6() {
     const r6 = CONFIG.round6 || {};
     const cars = typeof traffic.getCars === 'function' ? traffic.getCars() : [];
@@ -1191,11 +1210,42 @@ window.__solmar = {
         horizon: '#' + CONFIG.colors.skyHorizon.toString(16).padStart(6, '0'),
         fog: scene.fog ? '#' + scene.fog.color.getHexString() : null,
         sun: r6.sun || null,
-        warm: !!(r6.sky && r6.sky.top === 0x40203a),
+        warm: !!(r6.sky && r6.sky.top === 0x4a2a20),
       },
       landmarks: world.landmarks || null,
       landmarkList: landmarkList.map((lm) => ({ name: lm.name, x: lm.x, z: lm.z })),
       visited: [...(player.landmarksVisited || [])],
+      cars: cars.map((c) => ({ model: c.model || c.kind || null, sculpt: c.sculpt || null })),
+    };
+  },
+  // Round-7 probes: the luminous Spire, the burnt-sienna zenith, the
+  // Solmar Pyramid and the red pickup — the three gaps round 7 exists
+  // to close. `spireLuminous` is a runtime check of the tower's actual
+  // material (unlit MeshBasicMaterial), not a config claim.
+  get round7() {
+    const r7 = CONFIG.round7 || {};
+    const r6 = CONFIG.round6 || {};
+    const cars = typeof traffic.getCars === 'function' ? traffic.getCars() : [];
+    const pickup = cars.find((c) => String(c.model || '').toLowerCase().includes('pickup'));
+    return {
+      sky: {
+        top: '#' + CONFIG.colors.skyTop.toString(16).padStart(6, '0'),
+        horizon: '#' + CONFIG.colors.skyHorizon.toString(16).padStart(6, '0'),
+        fog: scene.fog ? '#' + scene.fog.color.getHexString() : null,
+        sun: r6.sun || null,
+        zenith: CONFIG.colors.skyTop,
+        // The mids paintSky() actually renders (R5.sky.mids), not the
+        // round6 mirror — the 0.30 stop must be warm sienna, not mauve.
+        mids: (CONFIG.round5 && CONFIG.round5.sky && CONFIG.round5.sky.mids) || null,
+        warm: CONFIG.colors.skyTop === 0x4a2a20,
+      },
+      spireLuminous: !!(world.round7 && world.round7.spireLuminous),
+      landmarks: world.landmarks || null,
+      landmarkList: landmarkList.map((lm) => ({ name: lm.name, x: lm.x, z: lm.z })),
+      pyramid: (world.landmarks && world.landmarks.pyramid) || null,
+      round7world: world.round7 || null,
+      visited: [...(player.landmarksVisited || [])],
+      pickupSculpt: pickup ? (pickup.sculpt || null) : null,
       cars: cars.map((c) => ({ model: c.model || c.kind || null, sculpt: c.sculpt || null })),
     };
   },

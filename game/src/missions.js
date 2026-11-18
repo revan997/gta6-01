@@ -357,6 +357,7 @@ export class MissionManager {
     const dist = Math.round(bestD);
     if (best.name === 'Solmar Spire') return `The Solmar Spire towers over Downtown, ${dist} m away — worth a look.`;
     if (best.name === 'Marina Bridge') return `The Marina Bridge arches over the basin, ${dist} m away.`;
+    if (best.name === 'Solmar Pyramid') return `The Solmar Pyramid's gold cap glints over the south-west block, ${dist} m away.`;
     return `${best.name || 'A landmark'} is ${dist} m away.`;
   }
 
