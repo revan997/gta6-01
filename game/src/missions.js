@@ -1,0 +1,412 @@
+// Solmar Bay — Missions (Lane B)
+// Five-mission story chain for Rico Vega, driver for fixer Mama Lou,
+// with crew members Dante and Priya. Each mission has a briefing, a
+// sequence of objectives with map markers, success and failure conditions,
+// and a cash reward. All randomness comes from the seeded generator passed
+// in (an object with next()/range()/pick(), or a factory taking a seed).
+// Never uses Math.random.
+//
+// Mission flow (update(dt, world, player, systems)):
+//   systems may carry { police, traffic, combat, audio, addMoney } — the
+//   game loop passes whatever it has; every mission also works with the
+//   player position alone, so the chain is testable standalone.
+// Objective completion is position-based (reach the marker) except where
+// noted (tailing, escape timers). Markers are plain { x, y, z } positions
+// taken from the world description when it offers named locations.
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+function dist2D(a, b) {
+  const dx = a.x - b.x;
+  const dz = a.z - b.z;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
+function makeSeededRng(seed) {
+  let s = (seed >>> 0) || 0x9e3779b9;
+  const next = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  return {
+    next,
+    range: (lo, hi) => lo + next() * (hi - lo),
+    pick: (arr) => arr[Math.floor(next() * arr.length)],
+  };
+}
+
+function normaliseRng(rng, seed) {
+  if (rng && typeof rng.range === 'function' && typeof rng.next === 'function') return rng;
+  if (typeof rng === 'function') {
+    const g = rng(seed);
+    if (g && typeof g.range === 'function') return g;
+  }
+  return makeSeededRng(seed);
+}
+
+// Named places in Solmar Bay. The world may override any of these through
+// world.locations / world.getLocation(name); otherwise these defaults are
+// used so the missions are playable on the fallback map.
+const DEFAULT_LOCATIONS = {
+  mamaLou: { x: 0, y: 0, z: 0, label: "Mama Lou's" },
+  marina: { x: 120, y: 0, z: -40, label: 'Marina' },
+  northBeach: { x: -90, y: 0, z: -110, label: 'North Beach' },
+  hideout: { x: -60, y: 0, z: 90, label: 'Hideout' },
+  docks: { x: 150, y: 0, z: 80, label: 'Docks' },
+  carLot: { x: -130, y: 0, z: 30, label: 'Car Lot' },
+  palmsHotel: { x: 60, y: 0, z: -120, label: 'Palms Hotel' },
+  harbour: { x: 170, y: 0, z: 120, label: 'Harbour' },
+  lookout: { x: -40, y: 0, z: -140, label: 'Lookout' },
+};
+
+const MISSION_DEFS = [
+  {
+    number: 1,
+    id: 'first-run',
+    name: 'First Run',
+    briefing: "Mama Lou: 'Rico, first job. Pick up the package at the Marina and bring it to North Beach. Keep it clean — and keep it quick.' Dante rides along to show you the ropes.",
+    reward: 500,
+    objectives: [
+      { id: 'pickup', text: 'Pick up the package at the Marina', location: 'marina', radius: 8 },
+      { id: 'deliver', text: 'Deliver the package to North Beach', location: 'northBeach', radius: 8 },
+    ],
+    // Ends with one star of police heat.
+    onComplete: (ctx) => { ctx.police?.addWanted?.(1); },
+    failText: 'The package was lost.',
+  },
+  {
+    number: 2,
+    id: 'hot-wheels',
+    name: 'Hot Wheels',
+    briefing: "Dante: 'The cops made the drop, Rico! Two stars and climbing. Lose them and get to the Hideout — do NOT bring them to Mama Lou's door.'",
+    reward: 800,
+    startWanted: 2,
+    objectives: [
+      { id: 'escape', text: 'Lose the police, then reach the Hideout', location: 'hideout', radius: 10, needsClear: true },
+    ],
+    failText: 'Busted — the cops took you in.',
+  },
+  {
+    number: 3,
+    id: 'borrowed-beauty',
+    name: 'Borrowed Beauty',
+    briefing: "Priya: 'A Palm Coupe, pearl white, parked at the Car Lot. The owner owes Mama Lou. Take it — quietly — and bring it to the Docks. No scratches, Rico.'",
+    reward: 1200,
+    objectives: [
+      { id: 'steal', text: 'Steal the pearl-white Palm Coupe at the Car Lot', location: 'carLot', radius: 8, needsCar: 'Palm Coupe' },
+      { id: 'deliver', text: 'Deliver the Palm Coupe to the Docks', location: 'docks', radius: 8, needsCar: 'Palm Coupe' },
+    ],
+    failText: 'The Palm Coupe was wrecked or lost.',
+  },
+  {
+    number: 4,
+    id: 'long-tail',
+    name: 'Long Tail',
+    briefing: "Mama Lou: 'A courier leaves the Palms Hotel at dusk. Follow him, Rico — find where he sleeps. But if he spots you, the whole thing is blown. Stay back. Stay patient.'",
+    reward: 1500,
+    objectives: [
+      { id: 'tail', text: 'Tail the courier from the Palms Hotel — do not get spotted', location: 'palmsHotel', radius: 6, tail: true, duration: 60 },
+      { id: 'report', text: 'The courier stopped at the Lookout — report back to Mama Lou', location: 'mamaLou', radius: 8 },
+    ],
+    failText: 'Spotted — the courier burned the route.',
+  },
+  {
+    number: 5,
+    id: 'harbour-heist',
+    name: 'Harbour Heist',
+    briefing: "Mama Lou: 'The big one. The Harbour vault boat lands at midnight. Grab the cash, then run — four stars, the whole city. Get to the Hideout alive and we are all rich.' Priya drives the getaway boat plan; Dante watches the road.",
+    reward: 5000,
+    objectives: [
+      { id: 'grab', text: 'Grab the cash at the Harbour', location: 'harbour', radius: 8 },
+      { id: 'escape', text: 'Escape the four-star chase — reach the Hideout', location: 'hideout', radius: 10, needsClear: true },
+    ],
+    startWantedOnGrab: 4,
+    failText: 'The heist failed — busted or wasted at the Harbour.',
+  },
+];
+
+export class MissionManager {
+  constructor(options = {}) {
+    this.rng = normaliseRng(options.rng, options.seed ?? 777);
+    this.events = options.events || {}; // { onMissionStart, onObjective, onComplete, onFail }
+    this.locations = { ...DEFAULT_LOCATIONS, ...(options.locations || {}) };
+    this.completed = new Set(options.completed || []);
+    this.current = null; // active mission runtime state
+    this.lastReward = 0;
+    this.lastCompletedMission = null;
+    this.lastFailedMission = null;
+  }
+
+  _emit(name, payload) {
+    const fn = this.events[name];
+    if (typeof fn === 'function') fn(payload);
+  }
+
+  _location(world, name) {
+    if (world) {
+      if (typeof world.getLocation === 'function') {
+        const found = world.getLocation(name);
+        if (found) return found;
+      }
+      if (world.locations && world.locations[name]) return world.locations[name];
+      if (world.markers && world.markers[name]) return world.markers[name];
+    }
+    return this.locations[name] || { x: 0, y: 0, z: 0, label: name };
+  }
+
+  listMissions() {
+    return MISSION_DEFS.map((m) => ({
+      number: m.number, id: m.id, name: m.name,
+      briefing: m.briefing, reward: m.reward, completed: this.completed.has(m.number),
+    }));
+  }
+
+  getMissionDef(number) {
+    return MISSION_DEFS.find((m) => m.number === number) || null;
+  }
+
+  getCurrentMission() {
+    return this.current ? this.getMissionDef(this.current.number) : null;
+  }
+
+  getCurrentMissionNumber() {
+    return this.current ? this.current.number : null;
+  }
+
+  // Start mission `number` (1–5). Returns the briefing, or null if the
+  // number is invalid or a mission is already running.
+  startMission(number, world, systems = {}) {
+    const def = this.getMissionDef(number);
+    if (!def) return null;
+    if (this.current) return null;
+    this.current = {
+      number: def.number,
+      objectiveIndex: 0,
+      startedAt: 0,
+      elapsed: 0,
+      tailTimer: 0,
+      tailSpotted: false,
+      failed: false,
+      complete: false,
+      rewardEarned: 0,
+      failReason: null,
+    };
+    this.lastReward = 0;
+    this.lastFailedMission = null;
+    if (def.startWanted && systems.police) systems.police.addWanted?.(def.startWanted);
+    this._emit('onMissionStart', { number: def.number, name: def.name, briefing: def.briefing });
+    return { number: def.number, name: def.name, briefing: def.briefing, reward: def.reward };
+  }
+
+  // Abort the active mission without reward.
+  abandonMission(reason = 'Mission abandoned.') {
+    if (!this.current) return false;
+    const def = this.getMissionDef(this.current.number);
+    this.current.failed = true;
+    this.current.failReason = reason;
+    this.lastFailedMission = def?.number ?? null;
+    this._emit('onFail', { number: def?.number, name: def?.name, reason });
+    this.current = null;
+    return true;
+  }
+
+  getCurrentObjective() {
+    if (!this.current) return null;
+    const def = this.getMissionDef(this.current.number);
+    const obj = def.objectives[this.current.objectiveIndex];
+    if (!obj) return null;
+    return obj.text;
+  }
+
+  getCurrentObjectiveText() { return this.getCurrentObjective(); }
+
+  // Marker position { x, y, z, label } for the current objective, or null.
+  getMarkerPosition(world) {
+    if (!this.current) return null;
+    const def = this.getMissionDef(this.current.number);
+    const obj = def.objectives[this.current.objectiveIndex];
+    if (!obj) return null;
+    if (obj.tail && this.current.tailTarget) return { ...this.current.tailTarget, label: 'Courier' };
+    const loc = this._location(world, obj.location);
+    return { x: loc.x, y: loc.y || 0, z: loc.z, label: loc.label || obj.location };
+  }
+
+  isComplete() { return this.lastCompletedMission !== null && !this.current; }
+  isMissionComplete() { return this.lastCompletedMission !== null; }
+  isFailed() { return this.lastFailedMission !== null; }
+  getRewardEarned() { return this.lastReward; }
+  getCompletedMissions() { return [...this.completed].sort((a, b) => a - b); }
+  hasCompleted(number) { return this.completed.has(number); }
+
+  _advance(world, systems) {
+    const def = this.getMissionDef(this.current.number);
+    this.current.objectiveIndex += 1;
+    this.current.tailTimer = 0;
+    if (this.current.objectiveIndex >= def.objectives.length) {
+      this._complete(world, systems);
+    } else {
+      const next = def.objectives[this.current.objectiveIndex];
+      this._emit('onObjective', { number: def.number, objective: next.text });
+      // Entering the tail objective spawns the courier near the hotel.
+      if (next.tail) this._startTail(world);
+    }
+  }
+
+  _startTail(world) {
+    const hotel = this._location(world, 'palmsHotel');
+    // The courier drives a slow loop from the hotel toward the lookout.
+    const lookout = this._location(world, 'lookout');
+    this.current.tailTarget = { x: hotel.x, y: 0, z: hotel.z };
+    this.current.tailFrom = { ...this.current.tailTarget };
+    this.current.tailTo = { x: lookout.x, y: 0, z: lookout.z };
+    this.current.tailProgress = 0;
+  }
+
+  _complete(world, systems) {
+    const def = this.getMissionDef(this.current.number);
+    this.completed.add(def.number);
+    this.lastReward = def.reward;
+    this.lastCompletedMission = def.number;
+    if (typeof systems.addMoney === 'function') systems.addMoney(def.reward);
+    if (typeof def.onComplete === 'function') {
+      def.onComplete({ police: systems.police, traffic: systems.traffic, world });
+    }
+    this._emit('onComplete', { number: def.number, name: def.name, reward: def.reward });
+    if (systems.audio?.playMissionComplete) systems.audio.playMissionComplete();
+    this.current = null;
+  }
+
+  _fail(systems, reason) {
+    const def = this.getMissionDef(this.current.number);
+    this.lastFailedMission = def.number;
+    this.current.failed = true;
+    this.current.failReason = reason;
+    this._emit('onFail', { number: def.number, name: def.name, reason });
+    this.current = null;
+  }
+
+  // update(dt, world, player, systems)
+  update(dt, world, player, systems = {}) {
+    if (!dt || dt <= 0 || !this.current) return;
+    const step = Math.min(dt, 0.05);
+    this.current.elapsed += step;
+    const def = this.getMissionDef(this.current.number);
+    const obj = def.objectives[this.current.objectiveIndex];
+    if (!obj) return;
+    if (!player?.position) return;
+
+    // Failure: busted or wasted ends any mission.
+    if (systems.police?.isBusted?.()) return this._fail(systems, 'Busted by the police.');
+    if (systems.police?.isWasted?.() || (typeof player.health === 'number' && player.health <= 0)) {
+      return this._fail(systems, 'Wasted — Rico went down.');
+    }
+
+    const marker = this.getMarkerPosition(world);
+    const playerPos = player.position;
+
+    // --- Tailing objective: follow the courier, stay out of his sight. ---
+    if (obj.tail) {
+      // Move the courier slowly along hotel -> lookout.
+      this.current.tailProgress = clamp((this.current.tailProgress || 0) + (step * 6) / 200, 0, 1);
+      const from = this.current.tailFrom;
+      const to = this.current.tailTo;
+      const p = this.current.tailProgress;
+      this.current.tailTarget = {
+        x: from.x + (to.x - from.x) * p,
+        y: 0,
+        z: from.z + (to.z - from.z) * p,
+      };
+      const d = dist2D(playerPos, this.current.tailTarget);
+      // Spotted: closer than 12m while roughly in front of the courier,
+      // or closer than 6m at all. (Courier faces along his route.)
+      const courierHeading = Math.atan2(to.x - from.x, to.z - from.z);
+      const dx = playerPos.x - this.current.tailTarget.x;
+      const dz = playerPos.z - this.current.tailTarget.z;
+      const inFront = Math.sin(courierHeading) * dx + Math.cos(courierHeading) * dz;
+      if ((d < 12 && inFront > 0) || d < 6) {
+        this.current.tailSpotted = true;
+        return this._fail(systems, def.failText);
+      }
+      // Lost him: too far away for too long.
+      if (d > 70) {
+        this.current.tailTimer += step;
+        if (this.current.tailTimer > 8) return this._fail(systems, 'Lost the courier.');
+      } else {
+        this.current.tailTimer = 0;
+      }
+      this.current.tailElapsed = (this.current.tailElapsed || 0) + step;
+      if (this.current.tailElapsed >= (obj.duration || 60) || this.current.tailProgress >= 1) {
+        this._advance(world, systems);
+      }
+      return;
+    }
+
+    // --- Escape objectives: the marker only counts once heat is gone. ---
+    if (obj.needsClear && systems.police) {
+      if (systems.police.getWantedLevel?.() > 0) {
+        // Still hot: wait it out (the police system decays the stars once
+        // the player stays out of sight). No marker progress yet.
+        return;
+      }
+    }
+
+    // --- Steal / deliver a specific car. ---
+    if (obj.needsCar) {
+      const car = player.vehicle || player.car || null;
+      const inRightCar = Boolean(player.inCar && car && car.model === obj.needsCar);
+      if (!inRightCar) {
+        // Must be in the right car before the marker counts.
+        if (obj.id === 'steal') {
+          // Standing at the lot in the right car means the steal happened.
+          if (marker && dist2D(playerPos, marker) <= (obj.radius || 8) && player.inCar && car?.model === obj.needsCar) {
+            this._advance(world, systems);
+          }
+        }
+        return;
+      }
+    }
+
+    // --- Harbour heist: grabbing the cash spikes the heat to four stars. ---
+    if (marker && dist2D(playerPos, marker) <= (obj.radius || 8)) {
+      if (def.startWantedOnGrab && obj.id === 'grab' && systems.police) {
+        systems.police.setWanted?.(def.startWantedOnGrab);
+      }
+      this._advance(world, systems);
+    }
+  }
+
+  // ---- persistence helpers (the SaveSystem stores these) ----
+
+  toSaveData() {
+    return {
+      completed: [...this.completed],
+      currentMission: this.current ? this.current.number : null,
+      lastReward: this.lastReward,
+    };
+  }
+
+  fromSaveData(data = {}) {
+    this.completed = new Set(data.completed || []);
+    this.lastReward = data.lastReward || 0;
+    this.current = null;
+    return data.currentMission || null; // caller re-starts it via startMission
+  }
+
+  reset() {
+    this.completed = new Set();
+    this.current = null;
+    this.lastReward = 0;
+    this.lastCompletedMission = null;
+    this.lastFailedMission = null;
+  }
+}
+
+export function createMissionManager(options = {}) {
+  return new MissionManager(options);
+}
+
+export { MISSION_DEFS, DEFAULT_LOCATIONS };
+export default MissionManager;

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Solmar Bay — Rico Vega</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a141c;
+    font-family: Arial, Helvetica, sans-serif; color: #fff; }
+  #game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .hidden { display: none !important; }
+
+  /* ---- HUD ---- */
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #minimap { position: absolute; left: 14px; bottom: 14px; width: 180px; height: 180px;
+    border: 2px solid rgba(255,255,255,0.55); border-radius: 50%; background: rgba(10,20,28,0.75); }
+  #wanted-stars { position: absolute; top: 14px; right: 16px; font-size: 30px; letter-spacing: 4px;
+    color: #ffd94a; text-shadow: 0 2px 6px rgba(0,0,0,0.7); }
+  #wanted-stars .off { color: rgba(255,255,255,0.28); }
+  #health-wrap { position: absolute; right: 16px; top: 58px; width: 190px; text-align: right; }
+  #health-wrap .label, #money .label { font-size: 11px; letter-spacing: 2px; opacity: 0.85; }
+  #health-bar { width: 100%; height: 12px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.5); margin-top: 3px; }
+  #health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37d67a, #7be495); }
+  #money { position: absolute; right: 16px; top: 96px; font-size: 24px; font-weight: bold;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.8); text-align: right; }
+  #money .amount { color: #7be495; }
+  #speed { position: absolute; right: 16px; bottom: 16px; font-size: 34px; font-weight: bold;
+    text-shadow: 0 2px 6px rgba(0,0,0,0.8); text-align: right; }
+  #hud-ammo { position: absolute; right: 16px; bottom: 62px; font-size: 15px; font-weight: bold;
+    text-shadow: 0 2px 5px rgba(0,0,0,0.8); text-align: right; }
+  #objective { position: absolute; top: 14px; left: 16px; max-width: 46%;
+    font-size: 15px; line-height: 1.45; text-shadow: 0 2px 5px rgba(0,0,0,0.85); }
+  #objective .obj-title { font-size: 12px; letter-spacing: 2px; color: #ffd94a; }
+  #clock { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 20px; font-weight: bold; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
+  #clock .day { font-size: 12px; font-weight: normal; opacity: 0.85; }
+  #message { position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%);
+    font-size: 20px; font-weight: bold; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.9); }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
+    transform: translate(-50%, -50%); }
+  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,0.9);
+    box-shadow: 0 0 4px rgba(0,0,0,0.9); }
+  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
+  #crosshair::after { left: 0; top: 10px; width: 22px; height: 2px; }
+  #controls-hint { position: absolute; left: 14px; bottom: 204px; font-size: 11px; line-height: 1.6;
+    opacity: 0.75; text-shadow: 0 1px 4px rgba(0,0,0,0.9); }
+
+  /* ---- Menu overlays ---- */
+  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; padding: 24px;
+    background: rgba(6, 18, 28, 0.72); }
+  .overlay h1 { font-size: 56px; letter-spacing: 4px; color: #ffd94a;
+    text-shadow: 0 4px 18px rgba(0,0,0,0.8); }
+  .overlay h2 { font-size: 40px; letter-spacing: 3px; }
+  .overlay .subtitle { font-size: 17px; margin-top: 10px; opacity: 0.9; max-width: 560px; line-height: 1.6; }
+  .overlay .keys { font-size: 13px; margin-top: 18px; line-height: 1.9; opacity: 0.85; }
+  .overlay button { pointer-events: auto; margin-top: 26px; padding: 14px 42px; font-size: 18px;
+    font-weight: bold; letter-spacing: 2px; color: #0a141c; background: #ffd94a; border: none;
+    border-radius: 6px; cursor: pointer; }
+  .overlay button:hover { background: #ffe98a; }
+  #busted-screen { background: rgba(10, 30, 80, 0.78); }
+  #busted-screen h2 { color: #7db8ff; }
+  #wasted-screen { background: rgba(60, 8, 8, 0.8); }
+  #wasted-screen h2 { color: #ff5a5a; }
+  #mission-complete-screen { background: rgba(8, 50, 24, 0.78); }
+  #mission-complete-screen h2 { color: #7be495; }
+  #mission-complete-screen .reward { font-size: 26px; font-weight: bold; color: #7be495; margin-top: 12px; }
+</style>
+</head>
+<body>
+<canvas id="game-canvas"></canvas>
+
+<!-- HUD -->
+<div id="hud">
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="wanted-stars"><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span></div>
+  <div id="health-wrap">
+    <div class="label">HEALTH</div>
+    <div id="health-bar"><div id="health-fill"></div></div>
+  </div>
+  <div id="money"><div class="label">CASH</div><span class="amount"><span id="money-amount">250</span></span></div>
+  <div id="speed"><span id="speed-value">0 km/h</span></div>
+  <div id="hud-ammo"></div>
+  <div id="objective"><div class="obj-title" id="mission-name"></div><div class="obj-title">OBJECTIVE</div><span id="objective-text">Explore Solmar Bay.</span></div>
+  <div id="clock"><span id="clock-time">12:00</span> <span class="day" id="clock-day">Day 1</span></div>
+  <div id="message"></div>
+  <div id="crosshair" class="hidden"></div>
+  <div id="controls-hint">WASD move &middot; SHIFT run &middot; SPACE jump / handbrake<br>E enter / exit car &middot; F punch / shoot &middot; P pause &middot; M mute</div>
+</div>
+
+<!-- Start screen -->
+<div id="start-screen" class="overlay">
+  <h1>SOLMAR BAY</h1>
+  <p class="subtitle">Rico Vega is back in the city that raised him. Drive it, walk it,
+    outrun the law — and make the Bay yours.</p>
+  <p class="keys">WASD — move / drive &nbsp;&middot;&nbsp; SHIFT — run &nbsp;&middot;&nbsp; SPACE — jump / handbrake<br>
+    E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
+  <button id="start-button" type="button">START</button>
+</div>
+
+<!-- Pause -->
+<div id="pause-menu" class="overlay hidden">
+  <h2>PAUSED</h2>
+  <p class="subtitle">Solmar Bay is waiting.</p>
+  <button id="resume-button" type="button">RESUME</button>
+  <button id="restart-button" type="button">RESTART</button>
+</div>
+
+<!-- Busted -->
+<div id="busted-screen" class="overlay hidden">
+  <h2>BUSTED</h2>
+  <p class="subtitle">The Solmar Bay police took you in.</p>
+  <button id="busted-retry-button" type="button">TRY AGAIN</button>
+</div>
+
+<!-- Wasted -->
+<div id="wasted-screen" class="overlay hidden">
+  <h2>WASTED</h2>
+  <p class="subtitle">Rico Vega is down — but the Bay never forgets.</p>
+  <button id="wasted-retry-button" type="button">TRY AGAIN</button>
+</div>
+
+<!-- Mission complete -->
+<div id="mission-complete-screen" class="overlay hidden">
+  <h2>MISSION COMPLETE</h2>
+  <p class="subtitle" id="mission-complete-text">Clean work, Rico.</p>
+  <p class="reward" id="mission-complete-reward"></p>
+  <button id="mission-continue-button" type="button">CONTINUE</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

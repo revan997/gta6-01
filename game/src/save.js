@@ -1,0 +1,176 @@
+// Solmar Bay — SaveSystem (Lane B)
+// Saving to the browser's localStorage: the player's money, completed
+// missions, current mission, position and wanted level; load it back; and
+// report whether a save exists. No network, no other storage.
+// The saved shape is versioned so a future format change can migrate
+// instead of crashing on an old save.
+
+export const SAVE_KEY = 'solmar-bay-save-v1';
+export const SAVE_VERSION = 1;
+
+function safeParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+export class SaveSystem {
+  constructor(options = {}) {
+    this.key = options.key || SAVE_KEY;
+    this.storage = options.storage || null; // injected storage (tests); else localStorage
+  }
+
+  _store() {
+    if (this.storage) return this.storage;
+    try {
+      if (typeof localStorage !== 'undefined') return localStorage;
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  hasSave() {
+    const store = this._store();
+    if (!store) return false;
+    try {
+      const raw = store.getItem(this.key);
+      if (!raw) return false;
+      const data = safeParse(raw);
+      return isPlainObject(data) && data.version === SAVE_VERSION;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // save(state): state is the game state object. Only the documented
+  // fields are persisted; anything else is ignored.
+  //   { money, completedMissions, currentMission, position: {x,y,z},
+  //     heading, wanted, health, armour, ammo, timeOfDay }
+  save(state = {}) {
+    const store = this._store();
+    if (!store) return false;
+    const pos = state.position || state.player?.position || null;
+    const data = {
+      version: SAVE_VERSION,
+      savedAt: new Date().toISOString(),
+      money: Math.round(state.money ?? state.player?.money ?? 0),
+      completedMissions: Array.isArray(state.completedMissions)
+        ? [...state.completedMissions]
+        : (state.missions?.getCompletedMissions?.() || []),
+      currentMission: state.currentMission ?? state.missions?.getCurrentMissionNumber?.() ?? null,
+      position: pos ? { x: pos.x || 0, y: pos.y || 0, z: pos.z || 0 } : null,
+      heading: state.heading ?? state.player?.heading ?? 0,
+      wanted: Math.max(0, Math.min(5, Math.round(state.wanted ?? 0))),
+      health: state.health ?? state.player?.health ?? null,
+      armour: state.armour ?? null,
+      ammo: state.ammo ?? null,
+      timeOfDay: state.timeOfDay ?? null,
+    };
+    try {
+      store.setItem(this.key, JSON.stringify(data));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // load(): returns the saved state object, or null when there is no
+  // valid save.
+  load() {
+    const store = this._store();
+    if (!store) return null;
+    let raw = null;
+    try {
+      raw = store.getItem(this.key);
+    } catch (_) {
+      return null;
+    }
+    if (!raw) return null;
+    const data = safeParse(raw);
+    if (!isPlainObject(data) || data.version !== SAVE_VERSION) return null;
+    return {
+      version: data.version,
+      savedAt: data.savedAt || null,
+      money: typeof data.money === 'number' ? data.money : 0,
+      completedMissions: Array.isArray(data.completedMissions) ? data.completedMissions : [],
+      currentMission: typeof data.currentMission === 'number' ? data.currentMission : null,
+      position: isPlainObject(data.position)
+        ? { x: data.position.x || 0, y: data.position.y || 0, z: data.position.z || 0 }
+        : null,
+      heading: typeof data.heading === 'number' ? data.heading : 0,
+      wanted: typeof data.wanted === 'number' ? Math.max(0, Math.min(5, data.wanted)) : 0,
+      health: typeof data.health === 'number' ? data.health : null,
+      armour: typeof data.armour === 'number' ? data.armour : null,
+      ammo: typeof data.ammo === 'number' ? data.ammo : null,
+      timeOfDay: typeof data.timeOfDay === 'number' ? data.timeOfDay : null,
+    };
+  }
+
+  clearSave() {
+    const store = this._store();
+    if (!store) return false;
+    try {
+      store.removeItem(this.key);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // Convenience: apply a loaded save onto live game objects.
+  // systems: { missions, police, combat, setMoney } — each optional.
+  applyToGame(saveData, player, systems = {}) {
+    if (!saveData) return false;
+    if (player && saveData.position) {
+      // player.position is the live THREE.Vector3 shared with the mesh:
+      // move it in place, never replace the object (replacing it would
+      // detach the mesh from the position the game reads).
+      if (player.position && typeof player.position.set === 'function') {
+        player.position.set(saveData.position.x || 0, saveData.position.y || 0, saveData.position.z || 0);
+      } else {
+        player.position = { ...saveData.position };
+      }
+      if (typeof saveData.heading === 'number') player.heading = saveData.heading;
+    }
+    if (typeof systems.setMoney === 'function') systems.setMoney(saveData.money);
+    if (systems.missions?.fromSaveData) {
+      const toStart = systems.missions.fromSaveData({
+        completed: saveData.completedMissions,
+        currentMission: saveData.currentMission,
+        lastReward: 0,
+      });
+      if (toStart && systems.missions.startMission) {
+        systems.missions.startMission(toStart);
+      }
+    }
+    if (systems.police?.setWanted) systems.police.setWanted(saveData.wanted || 0);
+    if (systems.combat?.fromSaveData) {
+      systems.combat.fromSaveData({
+        health: saveData.health ?? undefined,
+        armour: saveData.armour ?? undefined,
+        ammo: saveData.ammo ?? undefined,
+      });
+    }
+    return true;
+  }
+}
+
+export function createSaveSystem(options = {}) {
+  return new SaveSystem(options);
+}
+
+// Module-level helpers sharing the default key.
+const defaultSystem = new SaveSystem();
+export function saveGame(state) { return defaultSystem.save(state); }
+export function loadGame() { return defaultSystem.load(); }
+export function hasSaveGame() { return defaultSystem.hasSave(); }
+export function clearSaveGame() { return defaultSystem.clearSave(); }
+
+export default SaveSystem;
