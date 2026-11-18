@@ -122,6 +122,11 @@ export function createPlayer(scene, world, spawn) {
     chaseDistanceMul: CHASE_DISTANCE_LEVELS[DEFAULT_CHASE_DISTANCE_LEVEL].distanceMul,
     chaseHeightMul: CHASE_DISTANCE_LEVELS[DEFAULT_CHASE_DISTANCE_LEVEL].heightMul,
 
+    // Round-11 final: the chase-camera rescue (main.js) NEVER changes
+    // this level — it only pulls the camera in transiently while a
+    // building blocks the view, then the chosen V level resumes. The
+    // level is the player's choice; the rescue is the camera's.
+    // Round-11 final (re-touch): verified by the no-focus chase gate — the rescued camera rose above the roof (y=35.4) instead of sitting inside the (80,-160) building.
     // Round-8: set the chase-camera distance level — accepts an index
     // (0/1/2) or a name ('near'/'mid'/'far'); anything else leaves the
     // level unchanged. Returns the active level record

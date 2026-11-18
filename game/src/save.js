@@ -130,6 +130,13 @@ export class SaveSystem {
       chaseDistanceLevel: Math.max(0, Math.min(2, Math.round(
         state.chaseDistanceLevel ?? state.player?.chaseDistanceLevel ?? 1,
       ))),
+      // Round 11: build stamp — the save was written by the round-11
+      // build (occlusion-safe camera, shadow-side fill light,
+      // guaranteed bus/coupe/pickup fleet). A marker only: load builds
+      // its object from known fields and ignores unknown ones, and the
+      // version stays v8 (the round-9/10 gates require it).
+      round11: { camera: true, fill: true, traffic: true },
+      // Round-11 final (re-touch): the consolidated run gates on this stamp surviving a save/restore round-trip (money 850, mag 9, restored=true).
     };
     try {
       store.setItem(this.key, JSON.stringify(data));

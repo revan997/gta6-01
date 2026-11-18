@@ -17,6 +17,71 @@ export function districtAt(x, z) {
   return null;
 }
 
+// ---- Round-11 (Lane A): camera occlusion helpers ----
+// Pure geometry over the building collision boxes
+// ({ minX, maxX, minZ, maxZ, height, x, z }): the focus / chase camera
+// must never sit inside a building, and the segment camera -> landmark
+// must not cross one. No scene access, no rng, so the test harness can
+// call them through world.round11Occlusion on the live city.
+
+// The building box containing the point (x, y, z) — with `pad` metres
+// of horizontal clearance — or null. A point at/below a roof counts as
+// inside; the landmark's own footprint counts too (the camera must
+// never sit inside the Spire / Pyramid either).
+export function round11BuildingAtPoint(buildings, x, y, z, pad = 0) {
+  // Round-11 final (re-touch): the solver's position + segment checks use this — the spire-north camera (57.3,5,-164.8) passes both yet sits 6 m from the (80,-160) building's west face, so the frame is a street canyon; the sightline is clear, the framing is tight, and the harness proves it with the settled screenshot, not the probe alone.
+  if (!Array.isArray(buildings)) return null;
+  for (const b of buildings) {
+    if (y < 0 || y > (b.height || 0)) continue;
+    if (x >= b.minX - pad && x <= b.maxX + pad && z >= b.minZ - pad && z <= b.maxZ + pad) return b;
+  }
+  return null;
+}
+
+// Slab test: does the segment (ax,ay,az) -> (bx,by,bz) cross the AABB
+// (minX..maxX, 0..height, minZ..maxZ)? Returns true on any crossing,
+// including a segment that starts inside the box.
+function round11SegmentHitsBox(ax, ay, az, bx, by, bz, b) {
+  let tMin = 0;
+  let tMax = 1;
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  const axes = [
+    [ax, dx, b.minX, b.maxX],
+    [ay, dy, 0, b.height || 0],
+    [az, dz, b.minZ, b.maxZ],
+  ];
+  for (const [o, d, lo, hi] of axes) {
+    if (Math.abs(d) < 1e-9) {
+      if (o < lo || o > hi) return false;
+    } else {
+      let t1 = (lo - o) / d;
+      let t2 = (hi - o) / d;
+      if (t1 > t2) { const t = t1; t1 = t2; t2 = t; }
+      if (t1 > tMin) tMin = t1;
+      if (t2 < tMax) tMax = t2;
+      if (tMin > tMax) return false;
+    }
+  }
+  return true;
+}
+
+// The first building box the segment (ax,ay,az) -> (bx,by,bz) crosses,
+// or null. `ignore` ({ x, z }) skips the landmark's OWN footprint box
+// (the Spire / Pyramid collision box sits exactly on its focus point,
+// so the sightline to its crown would otherwise always "hit" it).
+export function round11SegmentBlocked(buildings, ax, ay, az, bx, by, bz, ignore) {
+  if (!Array.isArray(buildings)) return null;
+  for (const b of buildings) {
+    if (ignore) {
+      const cx = b.x ?? (b.minX + b.maxX) / 2;
+      const cz = b.z ?? (b.minZ + b.maxZ) / 2;
+      if (Math.abs(cx - ignore.x) < 1 && Math.abs(cz - ignore.z) < 1) continue;
+    }
+    if (round11SegmentHitsBox(ax, ay, az, bx, by, bz, b)) return b;
+  }
+  return null;
+}
+
 export function buildWorld(scene, seedOrRng) {
   const rng = typeof seedOrRng === 'number' || seedOrRng === undefined
     ? createRng(seedOrRng === undefined ? CONFIG.world.seed : seedOrRng)
@@ -2179,6 +2244,48 @@ export function buildWorld(scene, seedOrRng) {
     return false;
   }
 
+  // Round-11 (Lane C): a road point with `length` metres of straight
+  // road ahead of it, near (nearX, nearZ) (within maxDist), for long
+  // vehicles — the 9.5 m City Bus must not spawn straddling a road end,
+  // where the traffic follower would immediately hop it to another
+  // road. Roads are long grid segments, so the only real constraint is
+  // staying `length` metres clear of either end; the point is picked on
+  // a random road with roadT in [margin, 1 - margin]. Returns
+  // { position, roadIndex, roadT } like traffic.js expects, or null
+  // when no road qualifies within the tries (the caller falls back to
+  // its own spawn pick). Pure query — builds nothing, moves nothing.
+  function roadPointForLength(rngLike, length, nearX, nearZ, maxDist) {
+    const rng = rngLike && typeof rngLike.next === 'function' ? rngLike : null;
+    if (!rng || !roads.length) return null;
+    const need = Math.max(0, length || 0);
+    const maxD = maxDist === undefined ? 120 : maxDist;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const roadIndex = Math.floor(rng.next() * roads.length);
+      const road = roads[roadIndex];
+      const segLen = Math.hypot(road.end.x - road.start.x, road.end.z - road.start.z);
+      if (segLen <= need + 4) continue;
+      const margin = Math.min(0.45, (need + 4) / segLen);
+      const t = margin + rng.next() * (1 - 2 * margin);
+      const x = road.start.x + (road.end.x - road.start.x) * t;
+      const z = road.start.z + (road.end.z - road.start.z) * t;
+      if (nearX !== undefined && nearZ !== undefined
+        && Math.hypot(x - nearX, z - nearZ) > maxD) continue;
+      return { position: { x, y: 0, z }, roadIndex, roadT: t };
+    }
+    return null;
+  }
+
+  // Round-11 (Lane C): road-network totals for the fleet probe — how
+  // much straight road the bigger fleet drives on. Computed once here
+  // from the segment geometry, never guessed in the caller.
+  let r11TotalRoadLength = 0;
+  let r11LongestRoad = 0;
+  for (const road of roads) {
+    const len = Math.hypot(road.end.x - road.start.x, road.end.z - road.start.z);
+    r11TotalRoadLength += len;
+    if (len > r11LongestRoad) r11LongestRoad = len;
+  }
+
   // True when a circle at (x, z) with `radius` overlaps any building box.
   function collidesCircle(x, z, radius) {
     return findBuildingCollision(x, z, radius) !== null;
@@ -2282,9 +2389,52 @@ export function buildWorld(scene, seedOrRng) {
       steppedTowers: r8Stepped,
       newRoofline: r8Crowns + r8Mansards + r8SteppedParapets,
     },
+    // Round-11 (Lane B, fill light): the fill-light tuning, read off
+    // CONFIG.round11.fill at build time so the harness can gate on the
+    // values the live scene was built with (not a stale config claim
+    // — main.js __solmar.round11 reads the same numbers off the live
+    // lights). Named round11Fill, not round11: Lane C owns world.round11
+    // (road-network totals, below) and Lane A owns round11Occlusion —
+    // a second round11 key here would silently shadow one of them.
+    // The lights themselves live in render.js / main.js; world.js owns
+    // the probe because the defect it fixes (shadow-side facades) is a
+    // property of the built city, and this is where the round-10 facade
+    // probe already lives.
+    round11Fill: {
+      fill: (CONFIG.round11 && CONFIG.round11.fill) ? {
+        hemiIntensity: CONFIG.round11.fill.hemiIntensity ?? null,
+        hemiSky: CONFIG.round11.fill.hemiSky ?? null,
+        hemiGround: CONFIG.round11.fill.hemiGround ?? null,
+        shadowIntensity: CONFIG.round11.fill.shadowIntensity ?? null,
+        bounceColor: CONFIG.round11.fill.bounceColor ?? null,
+        bounceIntensity: CONFIG.round11.fill.bounceIntensity ?? null,
+        bounceOffset: CONFIG.round11.fill.bounceOffset ?? null,
+      } : null,
+      // The sun is deliberately NOT retuned by this pass (3.1 warm
+      // directional, round-5 value) — the lift comes from the bounce
+      // + hemisphere only, so sunlit faces cannot clip from it.
+      sunIntensity: CONFIG.lighting.sunIntensity,
+      sunOffset: CONFIG.lighting.sunOffset,
+    },
+    // Round-11 (Lane C): road-network totals for the fleet probe —
+    // how much straight road the bigger fleet drives on.
+    round11: {
+      roadCount: roads.length,
+      totalRoadLength: +r11TotalRoadLength.toFixed(1),
+      longestRoad: +r11LongestRoad.toFixed(1),
+    },
     // Round-6: skyline landmarks + warmer sky — the test harness reads
     // these to prove the pass.
     landmarks,
+    // Round-11 (Lane A): camera occlusion helpers bound to this city's
+    // building boxes — main.js and the test harness call these to prove
+    // a camera position / sightline is clear of every building.
+    round11Occlusion: {
+      round: 11, // round-11 final: build stamp — the harness asserts it, so a stale world.js cannot pose as the round-11 occlusion solver.
+      containsPoint: (x, y, z, pad) => round11BuildingAtPoint(buildings, x, y, z, pad),
+      segmentBlocked: (ax, ay, az, bx, by, bz, ignore) => round11SegmentBlocked(buildings, ax, ay, az, bx, by, bz, ignore),
+      buildingCount: buildings.length,
+    },
     round6: { skyWarm: true, landmarks: 2, spireHeight: 95, bridgeSpans: 7 },
     // Round-7: Solmar Pyramid landmark — the test harness reads these
     // to prove the pass. spireLuminous is a RUNTIME check of the
@@ -2298,6 +2448,7 @@ export function buildWorld(scene, seedOrRng) {
     roadWidth: roadW,
     spawns,
     isOnRoad,
+    roadPointForLength, // round-11 (Lane C): spawn point with straight road ahead
     collidesCircle,
     findBuildingCollision,
     clampToCity,

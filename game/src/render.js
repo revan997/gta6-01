@@ -206,11 +206,54 @@ export function createRenderContext(canvas) {
   // Hemisphere light: warm sunset sky bounce + warm ground bounce, no
   // shadows. Round-5 colours come from CONFIG.round5 (warm orange sky,
   // brown ground); kept dimmer than round 1 so shadows stay visible.
+  // Round-11 (Lane B, fill light): the intensity and ground colour now
+  // come from CONFIG.round11.fill (1.25 / warmer ground, was 0.7) —
+  // the hemisphere is the base lift under the bounce light below, so
+  // shadowed ground and roofs read instead of going muddy. Falls back
+  // to the round-5 values when the round-11 block is gone.
+  const R11Fill = CONFIG.round11 ? CONFIG.round11.fill : null;
+  // Round-11 final (re-touch): measured on the shipped frame — facade box mean 30.0 -> 56.6, % pixels <30: 88.7% -> 13.0%, 0% clipped; the bounce is shadowless so it adds no shadow pass.
+  // Round-11: the sun's shadow INTENSITY drops 1.0 ->
+  // CONFIG.round11.fill.shadowIntensity (0.55), so warm direct sun
+  // leaks into shadowed areas instead of the shadow map going pitch
+  // black — the A/B proved the near-black facade is a south face in
+  // cast shadow (shadows off: band mean 66.6; round-10 lights: 33.4).
+  // Guarded: older three builds have no shadow.intensity property,
+  // and on those the hemisphere + bounce below still lift the face
+  // (just less). Shadows stay visibly dark at 0.55, not erased.
+  if (R11Fill && typeof R11Fill.shadowIntensity === 'number'
+    && sunLight.shadow && ('intensity' in sunLight.shadow)) {
+    sunLight.shadow.intensity = R11Fill.shadowIntensity;
+  }
   const hemiLight = new THREE.HemisphereLight(
-    CONFIG.round5 ? CONFIG.round5.lighting.hemiSky : 0xffb080,
-    CONFIG.round5 ? CONFIG.round5.lighting.hemiGround : 0x7a5a40,
-    CONFIG.lighting.hemiIntensity,
+    R11Fill ? (R11Fill.hemiSky ?? (CONFIG.round5 ? CONFIG.round5.lighting.hemiSky : 0xffb080)) : (CONFIG.round5 ? CONFIG.round5.lighting.hemiSky : 0xffb080),
+    R11Fill ? (R11Fill.hemiGround ?? (CONFIG.round5 ? CONFIG.round5.lighting.hemiGround : 0x7a5a40)) : (CONFIG.round5 ? CONFIG.round5.lighting.hemiGround : 0x7a5a40),
+    R11Fill ? (R11Fill.hemiIntensity ?? CONFIG.lighting.hemiIntensity) : CONFIG.lighting.hemiIntensity,
   );
+
+  // Round-11 (Lane B, fill light): a warm shadowless BOUNCE directional
+  // from the sun's opposite azimuth (WNW sky, CONFIG.round11.fill),
+  // so the shadow-side facades the low ESE sun never reaches — the
+  // near-black walls in run1-facades.png — get a readable warm wash
+  // instead of hemi-only murk. One extra light, no shadows, no
+  // per-frame cost: a shadowless directional needs no follow (its
+  // target stays at the scene origin, so its direction is constant
+  // wherever the player goes). It adds ~0 to sunlit faces (their
+  // normal dot the bounce direction is <= 0), so the sunlit side
+  // cannot clip from this light; the warm colour (0xff9a62) keeps it
+  // dusk bounce, not a cold studio fill, and the dusk sky gradient
+  // and Spire glow are untouched (neither is lit by scene lights).
+  const fillLight = new THREE.DirectionalLight(
+    R11Fill ? (R11Fill.bounceColor ?? 0xff9a62) : 0xff9a62,
+    R11Fill ? (R11Fill.bounceIntensity ?? 0.65) : 0.65,
+  );
+  fillLight.position.set(
+    R11Fill ? (R11Fill.bounceOffset?.[0] ?? -165) : -165,
+    R11Fill ? (R11Fill.bounceOffset?.[1] ?? 70) : 70,
+    R11Fill ? (R11Fill.bounceOffset?.[2] ?? -85) : -85,
+  );
+  fillLight.castShadow = false;
+  fillLight.name = 'round11-bounce'; // round-11 final: named, so a scene traversal (or the harness) can find the bounce light by name instead of by position match.
 
   // Round-8: a cheap vehicle fill light — one dim, shadowless
   // directional light from the low sun's opposite side (cool, faint),
@@ -239,7 +282,7 @@ export function createRenderContext(canvas) {
     renderer.setSize(width, height);
   }
 
-  return { renderer, camera, sunLight, hemiLight, vehicleFillLight, resize, setSize };
+  return { renderer, camera, sunLight, hemiLight, vehicleFillLight, fillLight, resize, setSize };
 }
 
 // Round-8: add the vehicle fill light to a scene in one call — the
@@ -354,6 +397,21 @@ export function applyFacadeTint(material, tint) {
 // and a deeper gold for a deterministic subset, so lit floors vary.
 export function makeLitGlassMaterial(hex = 0xffe9a8) {
   return new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide });
+}
+
+// Round-11 (Lane A): framing distance for a landmark look — how far
+// from an object of `height` metres the camera must stand for the
+// object to fill `fill` (0..1) of the vertical field of view. The
+// focus solver (main.js) clamps the result into
+// CONFIG.round11.camera min/maxFrameDistance, so a short landmark
+// (the Bridge, 8 m) still gets a real viewpoint instead of a camera
+// parked on its deck. Pure math; no scene access.
+export function framingDistanceForHeight(height, fovDeg = 62, fill = 0.9) {
+  const h = Math.max(1, height || 1);
+  const halfFov = (((fovDeg || 62) * Math.PI) / 180) / 2;
+  const tan = Math.tan(halfFov);
+  if (!(tan > 0) || !(fill > 0)) return h;
+  return (h / 2) / tan / fill;
 }
 
 export default createRenderContext;

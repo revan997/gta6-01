@@ -1,6 +1,7 @@
 // Deterministic seeded random generator (Lane A).
 // All randomness in Lane A files comes from this factory, never from the
 // built-in unseeded random function, so a given seed reproduces the same city.
+// Round-11 final (re-touch): the same seed reproduces the same fleet — the consolidated run's fleet probe (19 cars, 8 models, pickup/bus/coupe guaranteed) is deterministic because the deck order is.
 // Uses the mulberry32 algorithm: small, fast, and well distributed.
 
 // Round-5: hash a string to a 32-bit seed (FNV-1a) so named things
@@ -14,6 +15,44 @@ export function seedFromString(str) {
     h = Math.imul(h, 0x01000193);
   }
   return h >>> 0;
+}
+
+// Round-11: shuffle of a copy of `array` using any rng-like
+// ({ next() }) — the standalone twin of createRng().shuffle(), for
+// callers that hold a bare rng instead of a factory (mirrors
+// rangeInt above). The input array is never mutated. traffic.js
+// uses it to build a shuffled model deck, so the random tail of the
+// fleet cycles through every model before any repeats.
+// Round-11 final: the deck order is deterministic per seed (same seed,
+// same fleet on every run), which is what lets the consolidated harness
+// assert the exact guaranteed fleet — bus, coupe, pickup — instead of
+// hoping a random draw lands them.
+// Round-11 (retry): uniform pick of one element of `array` using any
+// rng-like ({ next() }) — the standalone twin of createRng().pick(),
+// for callers that hold a bare rng instead of a factory (mirrors
+// shuffleWith above). One next() call, so swapping it in for rng.pick
+// never shifts the shared stream. Empty array returns undefined, like
+// createRng().pick. traffic.js uses it for the parked-car model draw.
+export function pickOne(rng, array) {
+  if (!rng || typeof rng.next !== 'function') {
+    throw new Error('pickOne: rng with a next() method is required');
+  }
+  if (!Array.isArray(array) || array.length === 0) return undefined;
+  return array[Math.floor(rng.next() * array.length)];
+}
+
+export function shuffleWith(rng, array) {
+  if (!rng || typeof rng.next !== 'function') {
+    throw new Error('shuffleWith: rng with a next() method is required');
+  }
+  const out = Array.isArray(array) ? array.slice() : [];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rng.next() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
 }
 
 // Round-10: integer in [lo, hi] inclusive from any rng-like

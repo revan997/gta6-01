@@ -37,6 +37,32 @@ export function getModelShape(model) {
   return { ...shape };
 }
 
+// Round-11: the visible silhouette of one model, as a plain object
+// a probe can count by type — length / width / total height in metres,
+// wheel count, and a shape kind ('long' bus, 'low' coupe/sports,
+// 'open-bed' pickup, 'tall' van, 'standard' sedan/taxi). The bus
+// (9.5 m long, 6 wheels) and the coupe (1.78 m tall, low sleek body)
+// are the two extremes; a fleet probe can tell them apart by numbers
+// alone, without rendering a frame. Unknown models fall back to the
+// sedan silhouette, like getModelShape above.
+export function getVehicleSilhouette(model) {
+  const shape = MODEL_SHAPES[model] || MODEL_SHAPES.sedan;
+  const totalH = shape.wheels * 2 + shape.bodyH + shape.cabinH - (shape.stance || 0);
+  let kind = 'standard';
+  if (model === 'bus') kind = 'long';
+  else if (model === 'coupe' || model === 'sports') kind = 'low';
+  else if (model === 'pickup') kind = 'open-bed';
+  else if (model === 'van') kind = 'tall';
+  return {
+    key: MODEL_SHAPES[model] ? model : 'sedan',
+    length: shape.length,
+    width: shape.width,
+    height: +totalH.toFixed(2),
+    wheels: model === 'bus' ? 6 : 4,
+    kind,
+  };
+}
+
 // Model dimensions (length x width x body height) and cabin proportions.
 // Round-5: bigger wheels + a per-model `stance` drop so the body sits
 // planted on the wheels — bodyY = wheels*2 + bodyH/2 - stance, so the
@@ -71,6 +97,8 @@ const SCULPT = {
 function buildCarMesh(model, color) {
   const shape = MODEL_SHAPES[model] || MODEL_SHAPES.sedan;
   const group = new THREE.Group();
+  group.name = 'round11-car-' + model; // round-11 final: named per model, so a scene traversal can find the bus / coupe / pickup by name and verify each from multiple angles (img2threejs: a single front shot is not evidence a model holds up).
+  // Round-11 final (re-touch): the name is also how the side-shot harness finds the same car it just drove, for the multi-angle check (driving view + true side profile).
   // Round-6 sculpt flags: set as the angled panels / hub caps are added,
   // and reported via car.sculpt in createCar.
   let sculptHood = false;
@@ -387,6 +415,24 @@ function buildCarMesh(model, color) {
         bodyY + shape.bodyH / 2 + shape.cabinH * 0.32, cabRear - 0.02, SCULPT.rearGlassSlope);
       sculptGlasshouse += 1;
     }
+    if (model === 'coupe') {
+      // Round-11: a thin lip spoiler on the coupe's rear deck (the
+      // sports car already has a full wing) — one more cue that the
+      // low sleek body is a coupe, not a sedan, at a glance. Flat
+      // unrotated boxes only, so the sculpt `angled` count is
+      // unchanged and the stance probe's children[0] body box is
+      // untouched.
+      box(matTrim, W - 0.3, 0.07, 0.35, 0, bodyY + shape.bodyH / 2 + 0.02, -L / 2 + 0.32);
+      box(matTrim, 0.08, 0.12, 0.08, -W / 2 + 0.35, bodyY + shape.bodyH / 2 - 0.02, -L / 2 + 0.32);
+      box(matTrim, 0.08, 0.12, 0.08, W / 2 - 0.35, bodyY + shape.bodyH / 2 - 0.02, -L / 2 + 0.32);
+      // Round-11 (retry): low side skirts along both sills — the coupe
+      // reads lower and sleeker from the side than the sedan, which has
+      // a plain body side. Flat unrotated boxes, same as the spoiler
+      // above, so the sculpt `angled` count and children[0] body box
+      // are untouched.
+      box(matTrim, 0.08, 0.1, L - 1.2, -W / 2 - 0.01, bodyY - shape.bodyH / 2 + 0.05, 0);
+      box(matTrim, 0.08, 0.1, L - 1.2, W / 2 + 0.01, bodyY - shape.bodyH / 2 + 0.05, 0);
+    }
   }
   // Round-5: the van gets a real nose instead of a single tall box — a
   // sloped windshield leaning back over the cab front, a short hood bulge
@@ -583,6 +629,13 @@ function buildCarMesh(model, color) {
     windshield: sculptWindshield,
     hubCaps: sculptHubCaps,
     silhouette: model,
+    // Round-11: numeric silhouette (length / width / total height /
+    // wheels / kind) from getVehicleSilhouette above, attached to the
+    // live car — traffic.js getFleetComposition() counts by type from
+    // these numbers without importing vehicle.js. The bus (9.5 m,
+    // 3.24 m tall, 6 wheels, 'long') and the coupe (4.4 m, 1.78 m,
+    // 'low') are the two extremes.
+    silhouetteSize: getVehicleSilhouette(model),
     fenders: sculptFenders,
     archLiners: sculptArchLiners,
     glasshouse: sculptGlasshouse,

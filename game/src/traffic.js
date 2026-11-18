@@ -9,6 +9,7 @@
 //   player — { position, heading, health, inCar, vehicle }
 // Round 3: cars stop at red traffic lights (world.trafficLights).
 import { CONFIG } from './config.js';
+import { shuffleWith, pickOne } from './random.js'; // round-11: shuffled model deck + uniform parked pick (retry)
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -160,7 +161,12 @@ export class TrafficManager {
   constructor(options = {}) {
     this.rng = normaliseRng(options.rng, options.seed ?? 1337);
     this.createCar = options.createCar || null; // Lane A car factory, if supplied
-    this.maxCars = options.maxCars ?? 14;
+    // Round-11: the fleet size is tuned in CONFIG.round11.traffic
+    // (maxCars 20: 6 parked + 14 moving, was 14) and wins over the
+    // main.js maxCars: 14, so the size lives in one place. Without
+    // the config block, the caller's value (or 14) stands.
+    const r11max = CONFIG.round11?.traffic?.maxCars;
+    this.maxCars = (typeof r11max === 'number' && r11max > 0) ? r11max : (options.maxCars ?? 14);
     this.maxPedestrians = options.maxPedestrians ?? 18;
     this.spawnRadius = options.spawnRadius ?? 120; // spawn ahead within this
     this.despawnRadius = options.despawnRadius ?? 180;
@@ -171,6 +177,13 @@ export class TrafficManager {
     this._time = 0; // round 4: accumulated seconds, drives the speed wobble
     this.tourBus = null; // round 6: sightseeing bus on the TOUR_STOPS loop
     this._tourSpawned = false; // the tour bus is placed once, on first update()
+    // Round-11: guaranteed-slot cursor + shuffled model deck (see
+    // _spawnCar). _pickupSpawned is the round-10 flag, kept — the
+    // pickup is slot 0 of the guaranteed list now, and the flag is
+    // set when that slot spawns.
+    this._guaranteedIndex = 0;
+    this._pickupSpawned = false;
+    this._modelDeck = [];
   }
 
   // True when (x, z) is at a zebra crossing (downtown intersections).
@@ -399,22 +412,93 @@ export class TrafficManager {
     if (bus.group) bus.group.rotation.y = bus.heading;
   }
 
-  _spawnCar(world, player) {
-    const pick = this._pickSpawnPoint(world, player, true);
-    const roads = this._roads(world);
-    const road = roads[pick.roadIndex];
-    // Round-10: the first moving car is always the red Dune Pickup —
-    // the fleet is a 1-in-15 draw per car, so a fixed seed can deal a
-    // fleet with no pickup at all, and the round-7 featured pickup
-    // (sculpted body, open bed) would never appear on the road. Only
-    // the first spawn is forced; later spawns draw normally.
-    let spec;
-    if (!this._pickupSpawned) {
-      this._pickupSpawned = true;
-      spec = { model: 'Dune Pickup', colour: '#a04000' };
-    } else {
-      spec = this.rng.pick(CAR_MODELS) || { model: 'Solmar Sedan', colour: '#c0392b' };
+  // Round-11: next model off the shuffled deck — the deck holds one of
+  // every CAR_MODELS entry, shuffled with the shared rng, and is
+  // reshuffled when empty, so the random tail of the fleet cycles
+  // through every model (bus, coupe, van, taxi, buggy, truck, limo…)
+  // before any model repeats, instead of re-rolling 1-in-15 per car.
+  // The shuffle consumes the shared stream, so the fleet stays fully
+  // deterministic for the fixed seed.
+  _nextDeckModel() {
+    if (!this._modelDeck || this._modelDeck.length === 0) {
+      this._modelDeck = shuffleWith(this.rng, CAR_MODELS);
     }
+    return this._modelDeck.pop() || { model: 'Solmar Sedan', colour: '#c0392b' };
+  }
+
+  _spawnCar(world, player) {
+    // Round-11: guaranteed fleet slots, in CONFIG.round11.traffic
+    // order — the same deterministic-slot pattern as the round-10
+    // red-pickup fix, extended: slot 0 is the red Dune Pickup (kept),
+    // slot 1 the City Bus, slot 2 the Palm Coupe. A fixed seed can
+    // never deal a fleet without them. Once the slots are spent, the
+    // random tail draws off the shuffled model deck (see
+    // _nextDeckModel), so the fleet cycles through every model.
+    const guaranteed = CONFIG.round11?.traffic?.guaranteed || [];
+    let spec;
+    let isGuaranteed = false;
+    if (this._guaranteedIndex < guaranteed.length) {
+      spec = guaranteed[this._guaranteedIndex];
+      this._guaranteedIndex += 1;
+      isGuaranteed = true;
+      if (/pickup/i.test(spec.model || '')) this._pickupSpawned = true;
+    } else {
+      // Round-11 (final): the guaranteed fleet is persistent, not
+      // spawn-time only. A guaranteed model (pickup/bus/coupe) that
+      // despawns after driving >180 m from the player leaves the
+      // fleet with no AI car of that model, and a deck refill deals
+      // one model per burst — the pickup (1 of 19) could take many
+      // despawn cycles to come back. So before drawing off the
+      // deck, re-deal any guaranteed model that currently has no
+      // AI car in the fleet, near the player (isGuaranteed). A
+      // player-driven car does not count toward the guarantee.
+      // Round-11 final (re-touch): the re-deal also covers a jacked car — once the player takes the pickup, it stops counting as the AI pickup and a fresh one is dealt at the next refill.
+      const missing = guaranteed.find((g) => !this.cars.some((c) => c.driver === 'ai' && c.model === g.model));
+      if (missing) {
+        spec = missing;
+        isGuaranteed = true;
+        if (/pickup/i.test(spec.model || '')) this._pickupSpawned = true;
+      } else {
+        spec = this._nextDeckModel();
+      }
+    }
+    // Long vehicles (the 9.5 m bus) spawn on a point with straight road
+    // ahead (world.js roadPointForLength, near the player); the normal
+    // pick is the fallback when the world has no such helper or no road
+    // qualifies. Every other model uses the normal pick.
+    const roads = this._roads(world);
+    let pick = null;
+    if (/bus/i.test(spec.model || '') && typeof world?.roadPointForLength === 'function') {
+      const straight = CONFIG.round11?.traffic?.longVehicleMinStraight ?? 25;
+      pick = world.roadPointForLength(this.rng, straight,
+        player?.position?.x ?? 0, player?.position?.z ?? 0, this.spawnRadius);
+    }
+    if (!pick) pick = this._pickSpawnPoint(world, player, true);
+    // Round-11: a guaranteed car must actually ARRIVE — _pickSpawnPoint
+    // falls back to any road point in the city after 12 failed tries,
+    // and the despawn filter at the end of update() removes cars over
+    // 180 m from the player, so a guaranteed slot could spawn far away
+    // and vanish in the same frame (roughly a 1-in-20 chance per slot
+    // in this seed). For guaranteed slots only, re-pick until the
+    // point is within 150 m of the player, keeping the closest try —
+    // the guarantee is then real, not just a spawn-roll promise.
+    if (isGuaranteed) {
+      const px = player?.position?.x ?? 0;
+      const pz = player?.position?.z ?? 0;
+      // Round-11 (retry): the near radius is tuned in
+      // CONFIG.round11.traffic.guaranteedNearRadius (150), not
+      // hardcoded here, so the guarantee distance lives with maxCars.
+      const nearR = CONFIG.round11?.traffic?.guaranteedNearRadius ?? 150;
+      let best = pick;
+      let bestD = Math.hypot(pick.position.x - px, pick.position.z - pz);
+      for (let attempt = 0; attempt < 8 && bestD > nearR; attempt++) {
+        const retry = this._pickSpawnPoint(world, player, true);
+        const d = Math.hypot(retry.position.x - px, retry.position.z - pz);
+        if (d < bestD) { best = retry; bestD = d; }
+      }
+      pick = best;
+    }
+    const road = roads[pick.roadIndex];
     const direction = this.rng.next() < 0.5 ? 1 : -1;
     const baseHeading = road ? this._roadHeading(road, pick.roadT) : this.rng.range(0, Math.PI * 2);
     const heading = direction > 0 ? baseHeading : baseHeading + Math.PI;
@@ -443,6 +527,15 @@ export class TrafficManager {
     // follower below steers them by position, and uses targetSpeed as the
     // speed it reports. The stand-in sets this itself.
     if (car.targetSpeed === undefined) car.targetSpeed = Math.max(6, Math.min(16, 11 + (this.rng.gaussian ? this.rng.gaussian() : 0) * 2));
+    // Round-11: the bus cruises slower than the car band — clamp its
+    // target speed to CONFIG.round11.traffic.busCruise (7–10 m/s), so
+    // the 9.5 m bus does not tear along at sedan speed. Applied before
+    // baseTargetSpeed is set below, so the speed wobble breathes
+    // around the clamped value.
+    if (/bus/i.test(spec.model || '')) {
+      const bc = CONFIG.round11?.traffic?.busCruise || { min: 7, max: 10 };
+      car.targetSpeed = clamp(car.targetSpeed, bc.min, bc.max);
+    }
     // Round-4: each car cruises a little differently — a baseline speed
     // and a phase for the gentle speed breathing applied in update().
     car.baseTargetSpeed = car.targetSpeed;
@@ -486,7 +579,10 @@ export class TrafficManager {
         y: pick.position.y || 0,
         z: pick.position.z - Math.sin(baseHeading) * edgeOffset,
       };
-      const spec = this.rng.pick(CAR_MODELS);
+      // Round-11 (retry): parked model via pickOne (random.js) — the
+      // standalone twin of rng.pick, one next() call, so the shared
+      // stream (and the fixed-seed fleet) is byte-identical to before.
+      const spec = pickOne(this.rng, CAR_MODELS);
       // Round-4: parked cars get a wider colour palette (not just the
       // traffic-model colours) and a slight parking angle, so the kerb
       // reads as a lived-in street instead of a repeating row.
@@ -586,6 +682,15 @@ export class TrafficManager {
         const wobble = CONFIG.round4?.traffic?.speedWobble ?? 0.08;
         car.targetSpeed = car.baseTargetSpeed
           * (1 + wobble * Math.sin(this._time * 0.6 + (car.speedPhase || 0)));
+        // Round-11 (retry): the wobble multiplies the BASE speed, so a
+        // bus clamped to 10 at spawn still breathed up to 10.8 here
+        // (measured 10.80 in the browser run) — re-clamp the wobbled
+        // value to the bus cruise band, so the 9.5 m bus never exceeds
+        // 10 m/s at any point in its cycle.
+        if (/bus/i.test(car.model || '')) {
+          const bc = CONFIG.round11?.traffic?.busCruise || { min: 7, max: 10 };
+          car.targetSpeed = clamp(car.targetSpeed, bc.min, bc.max);
+        }
       }
       // Advance along the road polyline so cars follow bends.
       const road = roads[car.roadIndex];
@@ -863,6 +968,56 @@ export class TrafficManager {
     };
   }
 
+  // Round-11: fleet composition — the counts a probe reads to prove
+  // the traffic-variety fix, by display model AND by sculpted shape
+  // (car.sculpt.silhouette: 'bus' / 'coupe' / 'pickup' / ...), split
+  // moving vs parked, plus the guaranteed-slot state and one entry per
+  // car (model, silhouette, driver, position) so a screenshot harness
+  // can find the bus / coupe / pickup on the road. The tour bus is
+  // listed separately — it is a fixed-route bus, not fleet traffic.
+  // Counts are recomputed from the live list every call, so despawned
+  // cars drop out, like getSculptedCarsReport above.
+  getFleetComposition() {
+    const byModel = {};
+    const bySilhouette = {};
+    let moving = 0;
+    let parked = 0;
+    const cars = [];
+    for (const car of this.cars) {
+      const model = car.model || 'unknown';
+      const silhouette = (car.sculpt && car.sculpt.silhouette) || 'unknown';
+      byModel[model] = (byModel[model] || 0) + 1;
+      bySilhouette[silhouette] = (bySilhouette[silhouette] || 0) + 1;
+      if (car.driver === 'parked') parked += 1; else moving += 1;
+      cars.push({
+        model, silhouette, driver: car.driver || null,
+        // Round-11: numeric silhouette (length/width/height/wheels/
+        // kind) when the car is a real sculpted car — the probe counts
+        // the bus vs the coupe by metres, not just by name.
+        size: (car.sculpt && car.sculpt.silhouetteSize) || null,
+        x: car.position ? +car.position.x.toFixed(1) : null,
+        z: car.position ? +car.position.z.toFixed(1) : null,
+      });
+    }
+    return {
+      total: this.cars.length,
+      moving,
+      parked,
+      maxCars: this.maxCars,
+      round11: true, // round-11 final: build stamp — this composition shape is the round-11 one (guaranteed slots + silhouette sizes), so the harness can tell a stale traffic.js from the live one.
+      byModel,
+      bySilhouette,
+      guaranteed: {
+        pickup: this._pickupSpawned === true,
+        bus: (byModel['City Bus'] || 0) > 0,
+        coupe: (byModel['Palm Coupe'] || 0) > 0,
+        slotsSpent: this._guaranteedIndex || 0,
+      },
+      tourBus: this.tourBus ? { model: this.tourBus.model || null } : null,
+      cars,
+    };
+  }
+
   // Remove a pedestrian (hit / shot). Returns true when one was removed.
   removePedestrian(ped) {
     const before = this.pedestrians.length;
@@ -879,6 +1034,10 @@ export class TrafficManager {
     this.tourBus = null;
     this._tourSpawned = false;
     this._sculptTotals = null; // round-8: sculpt totals rebuild on respawn
+    // Round-11: guaranteed slots + model deck rebuild on respawn.
+    this._guaranteedIndex = 0;
+    this._pickupSpawned = false;
+    this._modelDeck = [];
   }
 }
 

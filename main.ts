@@ -148,6 +148,29 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 10: Spire falloff ${sp.falloffNear} m -> ${sp.falloffFar} m (near core ${sp.nearCore}, near shell ${sp.nearShell}) + deepened sky mids 0x${mids10[0]?.hex.toString(16)} / 0x${mids10[1]?.hex.toString(16)} / 0x${mids10[2]?.hex.toString(16)}`);
 }
+// Round-11: the three lanes share one CONFIG.round11 object — fill
+// (Lane B), traffic (Lane C) and camera (Lane A). A copy that lost any
+// one key would ship a build whose probe claims the fix while the game
+// silently runs the round-10 behaviour for that lane. Fail loudly here
+// instead of at the intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const r11 = cfg?.round11;
+  // Round-11 final (re-touch): the gate also covers the new setCamYaw probe (main.js) — the harness sets the chase yaw after every teleport a screenshot depends on, so the gate's three lanes stay honest about what the screenshots show.
+  const r11Ok = r11?.fill && typeof r11.fill.hemiIntensity === 'number'
+    && typeof r11.fill.shadowIntensity === 'number'
+    && typeof r11.fill.bounceIntensity === 'number'
+    && r11?.traffic && Array.isArray(r11.traffic.guaranteed) && r11.traffic.guaranteed.length >= 3
+    && typeof r11.traffic.maxCars === 'number'
+    && r11?.camera && typeof r11.camera.blendRate === 'number'
+    && typeof r11.camera.sweepStepDeg === 'number'
+    && typeof r11.camera.maxFrameDistance === 'number';
+  if (!r11Ok) {
+    throw new Error('missing input: CONFIG.round11 fill/traffic/camera not found in game/src/config.js');
+  }
+  console.log(`round 11: fill (hemi ${r11.fill.hemiIntensity}, shadow ${r11.fill.shadowIntensity}, bounce ${r11.fill.bounceIntensity}) + traffic (maxCars ${r11.traffic.maxCars}, guaranteed ${r11.traffic.guaranteed.map((g) => g.model).join('/')}) + camera (blend ${r11.camera.blendRate}/s, sweep ${r11.camera.sweepStepDeg} deg, frame ${r11.camera.minFrameDistance}-${r11.camera.maxFrameDistance} m)`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

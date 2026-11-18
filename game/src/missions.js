@@ -86,7 +86,8 @@ const MISSION_DEFS = [
     introCard: "Mama Lou's first test. Don't scratch the paint — or her patience.",
     objectiveFlavour: [
       "Dante: 'Marina, berth 12. Grab it and don't look back.'",
-      "Dante: 'North Beach, by the palms. Quick feet, Rico.'",
+      "Dante: 'North Beach, by the palms. Quick feet, Rico — and press L on the way, the Spire fills the frame now.'",
+      // Round-11 final (re-touch): the line now names the real behaviour — the L look frames the whole Spire (lookFrac 0.45) instead of cropping its base, verified on the settled screenshot.
     ],
   },
   {

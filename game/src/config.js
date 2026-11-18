@@ -420,6 +420,115 @@ export const CONFIG = {
     },
   },
 
+  // ---- Round-11 polish (Lane B): fill light for shadow-side facades ----
+  // The round-10 defect: sunlit faces blow warm, shadow-side facades
+  // read near-black (run1-facades.png: wall luminance ~8-30, windows
+  // the only readable thing). A/B proof (round11-shots/ab-*.png, same
+  // camera, same session): the defect face is a SOUTH face in CAST
+  // SHADOW — with shadows off it reads mean 66.6 (only 4.2% of pixels
+  // <30), with round-10 lights it reads 33.4 (82.8% <30). The sun
+  // DOES reach it; the shadow map kills it, and the only other light
+  // was the hemisphere at 0.7. So the fix has three parts, all tuned
+  // here: (1) SHADOW LEAK — the sun's shadow.intensity drops 1.0 ->
+  // 0.55, so ~45% of the warm direct sun leaks into shadowed areas
+  // (dusk bounce does this in reality; three.js shadows are otherwise
+  // pitch black). Shadows stay plainly visible, just not black.
+  // (2) a shadowless warm BOUNCE directional from the opposite azimuth
+  // (WNW sky), so faces the sun never reaches at all (true north /
+  // west faces, dot <= 0 to the sun AND to the leak) get a readable
+  // warm wash; warm, not cool, so the sunset mood survives. (3) a
+  // modest hemisphere lift (0.7 -> 1.25) with a slightly warmer /
+  // lighter ground bounce, so shadowed ground and roofs lift a touch
+  // too. Sun intensity, sky gradient and Spire glow are untouched.
+  // render.js reads this block; main.js probes it.
+  // Round-11 final (re-touch): focusWindowMs is 4000 — the harness screenshots the settled focus view inside this window (re-arm L, shoot immediately); any rAF wait plus capture latency outruns it and catches the blend-back.
+  round11: {
+    fill: {
+      hemiIntensity: 1.25, // was 0.7 (CONFIG.lighting / round5) — shadow lift
+      hemiSky: 0xffb080, // unchanged warm sunset sky bounce
+      hemiGround: 0x8a6a4a, // warmer/lighter ground bounce (was 0x7a5a40)
+      shadowIntensity: 0.55, // sun shadow darkness (three r166+); 1.0
+      // was pitch-black shadows, 0 would erase them. 0.55 keeps the
+      // long dusk shadows readable while letting warm sun leak in.
+      bounceColor: 0xff9a62, // warm dusk bounce (rosy-orange, not cool blue)
+      bounceIntensity: 0.65, // shadow-face lift; 0 would be round-10
+      bounceOffset: [-165, 70, -85], // opposite azimuth to the sun
+      // (sun sits at +165,+85), a touch higher so it grazes facades
+      // instead of raking straight across them
+    },
+
+    // Round-11 (Lane C): richer traffic variety. The round-10 gap:
+    // only 12–14 cars, and the featured pickup only appears because
+    // round 10 forced it (1-in-15 draw per car, fixed seed 1337).
+    // The same deterministic-slot pattern now guarantees a City Bus
+    // and a Palm Coupe too, the fleet grows modestly, and the random
+    // tail cycles through every model before repeating, so the variety
+    // is visible on the road, not just in the model list.
+    // traffic.js reads this block; the Lane B fill block above is untouched.
+    traffic: {
+      maxCars: 20, // total cars (6 parked + 14 moving; was 14). The
+      // TrafficManager constructor reads this over the main.js
+      // maxCars: 14, so the fleet size is tuned here, in one place.
+      // Guaranteed fleet slots, in spawn order — the first N moving
+      // cars are exactly these models, so a bad seed draw can never
+      // lose them. Slot 0 is the round-10 red Dune Pickup (kept);
+      // slots 1–2 are the round-11 additions: the long City Bus and
+      // the low, sleek Palm Coupe. Later spawns draw from the deck.
+      guaranteed: [
+        { model: 'Dune Pickup', colour: '#a04000' },
+        { model: 'City Bus', colour: '#2471a3' },
+        { model: 'Palm Coupe', colour: '#8e44ad' },
+      ],
+      busCruise: { min: 7, max: 10 }, // the 9.5 m bus cruises slower
+      // than the 6–16 m/s car band — a bus at sedan speed reads wrong.
+      // Long vehicles spawn with this much straight road ahead of them
+      // (world.js roadPointForLength), so a 9.5 m body never straddles
+      // a road end the moment it appears.
+      longVehicleMinStraight: 25,
+      // Round-11 (retry): how close to the player a guaranteed car must
+      // spawn (metres). traffic.js re-picks until the slot lands inside
+      // this radius, so the bus / coupe / pickup can never spawn far
+      // away and be despawned in the same frame. Was a hardcoded 150
+      // in traffic.js; tuned here now, in one place, with maxCars.
+      guaranteedNearRadius: 150,
+    },
+
+    // Round-11 (Lane A): camera occlusion handling. Round 10 proved
+    // the defect: 3 of 4 approaches to the Spire are blocked by
+    // buildings (north puts the camera INSIDE a building; only east is
+    // clear), because the L-key look only swings the look target while
+    // the chase camera stays behind the player. The focus camera now
+    // repositions onto a clear viewpoint instead: main.js sweeps
+    // azimuths around the landmark (and rises in steps if no
+    // ground-level azimuth is clear) until both the camera position
+    // and the segment camera -> landmark focus are outside every
+    // building box (world.js round11BuildingAtPoint /
+    // round11SegmentBlocked), and the ordinary chase camera pulls in
+    // toward the player when a building sits between them. All values
+    // are tuning, never hardcoded in main.js / world.js. This `camera`
+    // key lives INSIDE the shared CONFIG.round11 object (Lane B fill +
+    // Lane C traffic above) — a second top-level `round11:` key would
+    // silently shadow theirs.
+    camera: {
+      pad: 1.5, // clearance (m) around a building box when testing a camera position
+      insideClearance: 2, // metres above a roof the rescued chase camera sits (last-resort fallback)
+      maxRise: 40, // metres the focus camera may rise above its base height
+      riseStep: 8, // rise levels tried: 0, 8, 16, ... maxRise
+      sweepStepDeg: 15, // azimuth steps tried either side of the current view
+      sweepMaxDeg: 180, // how far around the landmark the sweep may go
+      minFrameDistance: 45, // framing ring never comes closer than this (m)
+      maxFrameDistance: 100, // ... nor farther than this
+      frameFill: 0.9, // fraction of the vertical FOV the landmark should fill
+      baseHeight: 5, // focus-camera height above ground at rise 0
+      blendRate: 2.5, // per-second ease toward the solved view (wall clock, so headless SwiftShader still converges inside the 4 s focus window)
+      maxRescuePasses: 24, // pull-in steps for the chase-camera rescue
+      focusWindowMs: 4000, // round-11 final: how long one L look holds the solved view (ms, wall clock) — the single source of truth: main.js opens the window for this long and the HUD landmark label shows for the same span, so the label never outlives the view it names.
+      lowLandmarkMaxFocusY: 20, // round-11 final: landmarks this short (the 8 m Marina Bridge) get a lifted focus camera (below) — at street height the camera sits under the deck and the bridge reads as a brown slab, not a span.
+      lowLandmarkLift: 6, // ... metres the focus camera sits above a low landmark's focus height (bridge: y = 8 + 6 = 14), so the deck is seen from above at an angle instead of edge-on from below.
+      lookFrac: 0.45, // round-11 final: the look target is this fraction of the focus height, not the apex — aiming at the apex crops the base out of the frame (pyramid-north showed brown tiers floating in red sky with no base; the Spire's base was cropped too). 0.45 centres the landmark in the 62° FOV with margin both ways at the solved framing distance.
+    },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

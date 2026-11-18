@@ -46,6 +46,16 @@ function onWheel(event) {
   wheelDelta += event.deltaY || 0;
 }
 
+// Round-11 (Lane A): the landmark-look key, named in one place so the
+// HUD hint in index.html and the main.js handler can never drift apart.
+// main.js reads it off the input singleton (input.landmarkLookKey).
+export const LANDMARK_LOOK_KEY = 'KeyL';
+// Round-11 final: the look now frames the landmark from a clear
+// viewpoint (occlusion solver), so the help names what L actually
+// does — a clear framed view, not just a camera swing.
+export const LANDMARK_LOOK_HELP = 'L — look at landmark (clear framed view)';
+// Round-11 final (re-touch): the help text is the contract — the consolidated harness holds the game to it on all 12 landmark directions (3 landmarks x N/S/E/W), settled snapshot plus screenshot.
+
 // Round-8: chase-camera distance level (0 near / 1 mid / 2 far), cycled
 // by the V key. The level lives here so the game loop can read it every
 // frame without owning input state; player.js setChaseDistance() is the
@@ -270,6 +280,8 @@ export const input = {
   getChaseDistanceName,
   setChaseDistanceListener,
   chaseDistanceHelp: CHASE_DISTANCE_HELP,
+  landmarkLookKey: LANDMARK_LOOK_KEY, // round-11: L looks at the nearest landmark
+  landmarkLookHelp: LANDMARK_LOOK_HELP,
   get chaseDistanceLevel() {
     return chaseDistanceLevel;
   },

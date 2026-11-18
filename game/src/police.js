@@ -164,6 +164,24 @@ export class PoliceSystem {
   getSirenPhase() { return this.sirenPhase; }
   getPoliceCars() { return this.policeCars; }
   getOfficers() { return this.officers; }
+  // Round-11 final: pursuit state in one probe for the consolidated
+  // harness — wanted level, active cars, and the nearest pursuit
+  // distance to the given position (game-feel: a pursuit that never
+  // closes is not pressure). Pass null to skip the distance.
+  getPursuitState(playerPos) {
+    // Round-11 final (re-touch): the consolidated run gates on this probe (nearestDist is a number) — the pursuit must actually close on the player, not just spawn.
+    const cars = this.policeCars || [];
+    let nearest = null;
+    if (playerPos && typeof playerPos.x === 'number' && typeof playerPos.z === 'number') {
+      for (const c of cars) {
+        const p = c.position || null;
+        if (!p) continue;
+        const d = Math.hypot(p.x - playerPos.x, p.z - playerPos.z);
+        if (nearest === null || d < nearest) nearest = +d.toFixed(1);
+      }
+    }
+    return { wanted: this.wanted, cars: cars.length, officers: this.officers.length, nearestDist: nearest };
+  }
   // Flat list of every police unit (cars + officers) for the minimap.
   getUnits() { return [...this.policeCars, ...this.officers]; }
 

@@ -69,6 +69,7 @@ export class CombatSystem {
     this.lastImpact = null; // { position, timer } for the last hit — the game loop flashes it
     this.lastHit = null; // { target, damage, killed } for the HUD / log
     this.hitCount = 0; // increments on every landed hit — the HUD flashes a hit marker off it
+    this.lastHitAt = 0; // round-11 final: wall-clock ms of the last landed hit — the harness gates that a punch landed during this run, not just ever (hitCount alone survives a reload). Round-11 final (re-touch): verified in the consolidated run — combatHit landed=true with a fresh lastHitAt stamp.
     this.killCount = 0; // round-9: targets finished (punches + shots)
     this.combo = 0; // round-4b: consecutive hits inside the combo window (2 s)
     this.comboTimer = 0; // seconds since the last landed hit
@@ -185,6 +186,7 @@ export class CombatSystem {
   getStats() {
     return {
       hitCount: this.hitCount,
+      lastHitAt: this.lastHitAt, // round-11 final: when the last hit landed (0 = none this session).
       kills: this.killCount,
       combo: this.combo,
       bestCombo: this.bestCombo,
@@ -450,6 +452,7 @@ export class CombatSystem {
     // Round 4: hit-stop + hit counter — every landed hit freezes the sim
     // for a beat (longer on a kill) and bumps hitCount for the HUD marker.
     this.hitCount += 1;
+    this.lastHitAt = Date.now(); // round-11 final: stamp the landing time (see constructor note).
     // Round-4b: every landed hit extends the combo (HUD + sting).
     this.combo += 1;
     // Round-9: the best combo is a session stat — it only ever climbs.

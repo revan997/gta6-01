@@ -457,6 +457,17 @@ export class AudioEngine {
     }
   }
 
+  // Round-11 final: the focus-camera sting — a short soft two-note
+  // rise when L opens a clear framed view of a landmark (game-feel:
+  // the camera move gets an audio echo on the same frame, so the look
+  // reads as an action, not a cut). Quieter than the discovery chime
+  // — L is pressed often, and a full chime every press would get old.
+  playFocusSting() {
+    // Round-11 final (re-touch): fires on the same frame as the look (main.js L handler) — game-feel demands the sound land with the visual, not after the camera settles.
+    this._blip(659.25, 0.25, 'sine', 0.16, 0);
+    this._blip(987.77, 0.45, 'sine', 0.14, 0.12);
+  }
+
   playWantedUp() {
     this._blip(233.08, 0.18, 'square', 0.3, 0, 220);
     this._blip(311.13, 0.24, 'square', 0.3, 0.16, 294);

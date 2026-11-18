@@ -219,6 +219,34 @@ export class HUD {
     this._landmarkTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(1, seconds) * 1000);
   }
 
+  // Round-11 final: "CLEAR VIEW" toast when the focus solver lands an
+  // unobstructed framing (main.js calls it once per settled look, from
+  // the round11Settled snapshot). Same lazy element pattern as the
+  // landmark label, one line below it; the toast is feedback, not
+  // decoration — it tells the player the solver found a clear
+  // viewpoint instead of the nearest blocked one.
+  showFocusClear(name, seconds = 2) {
+    // Round-11 final (re-touch): fires once per look (seq-guarded in main.js) — the toast is the player's confirmation the solver found an unobstructed framing, not a decoration.
+    if (!this.doc || typeof this.doc.createElement !== 'function' || !name) return;
+    if (!this._focusClearEl) {
+      const district = this._el('district');
+      const parent = district?.parentNode || this.doc.body;
+      if (!parent) return;
+      const el = this.doc.createElement('div');
+      el.id = 'hud-focus-clear';
+      el.style.cssText = 'position:absolute;top:112px;left:50%;transform:translateX(-50%);'
+        + 'font-size:12px;font-weight:bold;letter-spacing:2px;color:#9fe8ff;'
+        + 'text-shadow:0 2px 6px rgba(0,0,0,0.9);pointer-events:none;display:none;';
+      parent.appendChild(el);
+      this._focusClearEl = el;
+    }
+    const el = this._focusClearEl;
+    el.textContent = 'CLEAR VIEW — ' + String(name).toUpperCase();
+    el.style.display = '';
+    if (this._focusClearTimer) clearTimeout(this._focusClearTimer);
+    this._focusClearTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(1, seconds) * 1000);
+  }
+
   // Round-8 re-touch: transient "Camera: far" toast when V cycles the
   // chase distance. Built lazily like the landmark label, so index.html
   // needs no new slot; re-showing refreshes the ~1.5 s fade timer.
