@@ -16,6 +16,10 @@
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 function formatMoney(amount) {
+  // Round-10: a non-finite amount (NaN / Infinity from a corrupted save
+  // or a bad mission payout) used to render as "$NaN" / "$Infinity" in
+  // the HUD. Clamp it to 0 — money is never legitimately non-finite.
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) amount = 0;
   const n = Math.round(amount || 0);
   return '$' + n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }

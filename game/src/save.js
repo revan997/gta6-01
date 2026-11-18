@@ -157,7 +157,7 @@ export class SaveSystem {
     return {
       version: data.version,
       savedAt: data.savedAt || null,
-      money: typeof data.money === 'number' ? data.money : 0,
+      money: typeof data.money === 'number' ? Math.max(0, data.money) : 0,
       completedMissions: Array.isArray(data.completedMissions) ? data.completedMissions : [],
       // Round 4: derived on save, but older saves predate it — recompute
       // from the completed list when the stored count is missing.

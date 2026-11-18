@@ -244,6 +244,29 @@ key, and saves are v8 (the pistol magazine's loaded rounds are
 persisted now — a half-empty mag no longer silently refills on
 reload; v7 and older saves still load).
 
+## Round 10 — Spire falloff, stronger sky, facade variation
+
+Round 10 closes the gaps round 9 left open: the Spire blew out to a
+flat white-gold blob up close (its near-white core + 0.72 shell + lit
+bands + two additive halos summed past 1.0 at 16 m), so the tower now
+dims with distance — below 20 m from the tower axis the core, shell
+and halos fade toward their near values, and at 60 m every value is
+exactly the round-9 value, so the proven look-up is unchanged and the
+shell opacity is never touched (still 0.72); the sky gradient, though
+visible at eye level since round 9, read as a subtle orange wash, so
+the mid stops are deepened (deep rust → deep red-orange → strong
+red-orange → bright gold, measured eye-level band spread 49.8 → ~109)
+while the zenith, horizon and stops stay put; and the facades, still
+flat-shaded boxes up close, gain per-building tints (8 tones), lit
+gold windows, floor banding, pilasters, cornice ledges and parapets,
+with more setbacks, pitched and stepped rooflines. The L key also
+pulls the camera back when framing the Spire from close in, so the
+95 m crown is no longer cropped by the 62° FOV. Saves stay v8 — no
+save-format change. Every round-9 fix (integrated roofs, luminous
+Spire, eye-level sky, sun-streak fix) and every system (driving,
+police, missions 1–5, combat, save/restore, traffic, pause,
+busted/wasted, sound) is unchanged and re-tested.
+
 ## Credits
 
 Built for the make.fun gta6-01 bounty. Solmar Bay is an original work:

@@ -227,7 +227,10 @@ export class PoliceSystem {
     if (typeof starsOrCrime === 'string') {
       stars = CRIME_HEAT[starsOrCrime] ?? 1;
     } else if (typeof starsOrCrime === 'number') {
-      stars = starsOrCrime;
+      // Round-10: a NaN star count used to poison `wanted` (NaN + n
+      // stays NaN, and clamp() passes NaN straight through), leaving
+      // the HUD and the busted check reading NaN forever.
+      stars = Number.isFinite(starsOrCrime) ? starsOrCrime : 1;
     }
     if (typeof reason === 'string' && CRIME_HEAT[reason] !== undefined && typeof starsOrCrime !== 'number') {
       stars = CRIME_HEAT[reason];

@@ -28,6 +28,15 @@ function glowTextures() {
   return { headGlowTex, tailGlowTex, blueGlowTex, checkerTex, taxiSignTex };
 }
 
+// Round-10: the dimensions / cabin proportions for one model, as a
+// copy (callers cannot mutate MODEL_SHAPES through the result). An
+// unknown model falls back to the sedan shape instead of returning
+// undefined — the buildCarMesh default path.
+export function getModelShape(model) {
+  const shape = MODEL_SHAPES[model] || MODEL_SHAPES.sedan;
+  return { ...shape };
+}
+
 // Model dimensions (length x width x body height) and cabin proportions.
 // Round-5: bigger wheels + a per-model `stance` drop so the body sits
 // planted on the wheels — bodyY = wheels*2 + bodyH/2 - stance, so the

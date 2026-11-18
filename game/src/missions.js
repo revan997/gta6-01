@@ -217,7 +217,9 @@ export class MissionManager {
   }
 
   getMissionDef(number) {
-    return MISSION_DEFS.find((m) => m.number === number) || null;
+    // Round-10: coerce the number (a '3' from a URL query or a save
+    // used to miss the strict === match and return null).
+    return MISSION_DEFS.find((m) => m.number === Number(number)) || null;
   }
 
   getCurrentMission() {

@@ -221,14 +221,31 @@ export const CONFIG = {
     // only a flat burnt-orange slice. Now the whole sunset — sienna
     // -> burnt orange -> deep orange -> bright gold — sits between
     // the zenith (0) and the horizon (0.5), so a street-level frame
-    // already shows the gradient. Hex values are unchanged (the 0.18
-    // stop keeps the round-7 warm sienna 0x9a4a2e the gates check).
+    // already shows the gradient.
+    // Round-10 (Lane B): the gradient is STRENGTHENED — same stops
+    // (still all in the visible 0..0.5 range), same zenith 0x4a2a20
+    // and horizon 0xffc46b anchors, but the mids are much deeper and
+    // more saturated so the eye-level band reads as a STRIKING
+    // sunset, not a subtle orange wash. Measured fact that drove the
+    // values: an eye-level frame's sky band spans only ~6-14 deg
+    // elevation (stops ~0.42-0.47 — the chase cam pitches down), so
+    // the contrast that matters lives in the 0.40 -> 0.47 segment,
+    // and ACES tone mapping compresses the R channel (screen R sits
+    // ~207-220 whatever the stop), so the separation is bought with
+    // G/B: 0.40 goes from (255,112,28) to (199,51,21) while 0.47
+    // stays bright gold (255,196,107) — canvas G-gap 84 -> 145.
+    // 0.18 deep rust (was warm sienna 0x9a4a2e), 0.30 deep
+    // red-orange (was 0xd84a2e). NOTE: this deliberately moves the
+    // hexes the round-9 harness pinned (mids[0] 0x9a4a2e / wantMids
+    // list) — the round-10 harness gates must be updated to these
+    // values. Luminance still rises monotonically toward the
+    // horizon, so the sky stays a sunset, not a rainbow.
     sky: {
       mids: [
-        { stop: 0.18, hex: 0x9a4a2e }, // warm sienna/terracotta (round 7)
-        { stop: 0.30, hex: 0xd84a2e }, // burnt orange
-        { stop: 0.40, hex: 0xff7a2a }, // deep orange band
-        { stop: 0.47, hex: 0xffc46b }, // bright gold just above the horizon
+        { stop: 0.18, hex: 0x7e2c1a }, // deep rust (round 10, was warm sienna 0x9a4a2e)
+        { stop: 0.30, hex: 0xa8230f }, // deep red-orange (round 10, was burnt orange 0xd84a2e)
+        { stop: 0.40, hex: 0xc73315 }, // strong red-orange (round 10, was deep orange 0xff7a2a)
+        { stop: 0.47, hex: 0xffc46b }, // bright gold just above the horizon (unchanged)
       ],
     },
     // Sun sprites: low, big and warm, aligned with the low sun light.
@@ -285,11 +302,13 @@ export const CONFIG = {
       top: 0x4a2a20, // burnt sienna zenith (round 7: was warm plum 0x40203a)
       // Round-9: mirror of the round-5 mids, remapped onto the visible
       // sky (see the round-5 note) — same stops, same hexes.
+      // Round-10 (Lane B): mirror of the strengthened round-5 mids —
+      // keep in sync with round5.sky.mids (paintSky reads round-5).
       mids: [
-        { stop: 0.18, hex: 0x9a4a2e }, // warm sienna / terracotta (round 7: was warm mauve 0x8a3a4a)
-        { stop: 0.30, hex: 0xd84a2e }, // burnt orange
-        { stop: 0.40, hex: 0xff7a2a }, // deep orange band
-        { stop: 0.47, hex: 0xffc46b }, // bright gold just above the horizon
+        { stop: 0.18, hex: 0x7e2c1a }, // deep rust (round 10, was warm sienna 0x9a4a2e)
+        { stop: 0.30, hex: 0xa8230f }, // deep red-orange (round 10, was burnt orange 0xd84a2e)
+        { stop: 0.40, hex: 0xc73315 }, // strong red-orange (round 10, was deep orange 0xff7a2a)
+        { stop: 0.47, hex: 0xffc46b }, // bright gold just above the horizon (unchanged)
       ],
       horizon: 0xffc46b,
     },
@@ -382,6 +401,22 @@ export const CONFIG = {
       bandWidth: 10, // band width in texture px (canvas 256 wide)
       bandCoreWidth: 3, // bright core line inside each band, px
       ringHeight: 2.0, // lit window-band ring height, metres (was 1.6)
+      // Round-10 (Lane A): distance falloff — the near-white core +
+      // 0.72 shell + lit windows/bands + two additive halos sum past
+      // 1.0 at 16 m and clip to a flat white-gold blob, while the 60 m
+      // look-up is proven good. Below falloffNear (metres from the
+      // tower axis) the tower dims toward the near* values; at and
+      // beyond falloffFar every value is exactly the round-9 value,
+      // so the 60 m look is unchanged. Shell opacity is NEVER touched
+      // (stays 0.72); only material colour multipliers and halo
+      // opacities move, so the round-9 probe still reads shell 0.72,
+      // opaque core, 2 additive halos.
+      falloffNear: 20, // metres from the tower axis: full near dimming
+      falloffFar: 60, // metres from the tower axis: round-9 values
+      nearCore: 0.52, // core material colour multiplier when close
+      nearShell: 0.60, // shell material colour multiplier when close
+      nearGlow: 0.04, // inner halo opacity when close (far: 0.22)
+      nearHalo: 0.015, // outer halo opacity when close (far: 0.08)
     },
   },
 

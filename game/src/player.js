@@ -131,6 +131,9 @@ export function createPlayer(scene, world, spawn) {
     setChaseDistance(level) {
       let idx = -1;
       if (typeof level === 'number') idx = Math.round(level);
+      // Round-10: a numeric string ('2' from a save / URL query) now
+      // coerces instead of falling through to "unchanged".
+      else if (typeof level === 'string' && level.trim() !== '' && !Number.isNaN(Number(level))) idx = Math.round(Number(level));
       else if (typeof level === 'string') {
         idx = CHASE_DISTANCE_LEVELS.findIndex((l) => l.name === level.toLowerCase());
       }

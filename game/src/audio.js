@@ -104,6 +104,17 @@ export class AudioEngine {
     }
   }
 
+  // Round-10: the music bus had no runtime volume setter (musicVolume
+  // was construction-only) — mirrors setMasterVolume so the menu /
+  // pause screens can duck the radio without rebuilding the engine.
+  setMusicVolume(v) {
+    this.musicVolume = clamp(v, 0, 1);
+    if (this.musicGain && this.ctx) {
+      this.musicGain.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.05);
+    }
+    return this.musicVolume;
+  }
+
   // ---- one-shot helpers ----
 
   _blip(freq, duration, type = 'sine', volume = 0.5, when = 0, slideTo = null) {

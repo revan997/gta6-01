@@ -641,11 +641,29 @@ function updateCamera(dt) {
 
   const focus = player.onFoot ? player.position : (player.currentCar ? player.currentCar.position : player.position);
   const driving = !player.onFoot;
+  // Round 10: when the L key is framing a TALL landmark (the Spire,
+  // focusY 95) from close in, pull the chase camera back — at 16 m the
+  // 95 m tower fills the 62° FOV and the crown is cropped. Only while
+  // the focus window is open and the player is within 40 m of the tower
+  // axis; far looks and short landmarks (Bridge / Pyramid focusY <= 64)
+  // are untouched, and the look target still blends to the landmark.
+  let focusPullBack = 1;
+  if (landmarkFocus && landmarkFocus.y >= 90) {
+    const dAxis = Math.hypot(focus.x - landmarkFocus.x, focus.z - landmarkFocus.z);
+    if (dAxis < 40) {
+      // Only pull back when the camera already sits on the FAR side of
+      // the player from the tower (camera offset dot player->tower < 0):
+      // pulling back from the tower side would push the camera into
+      // the tower mesh instead of away from it.
+      const tx = landmarkFocus.x - focus.x, tz = landmarkFocus.z - focus.z;
+      if (tx * Math.sin(camYaw) + tz * Math.cos(camYaw) < 0) focusPullBack = 1.6;
+    }
+  }
   // Round 3: C toggles the chase camera near / far.
   // Round-5: mouse wheel zooms the chase camera (each notch ~8%).
   const wheel = input.consumeWheelDelta ? input.consumeWheelDelta() : 0;
   if (wheel) camZoom = Math.max(0.8, Math.min(1.35, camZoom * (1 + wheel * 0.0008)));
-  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1) * camZoom * (player.chaseDistanceMul || 1);
+  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1) * camZoom * (player.chaseDistanceMul || 1) * focusPullBack;
   const height = (driving ? CONFIG.camera.drivingHeight : CONFIG.camera.onFootHeight) * (player.chaseHeightMul || 1);
   // Round-3 polish: the field of view opens up at speed while the
   // throttle is held, so fast driving feels fast.
@@ -1361,6 +1379,67 @@ window.__solmar = {
       },
       roofs: roofReport ? roofReport.totals : null,
       roofsPerModel: roofReport ? roofReport.perModel : null,
+    };
+  },
+  // Round-10 probes: the three lanes, all read off the live scene.
+  // spireFalloff — the camera's distance to the Spire axis + the LIVE
+  // shell/core/halo values at that distance (Lane A: at >= 60 m they
+  // equal the round-9 constants; closer they dim, shell opacity stays
+  // 0.72). skyEyeBand — the painted sky canvas's luminance spread over
+  // the 0.40 -> 0.47 stops, the eye-level band (Lane B: round-9
+  // palette 49.8, round-10 palette ~109). facades — world.round10
+  // counts (Lane C). All three are runtime reads, not config claims.
+  get round10() {
+    const spireCfg = (CONFIG.round9 && CONFIG.round9.spire) || {};
+    const axisX = 80, axisZ = -80, topY = 95;
+    const cp = camera.position;
+    const cy = Math.min(Math.max(cp.y, 0), topY);
+    const camD = Math.hypot(cp.x - axisX, cp.z - axisZ, cp.y - cy);
+    let shell = null;
+    let core = null;
+    const halos = [];
+    let skyEyeBand = null;
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const h = o.geometry && o.geometry.parameters ? (o.geometry.parameters.height || 0) : 0;
+      if (Math.abs(h - 95) < 0.01) {
+        if (o.material.transparent && o.material.map && o.material.blending !== THREE.AdditiveBlending) {
+          shell = { opacity: +o.material.opacity.toFixed(3), color: +o.material.color.r.toFixed(3) };
+        } else if (!o.material.transparent && o.material.map) {
+          core = { color: +o.material.color.r.toFixed(3) };
+        } else if (o.material.transparent && o.material.blending === THREE.AdditiveBlending) {
+          halos.push(+o.material.opacity.toFixed(3));
+        }
+      }
+      if (!skyEyeBand && o.material.map && o.material.map.image
+        && o.geometry && o.geometry.parameters && (o.geometry.parameters.radius || 0) === 900) {
+        try {
+          const canvas = o.material.map.image;
+          const ctx = canvas.getContext('2d');
+          // Eye-level band: canvas rows for stops 0.40..0.47
+          // (512 rows * stop). Luminance max-min across the band.
+          const lums = [];
+          for (let y = Math.floor(0.40 * 512); y <= Math.floor(0.47 * 512); y++) {
+            const d = ctx.getImageData(32, y, 1, 1).data;
+            lums.push(0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2]);
+          }
+          skyEyeBand = { spread: +(Math.max(...lums) - Math.min(...lums)).toFixed(1), samples: lums.length };
+        } catch (_) { skyEyeBand = { error: 'unreadable' }; }
+      }
+    });
+    return {
+      spireFalloff: {
+        camD: +camD.toFixed(1),
+        falloffNear: spireCfg.falloffNear ?? null,
+        falloffFar: spireCfg.falloffFar ?? null,
+        shell, core, halos: halos.sort((a, b) => a - b),
+      },
+      skyEyeBand,
+      sky: {
+        mids: (CONFIG.round5 && CONFIG.round5.sky && CONFIG.round5.sky.mids) || null,
+      },
+      facades: world.round10 || null,
+      round5windows: world.round5 || null,
     };
   },
 };

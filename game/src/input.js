@@ -82,8 +82,11 @@ function notifyChaseDistanceListeners() {
 }
 function getChaseDistanceLevel() { return chaseDistanceLevel; }
 function setChaseDistanceLevel(level) {
+  // Round-10: clamp out-of-range levels to the nearest valid level
+  // instead of silently ignoring them — a caller passing 5 used to
+  // leave a stale level behind with no indication anything was wrong.
   const n = Math.round(level);
-  if (n >= 0 && n <= 2) chaseDistanceLevel = n;
+  chaseDistanceLevel = Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : chaseDistanceLevel;
   return chaseDistanceLevel;
 }
 const CHASE_DISTANCE_NAMES = ['near', 'mid', 'far'];

@@ -16,6 +16,19 @@ export function seedFromString(str) {
   return h >>> 0;
 }
 
+// Round-10: integer in [lo, hi] inclusive from any rng-like
+// ({ next() }) — the standalone twin of createRng().int(), for callers
+// that hold a bare rng instead of a factory (mirrors weightedChoice).
+export function rangeInt(rng, lo, hi) {
+  if (!rng || typeof rng.next !== 'function') {
+    throw new Error('rangeInt: rng with a next() method is required');
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo > hi) {
+    throw new Error('rangeInt: lo/hi must be finite numbers with lo <= hi');
+  }
+  return Math.floor(lo + rng.next() * (Math.floor(hi) - Math.ceil(lo) + 1));
+}
+
 // Round-8: weighted pick over [{ value, weight }] (or [value, weight]
 // tuples) using a caller-supplied rng-like ({ next() }). Pure helper so
 // archetype selection in world.js reads as data, not inline roll code.

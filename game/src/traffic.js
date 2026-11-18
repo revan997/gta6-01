@@ -403,7 +403,18 @@ export class TrafficManager {
     const pick = this._pickSpawnPoint(world, player, true);
     const roads = this._roads(world);
     const road = roads[pick.roadIndex];
-    const spec = this.rng.pick(CAR_MODELS);
+    // Round-10: the first moving car is always the red Dune Pickup —
+    // the fleet is a 1-in-15 draw per car, so a fixed seed can deal a
+    // fleet with no pickup at all, and the round-7 featured pickup
+    // (sculpted body, open bed) would never appear on the road. Only
+    // the first spawn is forced; later spawns draw normally.
+    let spec;
+    if (!this._pickupSpawned) {
+      this._pickupSpawned = true;
+      spec = { model: 'Dune Pickup', colour: '#a04000' };
+    } else {
+      spec = this.rng.pick(CAR_MODELS) || { model: 'Solmar Sedan', colour: '#c0392b' };
+    }
     const direction = this.rng.next() < 0.5 ? 1 : -1;
     const baseHeading = road ? this._roadHeading(road, pick.roadT) : this.rng.range(0, Math.PI * 2);
     const heading = direction > 0 ? baseHeading : baseHeading + Math.PI;

@@ -73,9 +73,11 @@ const server = createServer((request, response) => {
   // Round-5: a tiny health endpoint so the test harness (or a human) can
   // tell the dev server is up without fetching the game.
   // Round 9: round 9 — eye-level sky, luminous Spire, integrated roofs.
+  // Round 10: round 10 — Spire distance falloff, stronger sky gradient,
+  // facade variation (lit windows, tints, cornices, parapets).
   if (pathname === '/__health') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: true, round: 9, root }));
+    response.end(JSON.stringify({ ok: true, round: 10, root }));
     return;
   }
   // Round-6: a version endpoint — the build identity (game, round,
@@ -85,11 +87,13 @@ const server = createServer((request, response) => {
   // Round 8: round 8, stepped towers, varied rooflines, sculpted car bodies.
   // Round 9: round 9, eye-level sky gradient, luminous Spire glass,
   // integrated car roofs, minimap landmark stars, save v8.
+  // Round 10: round 10, Spire distance falloff, stronger sky gradient,
+  // facade variation, save still v8.
   if (pathname === '/__version') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({
-      game: 'solmar-bay', competition: 'gta6-01', round: 9,
-      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks'],
+      game: 'solmar-bay', competition: 'gta6-01', round: 10,
+      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks', 'spire-falloff', 'stronger-sky-gradient', 'facade-variation'],
       root,
     }));
     return;

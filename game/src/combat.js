@@ -91,6 +91,10 @@ export class CombatSystem {
   getArmour() { return this.armour; }
   getAmmo() { return this.ammo; }
   getMag() { return this.mag; }
+  // Round-10: the read-only definition of the equipped weapon
+  // (damage / range / rate / magSize) — the HUD ammo line and debug
+  // probes read it without touching combat state.
+  getWeaponDef() { return WEAPONS[this.weapon] || WEAPONS.fists; }
   getWeapon() { return this.weapon; }
   isPlayerDown() { return this.isDown; }
 

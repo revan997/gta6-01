@@ -58,7 +58,9 @@ if (!existsSync(gameFavicon)) {
   const cfg = configMod?.CONFIG;
   const sunsetOk = cfg?.colors?.skyTop === 0x4a2a20
     && Array.isArray(cfg?.round5?.sky?.mids) && cfg.round5.sky.mids.length >= 4
-    && cfg.round5.sky.mids[0]?.hex === 0x9a4a2e
+    // Round-10 (Lane B): the 0.18 mid was deepened from warm sienna
+    // 0x9a4a2e to deep rust 0x7e2c1a — the old hex is intentionally gone.
+    && cfg.round5.sky.mids[0]?.hex === 0x7e2c1a
     && cfg?.round6?.sky && cfg?.round6?.landmarks?.spire
     && cfg?.round7?.landmarks?.pyramid;
   if (!sunsetOk) {
@@ -115,11 +117,36 @@ if (!existsSync(gameFavicon)) {
     && typeof r9.spire.bandCount === 'number' && r9.spire.bandCount >= 1
     && Array.isArray(mids) && mids.length >= 4
     && mids.every((m) => typeof m.stop === 'number' && m.stop > 0 && m.stop < 0.5)
-    && mids[0]?.hex === 0x9a4a2e;
+    // Round-10 (Lane B): the 0.18 mid was deepened from warm sienna
+    // 0x9a4a2e to deep rust 0x7e2c1a — the old hex is intentionally gone.
+    && mids[0]?.hex === 0x7e2c1a;
   if (!r9Ok) {
     throw new Error('missing input: CONFIG.round9 eye-level sky / luminous Spire not found in game/src/config.js');
   }
   console.log(`round 9: eye-level sky (mids ${mids.map((m) => m.stop).join('/')}, canvas ${r9.skyCanvas.width}x${r9.skyCanvas.height}) + luminous Spire (shell opacity ${r9.spire.shellOpacity}, ${r9.spire.bandCount} light bands)`);
+}
+// Round-10: the Spire's distance falloff + the strengthened sky must be
+// present — below falloffNear the tower dims toward the near* values so
+// it no longer clips to a white-gold blob up close, and at falloffFar
+// every value is exactly the round-9 value. A copy that lost the
+// falloff block would ship the round-9 blowout at 16 m.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const sp = cfg?.round9?.spire;
+  const mids10 = cfg?.round5?.sky?.mids;
+  const r10Ok = sp
+    && typeof sp.falloffNear === 'number' && typeof sp.falloffFar === 'number'
+    && sp.falloffNear > 0 && sp.falloffFar > sp.falloffNear
+    && typeof sp.nearCore === 'number' && sp.nearCore > 0 && sp.nearCore < 1
+    && typeof sp.nearShell === 'number' && sp.nearShell > 0 && sp.nearShell < 1
+    && typeof sp.nearGlow === 'number' && typeof sp.nearHalo === 'number'
+    && Array.isArray(mids10) && mids10.length === 4
+    && mids10[1]?.hex === 0xa8230f && mids10[2]?.hex === 0xc73315;
+  if (!r10Ok) {
+    throw new Error('missing input: CONFIG.round9.spire falloff / round-10 strengthened sky not found in game/src/config.js');
+  }
+  console.log(`round 10: Spire falloff ${sp.falloffNear} m -> ${sp.falloffFar} m (near core ${sp.nearCore}, near shell ${sp.nearShell}) + deepened sky mids 0x${mids10[0]?.hex.toString(16)} / 0x${mids10[1]?.hex.toString(16)} / 0x${mids10[2]?.hex.toString(16)}`);
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)

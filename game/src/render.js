@@ -300,4 +300,60 @@ export function boostGlassSheen(material) {
   return material;
 }
 
+// Round-10 (Lane C, facades): per-building facade variation, baked at
+// build time so there is no per-frame cost. Building faces were flat
+// shaded boxes in one district grey; the skyline read as extruded
+// blocks. Three helpers below fix it without touching the seeded rng:
+// a deterministic warm/cool tint per building, a warm lit-glass
+// material for geometry windows, and the tint application itself.
+// All decisions hash the building's (x, z) position, so the same seed
+// always paints the same city and the layout stream is undisturbed.
+
+// Warm/cool facade tones (near-white, so they tint the district base
+// colour instead of replacing it): warm cream, cool blue-grey, rose,
+// pale gold, sage, slate, amber, neutral. One per building, hashed.
+export const FACADE_TINTS = [
+  { color: 0xffffff, roughness: 0.9 },
+  { color: 0xffe6c0, roughness: 0.85 },
+  { color: 0xdfe8f2, roughness: 0.8 },
+  { color: 0xf2d8c8, roughness: 0.9 },
+  { color: 0xfff0d0, roughness: 0.85 },
+  { color: 0xd8e4d8, roughness: 0.9 },
+  { color: 0xcfd8e8, roughness: 0.75 },
+  { color: 0xffe0b0, roughness: 0.85 },
+];
+
+// Deterministic tint for the building at (x, z): a 32-bit integer hash
+// of the floored position + height, so neighbours rarely share a tone
+// and no rng is consumed. Returns one entry of FACADE_TINTS.
+export function facadeTintFor(x, z, height) {
+  let h = (Math.imul(Math.floor(x * 10), 374761393)
+    + Math.imul(Math.floor(z * 10), 668265263)
+    + Math.imul(Math.floor(height || 0), 974634211)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return FACADE_TINTS[h % FACADE_TINTS.length];
+}
+
+// Apply a facade tint to a building's MeshStandardMaterial: the tint
+// colour multiplies the facade map (warm/cool shift per building) and
+// the roughness varies the dusk sheen. Guards nulls; returns material.
+export function applyFacadeTint(material, tint) {
+  if (!material || typeof material !== 'object' || !tint) return material;
+  if (material.color && typeof material.color.setHex === 'function') {
+    material.color.setHex(tint.color);
+  }
+  if (typeof tint.roughness === 'number') material.roughness = tint.roughness;
+  return material;
+}
+
+// A warm lit-window glass material for geometry windows: MeshBasic
+// (unlit, so the pane reads as a glow at dusk instead of a shaded
+// surface — same perf reasoning as the round-5 window materials).
+// `hex` is the warm tone; world.js uses pale gold for most lit panes
+// and a deeper gold for a deterministic subset, so lit floors vary.
+export function makeLitGlassMaterial(hex = 0xffe9a8) {
+  return new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide });
+}
+
 export default createRenderContext;
