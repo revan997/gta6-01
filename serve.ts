@@ -72,9 +72,10 @@ const server = createServer((request, response) => {
   if (pathname.endsWith('/')) pathname += 'index.html';
   // Round-5: a tiny health endpoint so the test harness (or a human) can
   // tell the dev server is up without fetching the game.
+  // Round 9: round 9 — eye-level sky, luminous Spire, integrated roofs.
   if (pathname === '/__health') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: true, round: 8, root }));
+    response.end(JSON.stringify({ ok: true, round: 9, root }));
     return;
   }
   // Round-6: a version endpoint — the build identity (game, round,
@@ -82,13 +83,26 @@ const server = createServer((request, response) => {
   // polish pass is being served. No file access, no state.
   // Round 7: round 7, three landmarks, luminous Spire, burnt-sienna sky.
   // Round 8: round 8, stepped towers, varied rooflines, sculpted car bodies.
+  // Round 9: round 9, eye-level sky gradient, luminous Spire glass,
+  // integrated car roofs, minimap landmark stars, save v8.
   if (pathname === '/__version') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({
-      game: 'solmar-bay', competition: 'gta6-01', round: 8,
-      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines'],
+      game: 'solmar-bay', competition: 'gta6-01', round: 9,
+      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks'],
       root,
     }));
+    return;
+  }
+  // Round-9: this is a static file server — it only answers GET and
+  // HEAD. A POST/PUT/DELETE used to fall through to the file branch and
+  // serve the file back with a 200, which is misleading (and a test
+  // harness probing for write methods would read it as "accepted").
+  // Anything else gets a 405 with an Allow header, before any file
+  // access happens.
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    response.writeHead(405, { 'allow': 'GET, HEAD', 'content-type': 'text/plain; charset=utf-8' });
+    response.end('method not allowed');
     return;
   }
   const file = resolve(join(root, normalize(pathname)));

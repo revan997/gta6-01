@@ -69,8 +69,15 @@ export class CombatSystem {
     this.lastImpact = null; // { position, timer } for the last hit — the game loop flashes it
     this.lastHit = null; // { target, damage, killed } for the HUD / log
     this.hitCount = 0; // increments on every landed hit — the HUD flashes a hit marker off it
+    this.killCount = 0; // round-9: targets finished (punches + shots)
     this.combo = 0; // round-4b: consecutive hits inside the combo window (2 s)
     this.comboTimer = 0; // seconds since the last landed hit
+    // Round-9: session combat stats — the best combo reached, and shot
+    // accuracy (fired vs landed). Pure bookkeeping, never a balance
+    // input; getStats() exposes them for the HUD / debug probes.
+    this.bestCombo = 0;
+    this.shotsFired = 0;
+    this.shotsHit = 0;
     this.hitStopTimer = 0; // seconds of freeze left after a landed hit (round 4)
     this.isDown = false;
     // Round-6: landmark showdown bonuses claimed this session — one per
@@ -156,6 +163,34 @@ export class CombatSystem {
 
   // Round-4b combo: consecutive landed hits inside a 2 s window.
   getCombo() { return this.combo; }
+
+  // Round-9: the best combo reached this session (resets with reset()).
+  getBestCombo() { return this.bestCombo; }
+
+  // Round-9: shot accuracy — 1 when every fired shot landed, 0 when
+  // none did, null before the first shot. Shots that never fire
+  // (cooldown / no ammo / reloading) do not count.
+  getShotAccuracy() {
+    if (this.shotsFired <= 0) return null;
+    return this.shotsHit / this.shotsFired;
+  }
+
+  // Round-9: plain status snapshot for the HUD / save / debug probes —
+  // hits, kills, best combo, shot accuracy and the landmark showdown
+  // total. Returns a fresh object every call; no live state leaks out.
+  getStats() {
+    return {
+      hitCount: this.hitCount,
+      kills: this.killCount,
+      combo: this.combo,
+      bestCombo: this.bestCombo,
+      shotsFired: this.shotsFired,
+      shotsHit: this.shotsHit,
+      shotAccuracy: this.getShotAccuracy(),
+      landmarkBonusTotal: this.landmarkBonusTotal,
+      landmarkBonusClaims: this.landmarkBonusClaims.size,
+    };
+  }
 
   // Hit-stop (round 4): a landed hit freezes the simulation for a beat
   // (0.05 s, 0.09 s on a kill) so punches and shots feel heavy. The game
@@ -294,6 +329,7 @@ export class CombatSystem {
     }
     this.shotCooldown = WEAPONS.pistol.rate;
     this.mag -= 1;
+    this.shotsFired += 1; // round-9: every shot that leaves the barrel counts
 
     // Muzzle position: just in front of the player, at chest height.
     const muzzle = player?.position
@@ -364,6 +400,7 @@ export class CombatSystem {
     if (!best) return { fired: true, hit: false };
     // Seeded damage roll: 30–38, so results vary per seed but reproduce.
     const damage = Math.round(this.rng.range(30, 38));
+    this.shotsHit += 1; // round-9: a shot that finds a target counts
     const hit = this._applyDamage(best, damage, 'shot');
     return { fired: true, hit: true, target: best, damage, killed: hit.killed };
   }
@@ -411,9 +448,12 @@ export class CombatSystem {
     this.hitCount += 1;
     // Round-4b: every landed hit extends the combo (HUD + sting).
     this.combo += 1;
+    // Round-9: the best combo is a session stat — it only ever climbs.
+    if (this.combo > this.bestCombo) this.bestCombo = this.combo;
     this.comboTimer = 0;
     this.hitStopTimer = Math.max(this.hitStopTimer, result.killed ? 0.09 : 0.05);
     if (result.killed) {
+      this.killCount += 1; // round-9: kills counted for getStats()
       // Killing is a heavier crime than merely hitting.
       this.hooks.police?.reportCrime?.('kill');
       if (target.kind === 'pedestrian') this.hooks.traffic?.removePedestrian?.(target);
@@ -494,7 +534,11 @@ export class CombatSystem {
     this.lastTracer = null;
     this.lastImpact = null;
     this.hitCount = 0;
+    this.killCount = 0; // round-9
     this.combo = 0;
+    this.bestCombo = 0; // round-9
+    this.shotsFired = 0; // round-9
+    this.shotsHit = 0; // round-9
     this.comboTimer = 0;
     this.hitStopTimer = 0;
     this.muzzleTimer = 0;

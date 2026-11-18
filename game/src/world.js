@@ -74,21 +74,38 @@ export function buildWorld(scene, seedOrRng) {
   // the horizon. (Round-6 warmed the mids: magenta/rose out.)
   // `midStops` is optional; when omitted the CONFIG.round5 mids are used,
   // so the 2-arg setPalette(top, horizon) call in main.js keeps working.
+  // Round-9 (Lane B): the canvas is 64 px wide (was 4) and mipmapped
+  // sampling is off. A 4 px-wide texture wrapped around a 5.6 km dome
+  // forced a coarse mip level that averaged the whole gradient into
+  // one flat orange; with no mipmaps the vertical gradient is sampled
+  // at full 512-row resolution at every elevation. The gradient is
+  // horizontally uniform, so the extra width costs nothing at paint
+  // time and only guards the seam / filtering. Sizes come from
+  // CONFIG.round9.skyCanvas, never hardcoded here.
+  const R9Sky = (CONFIG.round9 && CONFIG.round9.skyCanvas) || { width: 64, height: 512 };
   const skyCanvas = document.createElement('canvas');
-  skyCanvas.width = 4;
-  skyCanvas.height = 256;
+  skyCanvas.width = R9Sky.width;
+  skyCanvas.height = R9Sky.height;
   const skyCtx = skyCanvas.getContext('2d');
   const skyTex = new THREE.CanvasTexture(skyCanvas);
   skyTex.colorSpace = THREE.SRGBColorSpace;
+  skyTex.minFilter = THREE.LinearFilter;
+  skyTex.generateMipmaps = false;
   function paintSky(topHex, horizonHex, midStops) {
-    const grad = skyCtx.createLinearGradient(0, 0, 0, 256);
+    const grad = skyCtx.createLinearGradient(0, 0, 0, skyCanvas.height);
     grad.addColorStop(0, '#' + topHex.toString(16).padStart(6, '0'));
     for (const m of (midStops || R5.sky.mids)) {
       grad.addColorStop(m.stop, '#' + m.hex.toString(16).padStart(6, '0'));
     }
+    // Round-9: anchor the exact horizon line (stop 0.5 — the sphere's
+    // equator) to the caller's horizon colour. The remapped mids put
+    // bright gold at 0.47, just above the horizon; without this anchor
+    // the horizon line itself would sit halfway down a long blend to
+    // the below-ground stop at 1.0.
+    grad.addColorStop(0.5, '#' + horizonHex.toString(16).padStart(6, '0'));
     grad.addColorStop(1, '#' + horizonHex.toString(16).padStart(6, '0'));
     skyCtx.fillStyle = grad;
-    skyCtx.fillRect(0, 0, 4, 256);
+    skyCtx.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
     skyTex.needsUpdate = true;
   }
   paintSky(CONFIG.colors.skyTop, CONFIG.colors.skyHorizon);
@@ -1094,39 +1111,86 @@ export function buildWorld(scene, seedOrRng) {
   spireBase.position.y = 0.5;
   spireBase.receiveShadow = true;
   spireGroup.add(spireBase);
-  // Round-7 (Lane A): the tower body is LUMINOUS, not glass. The old
-  // matGlass (MeshStandardMaterial, metalness 0.55, no env map) read as
-  // near-black from most angles, so the tower now gets its own
-  // MeshBasicMaterial (unlit — bright from every angle) with a canvas
-  // texture: a vertical warm gradient (deep amber base -> bright gold
-  // crown) with lit window rows wrapping the whole circumference, so
-  // it reads as lit glass from ALL sides, not just at the crown.
-  // One texture, one material, zero per-window meshes.
+  // Round-9 (Lane B): the tower is LUMINOUS GLASS, not a flat orange
+  // tube. The round-7 texture darkened toward the base (#8a3a14), so
+  // from below — the look-up frame — the tower read as a flat dark
+  // cylinder. The construction is now three layers, all cheap:
+  //   (1) a bright inner CORE cylinder (opaque, unlit, near-white gold
+  //       gradient) that shines through the shell from every angle,
+  //       including from below — the "brighter at the core" read;
+  //   (2) a semi-transparent glass SHELL over it (opacity 0.72) whose
+  //       texture carries the lit window rows, a lifted warm gradient
+  //       (base #e07828, was #8a3a14) and 8 vertical LIGHT bands
+  //       wrapping the circumference — from any side 2-3 bands show
+  //       on the face and one compresses at each silhouette edge, so
+  //       the edges glow and the glass has depth instead of one flat
+  //       orange face;
+  //   (3) two additive halo shells (0.22 + 0.08) so the tower blooms
+  //       at dusk from the street. The shell stays MeshBasicMaterial,
+  //       so the round-7 spireLuminous runtime check still passes; it
+  //       keeps depthWrite on (default) so nearer buildings still
+  //       occlude it correctly. Sizes / colours come from
+  //       CONFIG.round9.spire, never hardcoded here.
+  const R9Spire = (CONFIG.round9 && CONFIG.round9.spire) || {};
+  const spireCss = (v, fb) => '#' + ((v ?? fb).toString(16).padStart(6, '0'));
+  // (1) Inner luminous core.
+  const spireCoreTex = makeCanvasTexture(128, 512, (ctx, w, h) => {
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0.00, spireCss(R9Spire.coreTop, 0xfff6c8));
+    grad.addColorStop(0.45, spireCss(R9Spire.coreMid, 0xffc46b));
+    grad.addColorStop(1.00, spireCss(R9Spire.coreBase, 0xff9a3c));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+  const coreFrac = R9Spire.coreRadiusFrac ?? 0.62;
+  const spireCore = new THREE.Mesh(
+    new THREE.CylinderGeometry(spireCfg.radiusTop * coreFrac, spireCfg.radiusBottom * coreFrac, spireCfg.height, 24),
+    new THREE.MeshBasicMaterial({ map: spireCoreTex }));
+  spireCore.position.y = spireCfg.height / 2;
+  spireGroup.add(spireCore);
+  // (2) Glass shell: lifted gradient + vertical light bands + lit rows.
   const spireTex = makeCanvasTexture(256, 512, (ctx, w, h) => {
     // Vertical gradient (canvas top = tower top after flipY).
     const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0.00, '#ffd98a'); // bright gold at the crown
+    grad.addColorStop(0.00, '#ffe9a8'); // bright gold at the crown
     grad.addColorStop(0.15, '#ffc46b');
-    grad.addColorStop(0.45, '#f08a2e'); // amber mid-body
-    grad.addColorStop(0.75, '#c85a1e');
-    grad.addColorStop(1.00, '#8a3a14'); // deep amber-brown at the base
+    grad.addColorStop(0.45, '#ffb347'); // bright amber mid-body
+    grad.addColorStop(0.75, spireCss(R9Spire.shellMid, 0xff8a2a));
+    grad.addColorStop(1.00, spireCss(R9Spire.shellBase, 0xe07828)); // warm amber at the base, lifted
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
+    // Vertical light bands wrapping the tower: a soft wide glow with a
+    // bright core line, repeated around the circumference so the glass
+    // reads as panelled light from every side, not one flat face.
+    const bandCount = R9Spire.bandCount ?? 8;
+    const bandW = R9Spire.bandWidth ?? 10;
+    const bandCoreW = R9Spire.bandCoreWidth ?? 3;
+    for (let b = 0; b < bandCount; b++) {
+      const bx = Math.round((b + 0.5) * (w / bandCount) - bandW / 2);
+      ctx.fillStyle = 'rgba(255,220,140,0.5)';
+      ctx.fillRect(bx, 0, bandW, h);
+      ctx.fillStyle = 'rgba(255,246,200,0.9)';
+      ctx.fillRect(bx + Math.round((bandW - bandCoreW) / 2), 0, bandCoreW, h);
+    }
     // Lit window rows wrapping the tower: deterministic lit/dark
     // pattern (no rng), so the same build always paints the same tower.
+    // Larger and brighter than round 7 — they must read through the
+    // semi-transparent shell over the bright core.
     for (let row = 0, y = 16; y < h - 12; row++, y += 16) {
       for (let col = 0, x = 3; x < w - 8; col++, x += 16) {
         const lit = ((col * 7 + row * 13) % 10) < 7; // ~70% lit
-        ctx.fillStyle = lit ? 'rgba(255,233,168,0.95)' : 'rgba(90,42,18,0.55)';
-        ctx.fillRect(x, y, 10, 7);
+        ctx.fillStyle = lit ? 'rgba(255,243,192,0.98)' : 'rgba(120,60,20,0.5)';
+        ctx.fillRect(x, y, 12, 9);
       }
     }
     // Faint vertical mullions so the glass reads as panelled, not flat.
-    ctx.fillStyle = 'rgba(60,20,5,0.15)';
+    ctx.fillStyle = 'rgba(60,20,5,0.10)';
     for (let x = 0; x < w; x += 16) ctx.fillRect(x, 0, 1, h);
   });
   spireTex.wrapS = THREE.RepeatWrapping;
-  const matSpire = new THREE.MeshBasicMaterial({ map: spireTex });
+  const matSpire = new THREE.MeshBasicMaterial({
+    map: spireTex, transparent: true, opacity: R9Spire.shellOpacity ?? 0.62,
+  });
   const spireTower = new THREE.Mesh(
     new THREE.CylinderGeometry(spireCfg.radiusTop, spireCfg.radiusBottom, spireCfg.height, 24),
     matSpire);
@@ -1134,25 +1198,38 @@ export function buildWorld(scene, seedOrRng) {
   spireTower.castShadow = true;
   spireTower.receiveShadow = true;
   spireGroup.add(spireTower);
-  // Soft vertical glow: a slightly larger faint additive shell around
-  // the tower so it reads from the driving view at distance. It casts
-  // no shadow and writes no depth; the tower itself occludes its far side.
+  // (3) Halo shells: a stronger inner glow plus a wide faint outer
+  // halo, both additive, so the tower is the city's glowing beacon
+  // from the street as well as from below. They cast no shadow and
+  // write no depth; the tower itself occludes its far side.
   const spireGlow = new THREE.Mesh(
     new THREE.CylinderGeometry(spireCfg.radiusTop + 0.7, spireCfg.radiusBottom + 0.7, spireCfg.height, 24),
     new THREE.MeshBasicMaterial({
-      color: 0xff9a3c, transparent: true, opacity: 0.10,
+      color: 0xff9a3c, transparent: true, opacity: R9Spire.glowOpacity ?? 0.22,
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
   spireGlow.position.y = spireCfg.height / 2;
   spireGroup.add(spireGlow);
+  const spireHalo = new THREE.Mesh(
+    new THREE.CylinderGeometry(
+      spireCfg.radiusTop + (R9Spire.haloRadiusPad ?? 2.6),
+      spireCfg.radiusBottom + (R9Spire.haloRadiusPad ?? 2.6),
+      spireCfg.height, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xffb347, transparent: true, opacity: R9Spire.haloOpacity ?? 0.08,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+  spireHalo.position.y = spireCfg.height / 2;
+  spireGroup.add(spireHalo);
   // Lit window bands: brighter, wider rings every ~10 m (8 rings, was
   // 7 thin ones every 12 m). The tower tapers, so each ring's radius
   // is interpolated to sit just proud of the glass at its height.
   const matSpireBand = new THREE.MeshBasicMaterial({ color: 0xfff2b0 });
+  const spireRingH = R9Spire.ringHeight ?? 2.0;
   for (let y = 8; y <= spireCfg.height - 11; y += 10) {
     const r = spireCfg.radiusBottom
       + (spireCfg.radiusTop - spireCfg.radiusBottom) * (y / spireCfg.height);
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.15, r + 0.15, 1.6, 24), matSpireBand);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.15, r + 0.15, spireRingH, 24), matSpireBand);
     band.position.y = y;
     spireGroup.add(band);
   }

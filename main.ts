@@ -90,6 +90,37 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 8: stepped towers (chance ${r8.steppedTower.chance}, minHeight ${r8.steppedTower.minHeight} m, ${r8.steppedTower.tierFracs.length} tiers) + rooflines (pitched ${r8.roofline.pitchedChance}, mansard ${r8.roofline.mansardChance}, stepped parapet ${r8.roofline.steppedParapetChance}); stepped quarter radius ${r8.steppedQuarterRadius} m`);
 }
+// Round 9: the eye-level sky + luminous Spire must be present — the
+// sunset gradient remapped onto the visible sky (all mid stops below
+// the 0.5 horizon line, so the sienna -> burnt orange -> deep orange
+// -> gold bands are visible from street level instead of buried below
+// the horizon), the sky canvas widened so the gradient is not averaged
+// flat by mipmaps, and the Spire's luminous glass (a semi-transparent
+// shell over a bright core, with vertical light bands). A copy that
+// lost CONFIG.round9 would ship the round-8 sky (flat orange at eye
+// level) and an opaque Spire. Fail loudly here instead of at the
+// intake check. The stop bounds are tolerant (a stop is "above the
+// horizon" when it is under 0.5), so a later re-tune of the exact
+// stops does not false-fail this gate.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const mids = cfg?.round5?.sky?.mids;
+  const r9 = cfg?.round9;
+  const r9Ok = r9?.skyCanvas
+    && typeof r9.skyCanvas.width === 'number' && r9.skyCanvas.width >= 16
+    && typeof r9.skyCanvas.height === 'number' && r9.skyCanvas.height >= 256
+    && r9?.spire
+    && typeof r9.spire.shellOpacity === 'number' && r9.spire.shellOpacity > 0 && r9.spire.shellOpacity < 1
+    && typeof r9.spire.bandCount === 'number' && r9.spire.bandCount >= 1
+    && Array.isArray(mids) && mids.length >= 4
+    && mids.every((m) => typeof m.stop === 'number' && m.stop > 0 && m.stop < 0.5)
+    && mids[0]?.hex === 0x9a4a2e;
+  if (!r9Ok) {
+    throw new Error('missing input: CONFIG.round9 eye-level sky / luminous Spire not found in game/src/config.js');
+  }
+  console.log(`round 9: eye-level sky (mids ${mids.map((m) => m.stop).join('/')}, canvas ${r9.skyCanvas.width}x${r9.skyCanvas.height}) + luminous Spire (shell opacity ${r9.spire.shellOpacity}, ${r9.spire.bandCount} light bands)`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

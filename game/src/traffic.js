@@ -298,12 +298,15 @@ export class TrafficManager {
   _tagSculpted(car) {
     if (!car || !car.sculpt) return;
     const sc = car.sculpt;
-    this._sculptTotals = this._sculptTotals || { cars: 0, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0 };
+    this._sculptTotals = this._sculptTotals || { cars: 0, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0, roofIntegrated: 0 };
     this._sculptTotals.cars += 1;
     this._sculptTotals.fenders += sc.fenders || 0;
     this._sculptTotals.archLiners += sc.archLiners || 0;
     this._sculptTotals.glasshouse += sc.glasshouse || 0;
     if (sc.roofCrown) this._sculptTotals.roofCrowns += 1;
+    // Round-9: count cars whose crown is integrated into the body
+    // (sunk into a body deck with fillets), not just crowned.
+    if (sc.roofIntegrated) this._sculptTotals.roofIntegrated += 1;
   }
 
   // Round-5 dusk: traffic cars run their headlights — brighter headlight
@@ -802,7 +805,8 @@ export class TrafficManager {
     const cars = this.getSculptedCars();
     const totals = {
       cars: cars.length, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0,
-      hood: 0, windshield: 0, hubCaps: 0, angled: 0,
+      hood: 0, windshield: 0, hubCaps: 0, angled: 0, roofIntegrated: 0, roofFillets: 0,
+      roofDecks: 0,
     };
     const perModel = {};
     for (const car of cars) {
@@ -811,6 +815,15 @@ export class TrafficManager {
       totals.archLiners += sc.archLiners || 0;
       totals.glasshouse += sc.glasshouse || 0;
       if (sc.roofCrown) totals.roofCrowns += 1;
+      // Round-9: integrated roofs (crown sunk into a body deck) and
+      // their side fillets, so the harness can assert the roof fix
+      // fleet-wide instead of trusting the crown flag alone.
+      if (sc.roofIntegrated) totals.roofIntegrated += 1;
+      // Round-9 re-touch (new recording): count the body decks the
+      // crowns rise through, so the report proves the integration is
+      // structural (deck + fillets + sink), not just a flag.
+      if (sc.roofDeck) totals.roofDecks += 1;
+      totals.roofFillets += sc.roofFillets || 0;
       if (sc.hood) totals.hood += 1;
       if (sc.windshield) totals.windshield += 1;
       totals.hubCaps += sc.hubCaps || 0;
@@ -821,6 +834,14 @@ export class TrafficManager {
         archLiners: sc.archLiners || 0,
         glasshouse: sc.glasshouse || 0,
         roofCrown: Boolean(sc.roofCrown),
+        roofIntegrated: Boolean(sc.roofIntegrated),
+        // Round-9 re-touch (new recording): how far the crown base is
+        // sunk below the deck top, and how many side fillets hug it —
+        // the two numbers that prove the rim is buried, not perched.
+        roofSink: sc.roofSink || 0,
+        roofFillets: sc.roofFillets || 0,
+        roofDeck: Boolean(sc.roofDeck),
+        crownH: sc.crownH || 0,
         angled: sc.angled || 0,
       };
     }

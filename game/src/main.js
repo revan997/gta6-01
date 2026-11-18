@@ -307,29 +307,23 @@ function systems() {
   };
 }
 
-// ---- 3D helpers: mission beacon, muzzle flash, pedestrians, officers ---
+// ---- 3D helpers: muzzle flash, pedestrians, officers ---
 
-const beacon = new THREE.Group();
-const beaconBeam = new THREE.Mesh(
-  // 160 m tall: a downtown sightline to the marina clears ~46 m rooftops
-  // only above ~90 m, so a shorter pillar is invisible from the street.
-  // depthTest off: the marker is a waypoint, meant to be seen through
-  // the buildings between the player and the objective.
-  new THREE.CylinderGeometry(2.2, 2.2, 160, 12, 1, true),
-  new THREE.MeshBasicMaterial({ color: 0xffd94a, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false, depthTest: false }),
-);
-beaconBeam.position.y = 80;
-beaconBeam.renderOrder = 999;
-const beaconDiamond = new THREE.Mesh(
-  new THREE.OctahedronGeometry(2.2),
-  new THREE.MeshBasicMaterial({ color: 0xffd94a, depthTest: false }),
-);
-beaconDiamond.renderOrder = 999;
-beaconDiamond.position.y = 12;
-beacon.add(beaconBeam);
-beacon.add(beaconDiamond);
-beacon.visible = false;
-scene.add(beacon);
+// Round-9 (Lane B): the mission waypoint BEACON is REMOVED, not moved.
+// It was a 160 m tall yellow cylinder (radius 2.2 m, opacity 0.5) with
+// a spinning octahedron diamond, rendered with depthTest: false and
+// renderOrder 999 — i.e. drawn on top of every building in the city.
+// That is the "thin vertical yellow sun streak" in the round-8 shots
+// (r8c-pickup-near.png, run1-shot-street.png): a ~2-20 px wide pale
+// yellow bar hanging from the top of the frame with a bright diamond
+// in it, visible through downtown towers whenever the Marina objective
+// was ahead of the camera. It was not a sun sprite, billboard or lens
+// flare — the sun sprites are radial, the beam was the only vertical
+// depthTest-off object in the scene. No replacement pillar: the
+// waypoint is still shown by the HUD objective text and the gold
+// diamond on the minimap, and missions stay purely position-based
+// (missions.getMarkerPosition), so removing the meshes changes no
+// gameplay system. Do not re-add a depthTest-off pillar here.
 
 const muzzle = new THREE.Mesh(
   new THREE.SphereGeometry(0.28, 8, 8),
@@ -477,6 +471,19 @@ function startPlaying() {
         camYaw = player.heading + Math.PI;
       }
       if (typeof loaded.wanted === 'number') police.setWanted(loaded.wanted);
+      // Round 9 (save v8): restore the combat state too — health,
+      // armour, reserve ammo and the magazine. The save wrote these
+      // fields for rounds, but this load block never read them back,
+      // so a reload silently reset the magazine to a full 12 (and
+      // health/ammo to their defaults) even when the save held a
+      // half-empty mag. Old saves carry mag null, which ?? turns into
+      // undefined, so fromSaveData leaves the live load untouched.
+      combat.fromSaveData({
+        health: loaded.health ?? undefined,
+        armour: loaded.armour ?? undefined,
+        ammo: loaded.ammo ?? undefined,
+        mag: loaded.mag ?? undefined,
+      });
     } else {
       timesPlayed = 1;
     }
@@ -544,6 +551,11 @@ function saveProgress(currentMission) {
     health: combat.getHealth(),
     armour: combat.getArmour(),
     ammo: combat.getAmmo(),
+    // Round 9 (v8): the live magazine count — WITHOUT this line the
+    // v8 save stored mag: null on every save (save() falls back to
+    // null when the caller passes neither mag nor combat), so the
+    // "magazine persisted" feature never actually persisted anything.
+    mag: combat.getMag(),
     timeOfDay,
     playTimeSeconds,
     timesPlayed,
@@ -1013,14 +1025,9 @@ function update(dt) {
   const car = player.currentCar;
   const speedMs = car ? Math.abs(car.speed || 0) : Math.abs(player.speed || 0);
   const marker = missions.getMarkerPosition(world);
-  if (marker) {
-    beacon.visible = true;
-    beacon.position.set(marker.x, 0, marker.z);
-    beaconDiamond.rotation.y += dt * 1.5;
-    beaconDiamond.position.y = 12 + Math.sin(performance.now() / 350) * 0.8;
-  } else {
-    beacon.visible = false;
-  }
+  // Round-9: no 3D waypoint beacon any more (see the note above the
+  // muzzle flash) — the marker position still feeds the HUD objective
+  // text, the minimap diamond and the __solmar probe below.
   // Round-3 polish: the mission name carries the par-time countdown, and
   // the HUD shows which district Rico is standing in.
   const mission = missions.getCurrentMission();
@@ -1098,7 +1105,8 @@ function stagePlay() {
   showOnly(null);
   input.attach(canvas);
   if (SEED === 2) {
-    // On foot in a busy downtown street, mission marker visible.
+    // On foot in a busy downtown street (round 9: the 3D waypoint
+    // beacon was removed — the objective is shown on the HUD/minimap).
     player.teleport(120, -40, 2.6);
     camYaw = player.heading + Math.PI;
     timeOfDay = 15;
@@ -1224,7 +1232,8 @@ window.__solmar = {
   world,
   scene,
   camera,
-  beacon,
+  // Round-9: the mission beacon was removed (it rendered as the yellow
+  // sun-streak artifact); the marker position is still exposed below.
   // Round-4 probes: the living world — bird flocks, buoys, the foam strip.
   get birds() { return world.birds || []; },
   get buoys() { return world.buoys || []; },
@@ -1308,6 +1317,50 @@ window.__solmar = {
         x: t.x, z: t.z, height: t.height, w: t.w, d: t.d, tiers: t.tiers,
       })),
       steppedPlaza: world.steppedPlaza || null,
+    };
+  },
+  // Round-9 probes: the four fixes, all read off the live scene (not
+  // config claims) — integrated roofs fleet-wide, luminous Spire glass
+  // (shell + core + halos), the eye-level sky gradient, and the removed
+  // waypoint beacon (no beacon handle, no tall depthTest-off mesh).
+  get round9() {
+    let shell = null;
+    let core = false;
+    let haloShells = 0;
+    let depthOffTall = 0;
+    let skyTex = null;
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.material) return;
+      const h = o.geometry && o.geometry.parameters ? (o.geometry.parameters.height || 0) : 0;
+      if (Math.abs(h - 95) < 0.01) {
+        if (o.material.transparent && o.material.map && o.material.blending !== THREE.AdditiveBlending) {
+          shell = { opacity: o.material.opacity, map: true };
+        } else if (!o.material.transparent && o.material.map) {
+          core = true;
+        } else if (o.material.transparent && o.material.blending === THREE.AdditiveBlending) {
+          haloShells += 1;
+        }
+      }
+      if (o.material.depthTest === false && h >= 20) depthOffTall += 1;
+      if (o.material.map && o.material.map.image && o.geometry && o.geometry.parameters
+        && (o.geometry.parameters.radius || 0) === 900) {
+        skyTex = { w: o.material.map.image.width, h: o.material.map.image.height };
+      }
+    });
+    let roofReport = null;
+    try { roofReport = (typeof traffic.getSculptedCarsReport === 'function') ? traffic.getSculptedCarsReport() : null; } catch (_) { roofReport = null; }
+    return {
+      beaconHandle: 'removed',
+      depthOffTall,
+      spire: { shell, core, haloShells },
+      sky: {
+        top: '#' + CONFIG.colors.skyTop.toString(16).padStart(6, '0'),
+        horizon: '#' + CONFIG.colors.skyHorizon.toString(16).padStart(6, '0'),
+        mids: (CONFIG.round5 && CONFIG.round5.sky && CONFIG.round5.sky.mids) || null,
+        skyTex,
+      },
+      roofs: roofReport ? roofReport.totals : null,
+      roofsPerModel: roofReport ? roofReport.perModel : null,
     };
   },
 };

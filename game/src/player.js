@@ -148,6 +148,28 @@ export function createPlayer(scene, world, spawn) {
       return { ...rec };
     },
 
+    // Round-9: current on-foot speed in km/h (the HUD's speedo uses the
+    // same 3.6 factor for the car; this is the on-foot twin, so a caller
+    // never has to know Rico's speed is stored in m/s).
+    getSpeedKmh() {
+      return Math.abs(this.speed || 0) * 3.6;
+    },
+
+    // Round-9: turn Rico to face a point ({ x, z }) — the L-key
+    // landmark look frames the landmark on camera, but Rico himself
+    // keeps facing the way he was walking. Facing the landmark first
+    // makes the look read as Rico turning to admire it. Pure heading
+    // bookkeeping; it never moves the player.
+    faceTowards(point) {
+      if (!point || typeof point.x !== 'number' || typeof point.z !== 'number') return this.heading;
+      const dx = point.x - this.position.x;
+      const dz = point.z - this.position.z;
+      if (Math.hypot(dx, dz) < 0.01) return this.heading;
+      this.heading = Math.atan2(dx, dz);
+      group.rotation.y = this.heading;
+      return this.heading;
+    },
+
     // Round-8: cycle near -> mid -> far -> near. Returns the new level
     // record — the V-key handler in main.js shows its name in the HUD.
     cycleChaseDistance() {
@@ -169,6 +191,7 @@ export function createPlayer(scene, world, spawn) {
         currentCar: this.currentCar ? this.currentCar.model : null,
         position: { x: this.position.x, y: this.position.y, z: this.position.z },
         heading: this.heading,
+        speedKmh: this.getSpeedKmh(), // round-9: on-foot speed, km/h
         chaseDistanceLevel: this.chaseDistanceLevel,
         chaseDistanceName: chase.name,
         chaseDistance: chase,

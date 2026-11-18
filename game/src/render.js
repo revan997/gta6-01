@@ -284,4 +284,20 @@ export function boostCarPaintForCar(car) {
   return boosted;
 }
 
+// Round-9: a warm dusk sheen for car glass. The round-9 integrated
+// roofs sit on a tapered glasshouse, but at dusk the glass (near-black
+// 0x1a2a38, metalness 0.6, no env map) went flat black on the shadow
+// side, so the glasshouse read as a hole under the new roof instead of
+// glass. A faint warm emissive (sunset bounce off the glass) lifts the
+// shadow side just enough to read as glass without glowing — applied
+// at build time in vehicle.js so every car gets it, not just the
+// player car (boostCarPaintForCar only runs on spawned player cars).
+export function boostGlassSheen(material) {
+  if (!material || typeof material !== 'object') return material;
+  material.emissive = material.emissive || new THREE.Color(0x000000);
+  material.emissive.setHex(0x3a2410);
+  material.emissiveIntensity = 0.35;
+  return material;
+}
+
 export default createRenderContext;

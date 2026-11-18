@@ -326,6 +326,33 @@ export class MissionManager {
     };
   }
 
+  // Round-9: true while any mission is running (a one-line read the HUD
+  // / menu can use without digging into getMissionProgress() nulls).
+  isMissionActive() { return this.current !== null; }
+
+  // Round-9: the courier's progress along the hotel -> lookout route
+  // during a tailing objective (0..1), or null when no tail is running.
+  // The HUD can turn it into a "tailing…" bar; the value is read-only
+  // here, so it can never change the mission flow.
+  getTailProgress() {
+    if (!this.current) return null;
+    const def = this.getMissionDef(this.current.number);
+    const obj = def?.objectives?.[this.current.objectiveIndex];
+    if (!obj?.tail) return null;
+    return clamp(this.current.tailProgress || 0, 0, 1);
+  }
+
+  // Round-9: the cash still on the table — the summed reward of every
+  // mission not yet completed (par bonuses excluded). The menu / HUD can
+  // show "up to $X left to earn" without re-listing the chain.
+  getRemainingReward() {
+    let total = 0;
+    for (const def of MISSION_DEFS) {
+      if (!this.completed.has(def.number)) total += def.reward || 0;
+    }
+    return total;
+  }
+
   // Marker position { x, y, z, label } for the current objective, or null.
   getMarkerPosition(world) {
     if (!this.current) return null;

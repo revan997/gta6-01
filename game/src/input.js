@@ -102,11 +102,28 @@ function attach(canvas) {
   attachedCanvas = canvas || null;
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', () => { heldKeys.clear(); pressedKeys.clear(); wheelDelta = 0; });
+  window.addEventListener('blur', () => { resetInput(); });
   document.addEventListener('mousemove', onMouseMove);
   window.addEventListener('wheel', onWheel, { passive: true }); // round 5: camera zoom
   document.addEventListener('pointerlockchange', onPointerLockChange);
   listenersAttached = true;
+}
+
+// Round-9: reset all transient input state — held keys, pressed edges,
+// mouse deltas and the wheel accumulator. The blur handler calls it so
+// a key held when the tab loses focus can never stick, and the pause
+// menu (or a test) can call input.reset() to the same effect. The
+// chase-distance level and its listeners are NOT touched: the V-key
+// preference is a setting, not transient state.
+// Round-9 fix folded in: the old blur handler cleared keys and wheel
+// but left mouseDX/mouseDY behind, so a mouse move made while the tab
+// was unfocused could swing the camera on return.
+function resetInput() {
+  heldKeys.clear();
+  pressedKeys.clear();
+  mouseDX = 0;
+  mouseDY = 0;
+  wheelDelta = 0;
 }
 
 function requestPointerLock(canvas) {
@@ -231,6 +248,7 @@ export { consumePressed, setChaseDistanceListener };
 
 export const input = {
   attach,
+  reset: resetInput, // round-9: clear all transient input state
   requestPointerLock,
   exitPointerLock,
   isDown,

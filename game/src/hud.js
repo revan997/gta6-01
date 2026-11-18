@@ -460,6 +460,51 @@ export class HUD {
       ctx.fill();
     }
 
+    // Round-9: landmark stars on the minimap — the Spire, the Pyramid
+    // and the Bridge's mid-span, drawn from state.world.landmarks
+    // (world.js: spire/pyramid are points, the bridge is a span). Gold
+    // ★ glyphs so the landmarks read as destinations, not decoration.
+    // The Spire is luminous in round 9, so its star is bigger and wears
+    // a soft gold glow ring; visited landmarks (state.landmarksVisited,
+    // an array of names from main.js) draw dimmer — found, not pending.
+    // Degrades to nothing when the world carries no landmarks.
+    {
+      const lm = state.world?.landmarks || null;
+      const visited = new Set(state.landmarksVisited || []);
+      const drawStar = (mx, my, r, color) => {
+        ctx.fillStyle = color;
+        ctx.font = `bold ${Math.round(r * 2)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('★', mx, my);
+      };
+      if (lm?.spire) {
+        const [mx, my] = toMap(lm.spire.x, lm.spire.z);
+        if (mx >= -10 && mx <= size + 10 && my >= -10 && my <= size + 10) {
+          if (!visited.has('Solmar Spire')) {
+            ctx.strokeStyle = 'rgba(255, 215, 74, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(mx, my, 9, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          drawStar(mx, my, 7, visited.has('Solmar Spire') ? 'rgba(255, 215, 74, 0.45)' : '#ffd94a');
+        }
+      }
+      if (lm?.pyramid) {
+        const [mx, my] = toMap(lm.pyramid.x, lm.pyramid.z);
+        if (mx >= -10 && mx <= size + 10 && my >= -10 && my <= size + 10) {
+          drawStar(mx, my, 5.5, visited.has('Solmar Pyramid') ? 'rgba(255, 215, 74, 0.45)' : '#ffd94a');
+        }
+      }
+      if (lm?.bridge) {
+        const [mx, my] = toMap((lm.bridge.x0 + lm.bridge.x1) / 2, lm.bridge.z);
+        if (mx >= -10 && mx <= size + 10 && my >= -10 && my <= size + 10) {
+          drawStar(mx, my, 5.5, visited.has('Marina Bridge') ? 'rgba(255, 215, 74, 0.45)' : '#ffd94a');
+        }
+      }
+    }
+
     // Traffic dots: small white dots.
     ctx.fillStyle = '#ecf0f1';
     for (const car of state.traffic || []) {

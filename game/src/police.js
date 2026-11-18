@@ -558,9 +558,18 @@ export function seatPoliceLightBar(car) {
   if (!car || !car.lightBar) return false;
   const bar = car.lightBar;
   if (bar.base === undefined && bar.redLamp === undefined) return false;
-  const barY = typeof bar.barY === 'number'
-    ? bar.barY
-    : (bar.roofY || 0) + (bar.crownLift || 0);
+  // Round-9: prefer the LIVE sculpt roofline (car.sculpt.roofY +
+  // crownH) over the bar's stored values — the integrated roof keeps
+  // the same crown top, but a bar attached before the roof fix (or by
+  // older code) must re-seat on the current roof, not on a stale
+  // stored height. Falls back to the bar's own stored barY/roofY when
+  // the car carries no sculpt data (stand-ins).
+  const liveRoofY = (car.sculpt && typeof car.sculpt.roofY === 'number')
+    ? car.sculpt.roofY + (car.sculpt.crownH || 0) : null;
+  const barY = liveRoofY !== null ? liveRoofY
+    : (typeof bar.barY === 'number'
+      ? bar.barY
+      : (bar.roofY || 0) + (bar.crownLift || 0));
   const cabinZ = bar.cabinZ ?? 0;
   if (bar.base) bar.base.position.set(0, barY + 0.02, cabinZ);
   if (bar.redLamp) bar.redLamp.position.set(-0.25, barY + 0.1, cabinZ);
@@ -568,6 +577,14 @@ export function seatPoliceLightBar(car) {
   if (bar.redGlowSprite) bar.redGlowSprite.position.set(-0.25, barY + 0.14, cabinZ);
   if (bar.blueGlowSprite) bar.blueGlowSprite.position.set(0.25, barY + 0.14, cabinZ);
   bar.seatedOnRoof = true;
+  // Round-9 re-touch (new recording): record WHERE the bar was seated,
+  // so a probe can verify the bar sits on the live integrated roofline
+  // (roofY + crownH) rather than a stale flat-roof height — the seat
+  // is re-asserted every frame by _boostLightBar, so a stale seat
+  // cannot survive a roof change unnoticed.
+  bar.seatedBarY = barY;
+  bar.seatedRoofIntegrated = Boolean(car.sculpt && car.sculpt.roofIntegrated);
+  bar.seatedRoofSink = (car.sculpt && car.sculpt.roofSink) || 0;
   return true;
 }
 

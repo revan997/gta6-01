@@ -213,12 +213,22 @@ export const CONFIG = {
     // Round-7: the 0.30 stop goes warmer still (mauve -> sienna) —
     // paintSky() reads THESE mids (R5.sky.mids), not round6.sky.mids,
     // so this is the value that actually renders.
+    // Round-9 (Lane B): the stops are REMAPPED onto the visible sky.
+    // On the sky sphere, stop s renders at elevation (0.5 - s) * 180
+    // degrees — so stops above 0.5 are BELOW the horizon and never
+    // seen. The old 0.52 / 0.72 / 0.88 stops buried the burnt-orange
+    // and gold bands underground, and the eye-level driving view saw
+    // only a flat burnt-orange slice. Now the whole sunset — sienna
+    // -> burnt orange -> deep orange -> bright gold — sits between
+    // the zenith (0) and the horizon (0.5), so a street-level frame
+    // already shows the gradient. Hex values are unchanged (the 0.18
+    // stop keeps the round-7 warm sienna 0x9a4a2e the gates check).
     sky: {
       mids: [
-        { stop: 0.30, hex: 0x9a4a2e }, // warm sienna/terracotta (round 7)
-        { stop: 0.52, hex: 0xd84a2e }, // burnt orange
-        { stop: 0.72, hex: 0xff7a2a }, // deep orange band
-        { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
+        { stop: 0.18, hex: 0x9a4a2e }, // warm sienna/terracotta (round 7)
+        { stop: 0.30, hex: 0xd84a2e }, // burnt orange
+        { stop: 0.40, hex: 0xff7a2a }, // deep orange band
+        { stop: 0.47, hex: 0xffc46b }, // bright gold just above the horizon
       ],
     },
     // Sun sprites: low, big and warm, aligned with the low sun light.
@@ -273,11 +283,13 @@ export const CONFIG = {
   round6: {
     sky: {
       top: 0x4a2a20, // burnt sienna zenith (round 7: was warm plum 0x40203a)
+      // Round-9: mirror of the round-5 mids, remapped onto the visible
+      // sky (see the round-5 note) — same stops, same hexes.
       mids: [
-        { stop: 0.30, hex: 0x9a4a2e }, // warm sienna / terracotta (round 7: was warm mauve 0x8a3a4a)
-        { stop: 0.52, hex: 0xd84a2e }, // burnt orange
-        { stop: 0.72, hex: 0xff7a2a }, // deep orange band
-        { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
+        { stop: 0.18, hex: 0x9a4a2e }, // warm sienna / terracotta (round 7: was warm mauve 0x8a3a4a)
+        { stop: 0.30, hex: 0xd84a2e }, // burnt orange
+        { stop: 0.40, hex: 0xff7a2a }, // deep orange band
+        { stop: 0.47, hex: 0xffc46b }, // bright gold just above the horizon
       ],
       horizon: 0xffc46b,
     },
@@ -343,6 +355,34 @@ export const CONFIG = {
       parapetHeightMax: 1.4,
     },
     steppedQuarterRadius: 45, // metres from a stepped tower: "Stepped Quarter"
+  },
+
+  // ---- Round-9 polish (Lane B): luminous Spire glass + visible sky ----
+  // world.js reads this block; round5 / round6 / round7 / round8 are
+  // untouched except for the sky-mid remap noted above. All values are
+  // tuning, never hardcoded in world.js.
+  round9: {
+    // Sky dome: the gradient canvas is widened (4 -> 64 px) and its
+    // mipmaps are off — a 4 px-wide texture around a 5.6 km dome
+    // forced a coarse mip level that averaged the gradient flat.
+    skyCanvas: { width: 64, height: 512 },
+    // Solmar Spire, luminous glass (see world.js): a bright inner core
+    // shining through a semi-transparent glass shell, vertical light
+    // bands wrapping the tower, and two additive halo shells.
+    spire: {
+      shellOpacity: 0.72, // glass shell over the bright core (was opaque)
+      coreRadiusFrac: 0.62, // inner core radius as a fraction of the tower
+      coreTop: 0xfff6c8, coreMid: 0xffa83c, coreBase: 0xe87a24, // core gradient
+      shellBase: 0xe07828, // shell gradient base, lifted (was 0x8a3a14)
+      shellMid: 0xff8a2a, // shell gradient mid, lifted (was 0xc85a1e)
+      glowOpacity: 0.22, // inner halo shell (was 0.10)
+      haloOpacity: 0.08, // outer halo shell (new)
+      haloRadiusPad: 2.6, // outer halo shell radius beyond the tower
+      bandCount: 8, // vertical light bands around the circumference
+      bandWidth: 10, // band width in texture px (canvas 256 wide)
+      bandCoreWidth: 3, // bright core line inside each band, px
+      ringHeight: 2.0, // lit window-band ring height, metres (was 1.6)
+    },
   },
 
   // ---- Player movement (metres / second) ----

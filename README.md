@@ -108,7 +108,10 @@ and a best time that is saved to your profile.
 Driving has weight: five car models plus traffic variety (taxi with a
 checker band and roof sign, a six-wheel city bus, beach buggy, food
 truck, limo), all sculpted now — sloped hoods and windshields, glass
-cabins with body-coloured roofs, detailed wheels with hubs, and a
+cabins with body-coloured roofs — the roof crown is sunk into the
+body now, so the roofline runs hood → crown → trunk as one continuous
+curve instead of a dome perched on a flat deck, and the taxi sign,
+roof rack, roof vent and police light bar sit on that curve —
 silhouette of its own per model, so the red pickup no longer reads as
 a box on a box — sitting planted on bigger wheels with arches and side
 skirts, brake lights that flare, tyre screech on a hard skid, an engine
@@ -139,11 +142,14 @@ you are standing in, a clock, an objective tracker with a progress bar
 and a par countdown that turns urgent under thirty seconds, hit markers
 on every landed blow, a combo label, and a live minimap with traffic
 dots, flashing police blips (rings for cars, squares for officers on
-foot), a pulsing mission marker and your own arrow — gold while the law
+foot), a pulsing mission marker, gold stars for the three landmarks
+(the Spire's star is bigger, with a glow ring — it is the luminous
+one), and your own arrow — gold while the law
 is after you.
 
 Progress persists in localStorage: cash, lifetime earnings, completed
-missions and best times, position, wanted level and health, and the
+missions and best times, position, wanted level and health, the pistol
+magazine's loaded rounds, and the
 landmarks you have visited — across save versions, so an old profile
 still loads. The menu shows your saved profile (missions done, cash
 earned, games finished) before you press START.
@@ -203,6 +209,40 @@ toast; police rams now spark at the bumper contact point; road/wind
 noise scales with speed under the engine hum; saves are v7 (the
 chase-camera distance is persisted, v6 and older saves still load and
 default to mid).
+
+## Round 9 — integrated roofs, luminous Spire, eye-level sky, sun streak
+
+Round 9 closes the gaps round 8 left open: the car roofs are
+integrated — the round-8 crown was a half-dome perched on a flat
+roofline, so the taxi sign, roof rack, roof vent and police light bar
+floated on a dome; the crown is sunk into the body now (its equator
+inside the deck, only the cap emerging) with sloped fore/aft roofline
+bridges, so the roofline runs hood → crown → trunk as one continuous
+curve and every roof-mounted fitting sits on it; the Solmar Spire is
+luminous glass — a bright warm core shining through a
+semi-transparent shell, eight vertical light bands around the tower,
+taller lit window rings and two additive halo shells, so the tower
+reads as glowing from the driving view instead of dark metal, and its
+discovery chime gains a high shimmer above the triad; the sky gradient
+is remapped onto the visible sky — the old stops sat above 0.5 on the
+sky sphere, below the horizon and never seen, so the driving view saw
+one flat burnt-orange slice, while now the whole sunset (sienna →
+burnt orange → deep orange → bright gold) sits between zenith and
+horizon and reads at eye level, painted on a 64 px-wide canvas with
+mipmaps off so the gradient is sampled at full resolution instead of
+averaged flat; and the sun streak is gone — the "thin vertical yellow
+streak" in the round-8 shots was not the sun at all, it was the
+mission waypoint beacon, a 160 m tall yellow pillar drawn on top of
+every building (depthTest off, renderOrder 999) whenever the objective
+lay ahead of the camera. The beacon is removed, not moved: the
+waypoint still shows in the HUD objective text and as the gold diamond
+on the minimap, and missions stay purely position-based, so no
+gameplay system changes. The minimap gains gold
+stars for the three landmarks (the Spire's star is bigger, with a glow
+ring; visited landmarks dim), the start screen lists the V camera
+key, and saves are v8 (the pistol magazine's loaded rounds are
+persisted now — a half-empty mag no longer silently refills on
+reload; v7 and older saves still load).
 
 ## Credits
 

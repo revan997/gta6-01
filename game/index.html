@@ -6,6 +6,7 @@
 <title>Solmar Bay — Rico Vega</title>
 <meta name="description" content="Solmar Bay — an original open-world crime game. Drive it, walk it, outrun the law across a coastal city at sunset. Five story missions, police pursuit, sculpted cars, the Solmar Spire and the Marina Bridge — and a living bay.">
 <meta name="theme-color" content="#4a2a20">
+<meta name="solmar-bay-round" content="9">
 <link rel="icon" type="image/x-icon" href="./favicon.ico">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -17,9 +18,13 @@
     background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.28) 100%); }
   /* Round-5 polish: a stronger warm wash from the top of the frame
      (golden-hour tint, deepened for the dramatic sunset) over the 3D
-     view, below the HUD. */
+     view, below the HUD.
+     Round-9: softened (0.16 -> 0.10 at the top) — the sky gradient is
+     remapped onto the visible sky now, so the eye-level frame already
+     carries the sunset; the old wash double-tinted it and flattened
+     the new sienna -> gold bands. */
   #top-glow { position: fixed; inset: 0; pointer-events: none; z-index: 2;
-    background: linear-gradient(180deg, rgba(255,150,60,0.16) 0%, rgba(255,150,60,0.05) 30%, transparent 50%); }
+    background: linear-gradient(180deg, rgba(255,150,60,0.10) 0%, rgba(255,150,60,0.03) 30%, transparent 50%); }
   .hidden { display: none !important; }
 
   /* ---- HUD ---- */
@@ -124,7 +129,7 @@
   <p class="subtitle">Rico Vega is back in the city that raised him. Drive it, walk it,
     outrun the law under a burning sunset — and make the Bay yours.</p>
   <p class="keys">WASD — move / drive &nbsp;&middot;&nbsp; SHIFT — run &nbsp;&middot;&nbsp; SPACE — jump / handbrake<br>
-    E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; C — camera &nbsp;&middot;&nbsp; L — look at landmark &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
+    E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; C — camera &nbsp;&middot;&nbsp; V — camera distance &nbsp;&middot;&nbsp; L — look at landmark &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
   <button id="start-button" type="button">START</button>
   <p id="save-stats"></p>
 </div>

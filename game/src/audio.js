@@ -69,6 +69,19 @@ export class AudioEngine {
     this.musicGain = this.ctx.createGain();
     this.musicGain.gain.value = this.musicVolume;
     this.musicGain.connect(this.master);
+    // Round-9: browsers suspend the AudioContext when the tab is hidden
+    // and do NOT always resume it on return — after a tab switch the
+    // game could go silent until the next user gesture. Resume on
+    // visibilitychange so the engine, sirens and ambience come back by
+    // themselves. Registered once, here, so it cannot double up.
+    if (typeof document !== 'undefined' && !this._visibilityResumeBound) {
+      this._visibilityResumeBound = true;
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && this.ctx && this.ctx.state === 'suspended') {
+          void this.ctx.resume();
+        }
+      });
+    }
     return this.ctx;
   }
 
@@ -417,12 +430,20 @@ export class AudioEngine {
   // sunset sting, so it reads as a reward, not an alarm.
   // Round-7: the Solmar Pyramid gets a brighter top note (a high fifth
   // above the triad) so its discovery sounds distinct from the Spire.
+  // Round-9: the Spire is luminous glass now, so its chime gets a
+  // shimmer — two high, quiet, long notes a fifth apart that ring
+  // above the triad, like light on glass. The Pyramid keeps its
+  // single bright top note; the Bridge keeps the plain triad.
   playLandmark(name) {
     this._blip(523.25, 0.35, 'triangle', 0.32, 0);
     this._blip(659.25, 0.35, 'triangle', 0.3, 0.12);
     this._blip(783.99, 0.6, 'sine', 0.28, 0.24);
     this._blip(1046.5, 0.7, 'sine', 0.16, 0.4);
     if (name === 'Solmar Pyramid') this._blip(1318.5, 0.8, 'sine', 0.18, 0.55);
+    if (name === 'Solmar Spire') {
+      this._blip(1567.98, 1.1, 'sine', 0.12, 0.55);
+      this._blip(2093.0, 1.3, 'sine', 0.09, 0.7);
+    }
   }
 
   playWantedUp() {

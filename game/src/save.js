@@ -6,7 +6,7 @@
 // instead of crashing on an old save.
 
 export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 // Version 1, 2 and 3 saves are still readable: they migrate with the v2
 // fields (playTimeSeconds, timesPlayed), the v3 fields (totalEarned,
 // bestTimes, missionsCompletedCount, gamesPlayed), the v4 field
@@ -17,9 +17,16 @@ export const SAVE_VERSION = 7;
 // Round 8 (v7): chaseDistanceLevel (0 near / 1 mid / 2 far) is
 // persisted; v6 and older saves load with the default 'mid' (1), so
 // every earlier save still works unchanged.
+// Round 9 (v8): the pistol magazine (mag, rounds loaded) is persisted
+// alongside the reserve ammo — until v8 a reload always reset the
+// magazine to a full 12, so a half-empty mag was silently refilled for
+// free. v7 and older saves carry no mag and migrate with mag null,
+// which fromSaveData leaves untouched (the live magazine keeps its
+// default full load); the save VERSION is what changed, not the city,
+// so every earlier save still loads exactly as before.
 // MissionsCompletedCount is recomputed from the completed list when it is
 // missing, so even a v1 save reports the right count on load.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6, 7];
+export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 function safeParse(text) {
   try {
@@ -65,7 +72,7 @@ export class SaveSystem {
   // save(state): state is the game state object. Only the documented
   // fields are persisted; anything else is ignored.
   //   { money, completedMissions, currentMission, position: {x,y,z},
-  //     heading, wanted, health, armour, ammo, timeOfDay,
+  //     heading, wanted, health, armour, ammo, mag, timeOfDay,
   //     playTimeSeconds, timesPlayed, totalEarned,
   //     bestTimes, gamesPlayed, landmarksVisited }
   // Round 4: bestTimes ({ missionNumber: seconds }) comes from
@@ -95,6 +102,12 @@ export class SaveSystem {
       health: state.health ?? state.player?.health ?? null,
       armour: state.armour ?? null,
       ammo: state.ammo ?? null,
+      // Round 9 (v8): rounds in the magazine — read from the state, the
+      // live combat system, or the player alias; null when the caller
+      // passes none (v7 and older callers simply never set it).
+      mag: typeof state.mag === 'number' ? Math.max(0, Math.round(state.mag))
+        : (typeof state.combat?.getMag === 'function' ? state.combat.getMag()
+        : (typeof state.player?.mag === 'number' ? Math.max(0, Math.round(state.player.mag)) : null)),
       timeOfDay: state.timeOfDay ?? null,
       playTimeSeconds: Math.max(0, Math.round(state.playTimeSeconds ?? state.player?.playTimeSeconds ?? 0)),
       timesPlayed: Math.max(0, Math.round(state.timesPlayed ?? 0)),
@@ -139,7 +152,7 @@ export class SaveSystem {
     }
     if (!raw) return null;
     const data = safeParse(raw);
-    // Accept v1–v6; older saves migrate with the new fields as 0 / [].
+    // Accept v1–v7; older saves migrate with the new fields as 0 / [].
     if (!isPlainObject(data) || !SUPPORTED_SAVE_VERSIONS.includes(data.version)) return null;
     return {
       version: data.version,
@@ -160,6 +173,9 @@ export class SaveSystem {
       health: typeof data.health === 'number' ? data.health : null,
       armour: typeof data.armour === 'number' ? data.armour : null,
       ammo: typeof data.ammo === 'number' ? data.ammo : null,
+      // Round 9 (v8): rounds in the magazine — v7 and older saves have
+      // none and migrate to null (the live magazine keeps its load).
+      mag: typeof data.mag === 'number' ? Math.max(0, data.mag) : null,
       timeOfDay: typeof data.timeOfDay === 'number' ? data.timeOfDay : null,
       playTimeSeconds: typeof data.playTimeSeconds === 'number' ? Math.max(0, data.playTimeSeconds) : 0,
       timesPlayed: typeof data.timesPlayed === 'number' ? Math.max(0, data.timesPlayed) : 0,
@@ -196,17 +212,21 @@ export class SaveSystem {
       landmarksVisited: (data.landmarksVisited || []).length,
       // Round 8: chase-camera distance preference (v7; default 'mid').
       chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
+      // Round 9: rounds in the magazine (v8; null on older saves).
+      mag: data.mag ?? null,
     };
   }
 
   // Round-8 re-touch: debug helper — the save version and the persisted
   // chase level in one probe (null when there is no valid save).
+  // Round 9: also reports the persisted magazine (v8; null on older saves).
   getSaveInfo() {
     const data = this.load();
     if (!data) return null;
     return {
       version: data.version,
       chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
+      mag: data.mag ?? null,
       savedAt: data.savedAt || null,
     };
   }
@@ -262,6 +282,10 @@ export class SaveSystem {
         health: saveData.health ?? undefined,
         armour: saveData.armour ?? undefined,
         ammo: saveData.ammo ?? undefined,
+        // Round 9 (v8): restore the magazine too — v7 and older saves
+        // carry no mag (undefined), and fromSaveData leaves the live
+        // magazine untouched in that case.
+        mag: saveData.mag ?? undefined,
       });
     }
     return true;

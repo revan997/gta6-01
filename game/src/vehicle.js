@@ -6,7 +6,7 @@
 // reads: position, heading, speed, model, color, setDriver(driver), update().
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { makeGlowTexture, makeCheckerTexture, makeSignTexture } from './render.js';
+import { makeGlowTexture, makeCheckerTexture, makeSignTexture, boostGlassSheen } from './render.js';
 
 export const VEHICLE_MODELS = ['coupe', 'sedan', 'pickup', 'van', 'sports', 'taxi', 'bus'];
 
@@ -78,12 +78,16 @@ function buildCarMesh(model, color) {
   // roof rack, roof vent) must sit this much higher or it clips the
   // crown. These numbers are the single source of truth: the domes
   // below scale by crownLift and report it as sculpt.crownH.
-  const CROWN_LIFT = { coupe: 0.15, sedan: 0.15, taxi: 0.15, sports: 0.15, pickup: 0.15, van: 0.12, bus: 0 };
+  const CROWN_LIFT = { coupe: 0.15, sedan: 0.15, taxi: 0.15, sports: 0.15, pickup: 0.15, van: 0.12, bus: 0.06 };
   const crownLift = CROWN_LIFT[model] || 0;
   let sculptRoofCrown = false;
   let sculptCrownH = 0;
   const matBody = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.45 });
   const matGlass = new THREE.MeshStandardMaterial({ color: 0x1a2a38, roughness: 0.15, metalness: 0.6 });
+  // Round-9 re-touch (new recording): warm dusk sheen on the glass, so
+  // the tapered glasshouse under the integrated roof reads as glass at
+  // dusk instead of a black hole. Applied at build time, every car.
+  boostGlassSheen(matGlass);
   const matTrim = new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.7 });
   const matHead = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe98a, emissiveIntensity: 0.9 });
   const matTail = new THREE.MeshStandardMaterial({ color: 0xc22a2a, emissive: 0x881111, emissiveIntensity: 0.7 });
@@ -130,6 +134,52 @@ function buildCarMesh(model, color) {
     return mesh;
   }
 
+  // Round-9: integrated roof — the round-8 crown was a half-dome perched
+  // ON the flat cabin top, so its elliptical rim read as a bubble/disc
+  // sitting on the roof. The fix buries the rim: the crown is sunk
+  // `sink` below the roof deck (its equator is INSIDE the body, only
+  // the upper cap emerges), and it rises through a body-coloured roof
+  // deck (same matBody, same paint — the crown-to-body join is
+  // body-on-body, so there is no colour/material seam to see). Two
+  // inward-leaning body fillets hug the crown where it leaves the deck,
+  // and sloped body panels bridge the crown fore/aft toward the
+  // windshield and the trunk, so the roofline runs hood -> crown ->
+  // trunk as one continuous curve instead of dome-on-box. The visible
+  // crown height is UNCHANGED (sy = lift + sink, base = deck top -
+  // sink, so the top still sits exactly `lift` above the roofline) —
+  // taxi sign, roof rack, roof vent and the police light bar keep
+  // seating on sculpt.crownH exactly as in round 8.
+  let sculptRoofFillets = 0;
+  let sculptRoofDeck = false;
+  let sculptRoofIntegrated = false;
+  function integratedRoof(opts) {
+    const sink = opts.sink ?? 0.08;
+    const deckTopY = opts.deckY + 0.035;
+    const crownBaseY = deckTopY - sink;
+    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+      matBody, opts.crownSX, opts.lift + sink, opts.crownSZ, 0, crownBaseY, opts.crownZ);
+    // Body-coloured deck the crown rises through — its top is flush
+    // with the old flat roofline and it overhangs the glass sides by a
+    // hair, hiding the glass top edge the dome rim used to sit on.
+    box(matBody, opts.deckW, 0.07, opts.deckL, 0, opts.deckY, opts.deckZ);
+    sculptRoofDeck = true;
+    // Side fillets: body strips leaning inward over the crown's flanks.
+    for (const sx of [-1, 1]) {
+      tiltedBox(matBody, 0.12, 0.06, opts.crownSZ * 1.64,
+        sx * (opts.deckW / 2 - 0.07), opts.deckY + 0.03, opts.crownZ, 0, sx * 0.32);
+      sculptRoofFillets += 1;
+    }
+    // Fore/aft roofline bridges: sloped body panels from the crown ends
+    // down toward the windshield (front, nose-down) and the trunk/rear
+    // (rear, sloping down rearward) — the continuous roofline.
+    angledBox(matBody, opts.deckW * 0.94, 0.06, 0.62, 0, opts.frontY, opts.frontZ, 0.30);
+    angledBox(matBody, opts.deckW * 0.94, 0.06, 0.62, 0, opts.rearY, opts.rearZ, -0.22);
+    sculptRoofCrown = true;
+    sculptCrownH = opts.lift;
+    sculptRoofIntegrated = true;
+    return deckTopY + opts.lift;
+  }
+
   const L = shape.length;
   const W = shape.width;
   // Round-5 planted stance: the wheel tops overlap the body bottom by
@@ -137,7 +187,8 @@ function buildCarMesh(model, color) {
   const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
   // Round-8: the roofline the police light bar and the roof crown sit
   // on — the top of the cabin glass for cars with a cabin, the body top
-  // for the van. The bus keeps its flat roof (crownH 0, no crown).
+  // for the van. Round-9: the bus now has a shallow integrated crown
+  // too (crownH 0.06), so every model carries a curved, integrated roof.
   const roofTopY = model === 'van'
     ? bodyY + shape.bodyH / 2 + 0.02
     : bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
@@ -235,7 +286,9 @@ function buildCarMesh(model, color) {
       shape.cabinZ + shape.cabinL / 2 + 0.02, SCULPT.busWindshieldSlope);
     sculptWindshield = true;
     // Round-5: roof AC pod — the bus roof was a bare glass slab.
-    box(matTrim, 1.6, 0.22, 3.2, 0, bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.11, 0);
+    // Round-9: raised by the new integrated crown lift (0.06) so its
+    // base sits on the crown top instead of clipping into it.
+    box(matTrim, 1.6, 0.22, 3.2, 0, bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.11 + crownLift, 0);
     // Round-8: the bus stays the boxiest model, but its front is now
     // shaped — a sloped nose panel under the windshield, nose-down, so
     // the front reads as a face instead of a vertical wall — and the
@@ -247,6 +300,18 @@ function buildCarMesh(model, color) {
         sx * (W / 2 - 0.06), cabY, 0, 0, sx * 0.08);
       sculptGlasshouse += 1;
     }
+    // Round-9: the bus finally gets a roof too — a shallow integrated
+    // crown (only 0.06 high, sunk 0.04 into a full-length body deck
+    // with fillets and fore/aft bridges), so the long roof arcs
+    // gently instead of slabbing flat above the glass band. The AC pod
+    // above is re-seated on the new crown top.
+    const busTopY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
+    integratedRoof({
+      deckW: W - 0.2, deckL: 7.6, deckY: busTopY - 0.035, deckZ: 0,
+      lift: crownLift, sink: 0.04, crownSX: (W - 0.3) / 2, crownSZ: 3.2, crownZ: 0,
+      frontY: busTopY - 0.02, frontZ: 3.48,
+      rearY: busTopY - 0.02, rearZ: -3.48,
+    });
   }
   // Round-5: distinct cab/hood for the low cars — a body-coloured hood
   // panel ahead of the cabin (slightly below the cabin base), a wider
@@ -261,25 +326,27 @@ function buildCarMesh(model, color) {
     sculptHood = true;
     box(matTrim, W - 0.1, 0.12, 0.14, 0, bodyY - shape.bodyH / 2 + 0.08, L / 2 + 0.02);
     // Round-6 glasshouse: a sloped windshield leaning back over the
-    // cabin front, plus a body-coloured roof panel on top of the cabin
+    // cabin front, plus a body-coloured roof on top of the cabin
     // glass so the cabin reads as glasshouse + roof, not a solid
-    // glass box. The roof panel leaves glass visible at the front
+    // glass box. The roof leaves glass visible at the front
     // (under the windshield) and at the rear.
-    const roofY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.035;
     angledBox(matGlass, W - 0.34, shape.cabinH * 0.88, 0.07, 0,
       bodyY + shape.bodyH / 2 + shape.cabinH * 0.38, cabFront + 0.02, SCULPT.windshieldSlope);
     sculptWindshield = true;
-    // Round-8: the flat roof panel is now a curved crown — a shallow
-    // half-dome over the cabin, so the roofline arcs instead of slabbing
-    // across the glasshouse. Same footprint as the old panel (net 0
-    // meshes); the crown rises 0.15 above the roof line, which is why
-    // the police light bar (vehicle.js attachPoliceLightBar) seats on
-    // sculpt.crownH instead of the flat roof.
-    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-      matBody, (W - 0.3) / 2, crownLift, shape.cabinL * (model === 'coupe' || model === 'sports' ? 0.3 : 0.34),
-      0, roofY - 0.035, shape.cabinZ + 0.05);
-    sculptRoofCrown = true;
-    sculptCrownH = crownLift;
+    // Round-9: the flat roof panel is now an INTEGRATED curved roof —
+    // the crown is sunk into a body-coloured deck with side fillets and
+    // fore/aft roofline bridges (integratedRoof), so the roof arcs
+    // hood -> crown -> trunk as one shaped body instead of a dome
+    // sitting on the glasshouse. Visible crown height unchanged (0.15),
+    // so the police light bar still seats on sculpt.crownH.
+    const cabinTopY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
+    const crownSZ = shape.cabinL * (model === 'coupe' || model === 'sports' ? 0.40 : 0.44);
+    integratedRoof({
+      deckW: W - 0.22, deckL: shape.cabinL * 0.92, deckY: cabinTopY - 0.035, deckZ: shape.cabinZ,
+      lift: crownLift, sink: 0.08, crownSX: (W - 0.3) / 2, crownSZ, crownZ: shape.cabinZ + 0.05,
+      frontY: cabinTopY - 0.02, frontZ: shape.cabinZ + crownSZ + 0.28,
+      rearY: cabinTopY - 0.02, rearZ: shape.cabinZ - crownSZ - 0.28,
+    });
     // Round-8: tapered side glass — a thin glass panel on each cabin
     // side, leaning inward toward the roof, so the glasshouse narrows
     // toward the crown instead of standing as a vertical glass slab.
@@ -328,20 +395,24 @@ function buildCarMesh(model, color) {
     // (dome top +0.12 over the roof) — raised by crownLift so its base
     // sits on the crown top instead of clipping into the dome.
     box(matTrim, 0.55, 0.12, 0.5, 0, bodyY + shape.bodyH / 2 + 0.06 + crownLift, -1.15);
-    // Round-8: tapered side glass along the van's flanks (leaning
-    // inward toward the roof) and a shallow curved crown over the cargo
-    // roof behind the front glass, so the van reads as a shaped van
-    // instead of one tall box. The crown sits low (0.12) so the roof
-    // rack rails still sit on top of it.
+    // Round-9: tapered side glass along the van's flanks (leaning
+    // inward toward the roof) and a shallow INTEGRATED curved crown
+    // over the cargo roof behind the front glass — sunk into a
+    // body-coloured deck with fillets and fore/aft bridges, so the van
+    // reads as a shaped van instead of one tall box with a dome on it.
+    // Visible crown height unchanged (0.12), so the roof rack rails
+    // still sit on top of it.
     for (const sx of [-1, 1]) {
       tiltedBox(matGlass, 0.05, 0.5, 2.2, sx * (W / 2 - 0.04),
         bodyY + shape.bodyH / 2 + 0.22, -0.3, 0, sx * 0.07);
       sculptGlasshouse += 1;
     }
-    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-      matBody, (W - 0.2) / 2, crownLift, 1.2, 0, bodyY + shape.bodyH / 2, -0.6);
-    sculptRoofCrown = true;
-    sculptCrownH = crownLift;
+    integratedRoof({
+      deckW: W - 0.16, deckL: 3.0, deckY: bodyY + shape.bodyH / 2 - 0.035, deckZ: -0.4,
+      lift: crownLift, sink: 0.06, crownSX: (W - 0.2) / 2, crownSZ: 1.5, crownZ: -0.6,
+      frontY: bodyY + shape.bodyH / 2 - 0.02, frontZ: 1.15,
+      rearY: bodyY + shape.bodyH / 2 - 0.02, rearZ: -2.35,
+    });
   }
   // Round-6: pickup cab glasshouse — sloped hood ahead of the cab, a
   // sloped windshield at the cab front, and a body-coloured roof panel
@@ -355,14 +426,19 @@ function buildCarMesh(model, color) {
     angledBox(matGlass, W - 0.34, shape.cabinH * 0.88, 0.07, 0,
       bodyY + shape.bodyH / 2 + shape.cabinH * 0.38, cabFront + 0.02, SCULPT.windshieldSlope);
     sculptWindshield = true;
-    // Round-8: curved cab roof crown (replaces the flat cab roof panel,
-    // net 0 meshes) plus tapered side glass on the cab, so the red
+    // Round-9: integrated curved cab roof crown (replaces the flat cab
+    // roof panel) — sunk into a body deck with fillets and fore/aft
+    // bridges, so the cab reads as one shaped cab, not a dome on a
+    // glass box — plus tapered side glass on the cab, so the red
     // pickup still reads cab + open bed but the cab itself is shaped.
-    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-      matBody, (W - 0.32) / 2, crownLift, shape.cabinL * 0.36, 0,
-      bodyY + shape.bodyH / 2 + shape.cabinH - 0.04, shape.cabinZ);
-    sculptRoofCrown = true;
-    sculptCrownH = crownLift;
+    const pickupTopY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
+    const pickupCrownSZ = shape.cabinL * 0.44;
+    integratedRoof({
+      deckW: W - 0.24, deckL: shape.cabinL * 0.9, deckY: pickupTopY - 0.035, deckZ: shape.cabinZ,
+      lift: crownLift, sink: 0.08, crownSX: (W - 0.32) / 2, crownSZ: pickupCrownSZ, crownZ: shape.cabinZ,
+      frontY: pickupTopY - 0.02, frontZ: shape.cabinZ + pickupCrownSZ + 0.28,
+      rearY: pickupTopY - 0.02, rearZ: shape.cabinZ - pickupCrownSZ - 0.28,
+    });
     for (const sx of [-1, 1]) {
       tiltedBox(matGlass, 0.05, shape.cabinH * 0.62, shape.cabinL * 0.72,
         sx * (W / 2 - 0.13), bodyY + shape.bodyH / 2 + shape.cabinH / 2,
@@ -504,6 +580,16 @@ function buildCarMesh(model, color) {
     roofCrown: sculptRoofCrown,
     crownH: sculptCrownH,
     roofY: roofTopY,
+    // Round-9: the crown is now integrated — sunk into a body-coloured
+    // deck (roofDeck) with side fillets (roofFillets) and fore/aft
+    // roofline bridges, so the rim is buried inside the body and the
+    // roof reads as one shaped car. roofSink is how far the crown base
+    // sits below the deck top; the visible crown height (crownH) is
+    // unchanged from round 8.
+    roofIntegrated: sculptRoofIntegrated,
+    roofDeck: sculptRoofDeck,
+    roofFillets: sculptRoofFillets,
+    roofSink: sculptRoofIntegrated ? (model === 'bus' ? 0.04 : model === 'van' ? 0.06 : 0.08) : 0,
     // Round-8: front-bumper contact point, in car-local space — combat.js
     // ramming sparks use this (half the length + the bumper lip, at
     // bumper height) instead of the car centre.

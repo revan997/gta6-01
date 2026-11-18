@@ -62,6 +62,40 @@ export function weightedChoiceIndex(rng, weights) {
   return weights.length - 1;
 }
 
+// Round-9: deterministic helpers that need NO caller rng — a fresh
+// mulberry32 stream is seeded from `seed` inside, so they never consume
+// (and never disturb) an existing generator's stream. Same (array,
+// seed) always yields the same result; the input array is never mutated.
+// shuffleSeeded() is for one-off orders (billboard copy, chatter lines)
+// where threading the city rng through would shift every later roll.
+function _mulberry32(seed) {
+  let s = (seed >>> 0) || 0x9e3779b9;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export function shuffleSeeded(array, seed) {
+  const out = Array.isArray(array) ? array.slice() : [];
+  const next = _mulberry32(seed);
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(next() * (i + 1));
+    const tmp = out[i];
+    out[i] = out[j];
+    out[j] = tmp;
+  }
+  return out;
+}
+
+export function pickSeeded(array, seed) {
+  if (!Array.isArray(array) || array.length === 0) return undefined;
+  return array[Math.floor(_mulberry32(seed)() * array.length)];
+}
+
 // Round-6: pure interpolation helpers for the landmark camera focus
 // (main.js eases the camera toward a landmark with lerp) and for any
 // 0..1 clamp a caller needs without importing a whole utility module.
