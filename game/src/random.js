@@ -16,6 +16,18 @@ export function seedFromString(str) {
   return h >>> 0;
 }
 
+// Round-6: pure interpolation helpers for the landmark camera focus
+// (main.js eases the camera toward a landmark with lerp) and for any
+// 0..1 clamp a caller needs without importing a whole utility module.
+// Pure functions — no rng state, deterministic by construction.
+export function clamp01(x) {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+export function lerp(a, b, t) {
+  return a + (b - a) * clamp01(t);
+}
+
 // Create a generator from a numeric seed.
 // Returns { next(), range(min, max), int(min, max), pick(array), chance(p) }.
 export function createRng(seed) {
@@ -134,7 +146,7 @@ export function createRng(seed) {
     return out.slice(0, take);
   }
 
-  return { next, range, int, pick, weightedPick, chance, gaussian, noise2, shuffle, sample, seedFromString, seed: seed >>> 0 };
+  return { next, range, int, pick, weightedPick, chance, gaussian, noise2, shuffle, sample, seedFromString, clamp01, lerp, seed: seed >>> 0 };
 }
 
 export default createRng;

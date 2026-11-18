@@ -70,6 +70,23 @@ const PED_SHIRTS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1ab
 const ZEBRA_X = [-120, -40, 40, 120];
 const ZEBRA_Z = [-120, -40, 40];
 
+// Round-6 sightseeing tour: a bus loops past the two new landmarks —
+// the Solmar Spire downtown (80, -80) and the Marina Bridge over the
+// basin (x 150–330 at z -240, per CONFIG.round6.landmarks) — then back
+// through the marina promenade and Downtown Plaza. The bus dwells a few
+// seconds at each stop so the landmarks read as destinations, not
+// drive-bys. Waypoints are world coordinates, not road points: the tour
+// is a fixed route, independent of the road network.
+export const TOUR_STOPS = [
+  { x: 80, z: -80, label: 'Solmar Spire' },
+  { x: 160, z: -240, label: 'Marina Bridge (west end)' },
+  { x: 320, z: -240, label: 'Marina Bridge (east end)' },
+  { x: 240, z: -80, label: 'Marina Promenade' },
+  { x: 0, z: 0, label: 'Downtown Plaza' },
+];
+const TOUR_SPEED = 9; // m/s, a slow sightseeing cruise
+const TOUR_DWELL = 3; // seconds paused at each stop
+
 // A traffic car is a plain data object shaped like the Lane A car contract:
 // { position, heading, speed, model, colour, driver, update(dt, world) }.
 // If the world supplies a car factory (world.createCar / options.createCar)
@@ -149,6 +166,8 @@ export class TrafficManager {
     this._spawnCooldown = 0;
     this._parkedSpawned = false; // parked cars are placed once, on first update()
     this._time = 0; // round 4: accumulated seconds, drives the speed wobble
+    this.tourBus = null; // round 6: sightseeing bus on the TOUR_STOPS loop
+    this._tourSpawned = false; // the tour bus is placed once, on first update()
   }
 
   // True when (x, z) is at a zebra crossing (downtown intersections).
@@ -288,6 +307,72 @@ export class TrafficManager {
         if (s && s.scale && typeof s.scale.setScalar === 'function') s.scale.setScalar(glowScale);
       }
     }
+  }
+
+  // ---- round-6 sightseeing tour bus ----
+  // Spawned once, at the Solmar Spire stop, dwelling there before setting
+  // off. Kept OUT of this.cars on purpose: the AI update loop only drives
+  // driver 'ai' cars and the despawn filter would eat a car on a fixed
+  // route, so the tour bus lives on this.tourBus and is moved by
+  // _updateTourBus below. It is a real sculpted bus (Lane A factory when
+  // available, so it carries car.sculpt) with driver 'tour'.
+  _spawnTourBus(world) {
+    const first = TOUR_STOPS[0];
+    const next = TOUR_STOPS[1];
+    const heading = Math.atan2(next.x - first.x, next.z - first.z);
+    let bus;
+    if (this.createCar) {
+      bus = this.createCar({
+        position: { x: first.x, y: 0, z: first.z }, heading,
+        model: 'City Bus', colour: '#2471a3', driver: 'tour',
+        roadIndex: 0, roadT: 0, roadDirection: 1,
+      });
+    } else {
+      bus = makeTrafficCar({
+        position: { x: first.x, y: 0, z: first.z }, heading,
+        model: 'City Bus', colour: '#2471a3', driver: 'tour',
+        targetSpeed: TOUR_SPEED,
+      }, this.rng);
+    }
+    bus.driver = 'tour';
+    bus.speed = 0;
+    bus.targetSpeed = TOUR_SPEED;
+    bus._tourIndex = 1; // next stop to drive to
+    bus._tourPause = TOUR_DWELL; // dwell at the Spire before departing
+    bus.tourStop = first.label;
+    this._applyDuskHeadlights(bus);
+    this.tourBus = bus;
+    return bus;
+  }
+
+  // One step of the tour loop: dwell at a stop, then drive straight to
+  // the next stop at TOUR_SPEED and dwell there. The bus is steered by
+  // position (like other real 3D cars in the AI loop), so car.update is
+  // never called on it — that would move it a second time per frame.
+  _updateTourBus(step) {
+    const bus = this.tourBus;
+    if (!bus) return;
+    if (bus._tourPause > 0) {
+      bus._tourPause -= step;
+      bus.speed = 0;
+      return;
+    }
+    const stop = TOUR_STOPS[bus._tourIndex % TOUR_STOPS.length];
+    const dx = stop.x - bus.position.x;
+    const dz = stop.z - bus.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 3) {
+      bus._tourIndex = (bus._tourIndex + 1) % TOUR_STOPS.length;
+      bus._tourPause = TOUR_DWELL;
+      bus.tourStop = stop.label;
+      bus.speed = 0;
+      return;
+    }
+    bus.heading = Math.atan2(dx, dz);
+    bus.speed = TOUR_SPEED;
+    bus.position.x += Math.sin(bus.heading) * TOUR_SPEED * step;
+    bus.position.z += Math.cos(bus.heading) * TOUR_SPEED * step;
+    if (bus.group) bus.group.rotation.y = bus.heading;
   }
 
   _spawnCar(world, player) {
@@ -434,6 +519,14 @@ export class TrafficManager {
       this._parkedSpawned = true;
       this._spawnParkedCars(world, player);
     }
+
+    // Round-6 tour bus: placed once, on the first update() call, then
+    // driven around the landmark loop every frame below.
+    if (!this._tourSpawned) {
+      this._tourSpawned = true;
+      this._spawnTourBus(world);
+    }
+    this._updateTourBus(step);
 
     // Maintain population.
     this._spawnCooldown -= step;
@@ -643,6 +736,34 @@ export class TrafficManager {
   getParkedCars() { return this.cars.filter((c) => c.driver === 'parked'); }
   getPedestrians() { return this.pedestrians.filter((p) => p.alive); }
 
+  // Round-6: the sightseeing bus (null until the first update() spawns it).
+  getTourBus() { return this.tourBus; }
+
+  // Round-6: where the tour bus is on its loop — the stop it last
+  // reached, the next stop, and whether it is dwelling there now.
+  // Returns null until the first update() spawns the bus.
+  getTourStatus() {
+    const bus = this.tourBus;
+    if (!bus) return null;
+    const next = TOUR_STOPS[bus._tourIndex % TOUR_STOPS.length];
+    return {
+      atStop: bus.tourStop || null,
+      nextStop: next.label,
+      dwelling: (bus._tourPause || 0) > 0,
+      position: { x: bus.position.x, z: bus.position.z },
+    };
+  }
+
+  // Round-6: every car in the scene that carries round-6 sculpt data
+  // (car.sculpt from vehicle.js) — the AI traffic cars plus the tour
+  // bus when it is a real 3D car. Stand-in cars have no sculpt and are
+  // left out, so callers can trust that every returned car is sculpted.
+  getSculptedCars() {
+    const list = this.cars.filter((c) => c && c.sculpt);
+    if (this.tourBus && this.tourBus.sculpt) list.push(this.tourBus);
+    return list;
+  }
+
   // Remove a pedestrian (hit / shot). Returns true when one was removed.
   removePedestrian(ped) {
     const before = this.pedestrians.length;
@@ -656,6 +777,8 @@ export class TrafficManager {
     this._spawnCooldown = 0;
     this._parkedSpawned = false;
     this._time = 0;
+    this.tourBus = null;
+    this._tourSpawned = false;
   }
 }
 

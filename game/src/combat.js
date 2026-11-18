@@ -73,6 +73,10 @@ export class CombatSystem {
     this.comboTimer = 0; // seconds since the last landed hit
     this.hitStopTimer = 0; // seconds of freeze left after a landed hit (round 4)
     this.isDown = false;
+    // Round-6: landmark showdown bonuses claimed this session — one per
+    // landmark, so each pays once. main.js adds the cash + HUD + chime.
+    this.landmarkBonusClaims = new Set();
+    this.landmarkBonusTotal = 0;
   }
 
   getHealth() { return this.health; }
@@ -382,6 +386,29 @@ export class CombatSystem {
     }
     this.lastHit = result;
     return result;
+  }
+
+  // Round-6: the landmark showdown bonus — landing a punch within
+  // `radius` metres of a landmark pays a one-off $25 "showdown" bonus
+  // per landmark per session (tracked in landmarkBonusClaims). `position`
+  // is the player's position ({x, z}); `landmarks` is an array of
+  // { name, x, z } (world.landmarks.list, see main.js). Returns
+  // { landmark, bonus } on a first claim, or null. The caller adds the
+  // cash and shows the HUD/chime — this method only decides and records.
+  landmarkBonusAt(position, landmarks, radius = 30) {
+    if (!position || !Array.isArray(landmarks) || !landmarks.length) return null;
+    for (const lm of landmarks) {
+      if (!lm || typeof lm.x !== 'number' || typeof lm.z !== 'number') continue;
+      const key = lm.name || (lm.x + ',' + lm.z);
+      if (this.landmarkBonusClaims.has(key)) continue;
+      const d = Math.hypot((position.x || 0) - lm.x, (position.z || 0) - lm.z);
+      if (d <= radius) {
+        this.landmarkBonusClaims.add(key);
+        this.landmarkBonusTotal += 25;
+        return { landmark: lm.name || key, bonus: 25 };
+      }
+    }
+    return null;
   }
 
   // Convenience: every damageable thing nearby (pedestrians + officers).

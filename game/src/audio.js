@@ -335,6 +335,17 @@ export class AudioEngine {
     this._blip(523.25, 1.2, 'sine', 0.14, 0.3);
   }
 
+  // Round-6: the landmark discovery chime — a bright major triad that
+  // rises and resolves, played once when Rico first reaches a landmark
+  // (the Spire or the Marina Bridge). Warm and unhurried, like the
+  // sunset sting, so it reads as a reward, not an alarm.
+  playLandmark() {
+    this._blip(523.25, 0.35, 'triangle', 0.32, 0);
+    this._blip(659.25, 0.35, 'triangle', 0.3, 0.12);
+    this._blip(783.99, 0.6, 'sine', 0.28, 0.24);
+    this._blip(1046.5, 0.7, 'sine', 0.16, 0.4);
+  }
+
   playWantedUp() {
     this._blip(233.08, 0.18, 'square', 0.3, 0, 220);
     this._blip(311.13, 0.24, 'square', 0.3, 0.16, 294);

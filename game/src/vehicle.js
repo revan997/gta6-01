@@ -45,9 +45,28 @@ const MODEL_SHAPES = {
   bus: { length: 9.5, width: 2.5, bodyH: 1.42, cabinL: 8.0, cabinH: 0.9, cabinZ: 0, wheels: 0.50, stance: 0.08 },
 };
 
+// Round-6 car sculpting: angled-panel angles (radians) for the sloped
+// hood / windshield / fastback glass. Nose-down hood = +rotation.x
+// (front edge drops); windshield leaning back = -rotation.x (top edge
+// moves rearward); fastback rear glass = +rotation.x (top edge forward).
+// Local constants — config.js is owned by another lane.
+const SCULPT = {
+  hoodSlope: 0.24,
+  windshieldSlope: -0.32,
+  rearGlassSlope: 0.38,
+  trunkSlope: -0.10,
+  vanHoodSlope: 0.25,
+  busWindshieldSlope: -0.28,
+};
+
 function buildCarMesh(model, color) {
   const shape = MODEL_SHAPES[model] || MODEL_SHAPES.sedan;
   const group = new THREE.Group();
+  // Round-6 sculpt flags: set as the angled panels / hub caps are added,
+  // and reported via car.sculpt in createCar.
+  let sculptHood = false;
+  let sculptWindshield = false;
+  let sculptHubCaps = 0;
   const matBody = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.45 });
   const matGlass = new THREE.MeshStandardMaterial({ color: 0x1a2a38, roughness: 0.15, metalness: 0.6 });
   const matTrim = new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.7 });
@@ -64,6 +83,14 @@ function buildCarMesh(model, color) {
     return mesh;
   }
 
+  // Round-6: a box rotated around X — the sculpting primitive. Positive
+  // rotX drops the +z (front) edge, negative rotX leans the top rearward.
+  function angledBox(material, w, h, d, x, y, z, rotX) {
+    const mesh = box(material, w, h, d, x, y, z);
+    mesh.rotation.x = rotX;
+    return mesh;
+  }
+
   const L = shape.length;
   const W = shape.width;
   // Round-5 planted stance: the wheel tops overlap the body bottom by
@@ -73,7 +100,15 @@ function buildCarMesh(model, color) {
   // Main body. Pickup gets a bed instead of a full rear cabin.
   box(matBody, W, shape.bodyH, L, 0, bodyY, 0);
   if (model === 'pickup') {
-    box(matTrim, W - 0.3, 0.35, L * 0.42, 0, bodyY + shape.bodyH / 2 + 0.1, -L * 0.26);
+    // Round-6: a real open bed, not a flat slab — the body top is the bed
+    // floor, with body-coloured raised side walls and a tailgate at the
+    // rear, so the pickup reads cab + bed instead of box + black box.
+    const bedL = L * 0.42;
+    const bedZ = -L * 0.26;
+    const wallY = bodyY + shape.bodyH / 2 + 0.16;
+    box(matBody, 0.08, 0.32, bedL, -(W / 2 - 0.06), wallY, bedZ);
+    box(matBody, 0.08, 0.32, bedL, W / 2 - 0.06, wallY, bedZ);
+    box(matBody, W - 0.3, 0.32, 0.08, 0, wallY, bedZ - bedL / 2);
     box(matGlass, W - 0.3, shape.cabinH, shape.cabinL, 0, bodyY + shape.bodyH / 2 + shape.cabinH / 2, shape.cabinZ);
   } else if (model === 'van') {
     // Tall single-box van: body is the cabin.
@@ -131,7 +166,15 @@ function buildCarMesh(model, color) {
     const matDest = new THREE.MeshStandardMaterial({
       color: 0xffc861, emissive: 0xffb020, emissiveIntensity: 1.4,
     });
-    box(matDest, 1.3, 0.32, 0.06, 0, cabY + 0.15, shape.cabinZ + shape.cabinL / 2 + 0.03);
+    // Round-6: destination display sits proud of the new sloped
+    // windshield below (its front face is ~0.14 ahead of the glass
+    // band), so it stays readable instead of hiding behind the glass.
+    box(matDest, 1.3, 0.32, 0.06, 0, cabY + 0.15, shape.cabinZ + shape.cabinL / 2 + 0.14);
+    // Round-6: sloped front windshield over the glass band — the bus
+    // front is no longer a flat vertical slab.
+    angledBox(matGlass, W - 0.4, 0.72, 0.08, 0, cabY + 0.12,
+      shape.cabinZ + shape.cabinL / 2 + 0.02, SCULPT.busWindshieldSlope);
+    sculptWindshield = true;
     // Round-5: roof AC pod — the bus roof was a bare glass slab.
     box(matTrim, 1.6, 0.22, 3.2, 0, bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.11, 0);
   }
@@ -142,8 +185,36 @@ function buildCarMesh(model, color) {
     const cabFront = shape.cabinZ + shape.cabinL / 2;
     const hoodL = Math.max(0.6, L / 2 - cabFront + 0.1);
     const hoodZ = (cabFront + L / 2) / 2;
-    box(matBody, W - 0.24, 0.1, hoodL, 0, bodyY + shape.bodyH / 2 - 0.05, hoodZ);
+    // Round-6: the hood is now a sloped panel, nose-down (replaces the
+    // round-5 flat hood — same footprint, angled so the nose reads).
+    angledBox(matBody, W - 0.24, 0.1, hoodL, 0, bodyY + shape.bodyH / 2 - 0.02, hoodZ, SCULPT.hoodSlope);
+    sculptHood = true;
     box(matTrim, W - 0.1, 0.12, 0.14, 0, bodyY - shape.bodyH / 2 + 0.08, L / 2 + 0.02);
+    // Round-6 glasshouse: a sloped windshield leaning back over the
+    // cabin front, plus a body-coloured roof panel on top of the cabin
+    // glass so the cabin reads as glasshouse + roof, not a solid
+    // glass box. The roof panel leaves glass visible at the front
+    // (under the windshield) and at the rear.
+    const roofY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.035;
+    angledBox(matGlass, W - 0.34, shape.cabinH * 0.88, 0.07, 0,
+      bodyY + shape.bodyH / 2 + shape.cabinH * 0.38, cabFront + 0.02, SCULPT.windshieldSlope);
+    sculptWindshield = true;
+    box(matBody, W - 0.3, 0.07, shape.cabinL * (model === 'coupe' || model === 'sports' ? 0.55 : 0.62),
+      0, roofY, shape.cabinZ + 0.05);
+    if (model === 'sedan' || model === 'taxi') {
+      // Short trunk deck behind the cabin, sloping gently down to the rear.
+      const cabRear = shape.cabinZ - shape.cabinL / 2;
+      const trunkL = Math.max(0.5, cabRear + L / 2 - 0.05);
+      angledBox(matBody, W - 0.26, 0.08, trunkL, 0, bodyY + shape.bodyH / 2 - 0.02,
+        (cabRear - L / 2) / 2, SCULPT.trunkSlope);
+    }
+    if (model === 'coupe' || model === 'sports') {
+      // Fastback rear glass: slopes down from the roof toward the tail,
+      // so the coupe/sports read low and sleek from the side.
+      const cabRear = shape.cabinZ - shape.cabinL / 2;
+      angledBox(matGlass, W - 0.4, 0.55, 0.07, 0,
+        bodyY + shape.bodyH / 2 + shape.cabinH * 0.32, cabRear - 0.02, SCULPT.rearGlassSlope);
+    }
   }
   // Round-5: the van gets a real nose instead of a single tall box — a
   // sloped windshield leaning back over the cab front, a short hood bulge
@@ -151,8 +222,28 @@ function buildCarMesh(model, color) {
   if (model === 'van') {
     const shield = box(matGlass, W - 0.34, 0.72, 0.08, 0, bodyY + shape.bodyH / 2 + 0.12, L / 2 - 0.55);
     shield.rotation.x = -0.3;
+    sculptWindshield = true; // round-5 sloped windshield, kept
+    // Round-6: a sloped hood panel, nose-down, ahead of the windshield
+    // so the van nose reads as a slope instead of a vertical wall.
+    angledBox(matBody, W - 0.2, 0.1, 0.9, 0, bodyY + shape.bodyH / 2 - 0.18, L / 2 - 0.45, SCULPT.vanHoodSlope);
+    sculptHood = true;
     box(matBody, W - 0.2, 0.24, 0.8, 0, bodyY - shape.bodyH / 2 + 0.18, L / 2 - 0.35);
     box(matTrim, 0.55, 0.12, 0.5, 0, bodyY + shape.bodyH / 2 + 0.06, -1.15);
+  }
+  // Round-6: pickup cab glasshouse — sloped hood ahead of the cab, a
+  // sloped windshield at the cab front, and a body-coloured roof panel
+  // on the cab so the red pickup reads cab + bed, not box + black box.
+  if (model === 'pickup') {
+    const cabFront = shape.cabinZ + shape.cabinL / 2;
+    const hoodL = Math.max(0.6, L / 2 - cabFront + 0.1);
+    angledBox(matBody, W - 0.24, 0.09, hoodL, 0, bodyY + shape.bodyH / 2 - 0.03,
+      (cabFront + L / 2) / 2, SCULPT.hoodSlope);
+    sculptHood = true;
+    angledBox(matGlass, W - 0.34, shape.cabinH * 0.88, 0.07, 0,
+      bodyY + shape.bodyH / 2 + shape.cabinH * 0.38, cabFront + 0.02, SCULPT.windshieldSlope);
+    sculptWindshield = true;
+    box(matBody, W - 0.32, 0.07, shape.cabinL * 0.72, 0,
+      bodyY + shape.bodyH / 2 + shape.cabinH - 0.04 + 0.035, shape.cabinZ);
   }
   // Round-5: side skirts on every model (the sports car already had them
   // in round 4) — thin dark boxes along the lower body sides between the
@@ -224,6 +315,10 @@ function buildCarMesh(model, color) {
   wheelGeo.rotateZ(Math.PI / 2);
   const hubGeo = new THREE.CylinderGeometry(shape.wheels * 0.55, shape.wheels * 0.55, 0.3, 10);
   hubGeo.rotateZ(Math.PI / 2);
+  // Round-6: one dark centre cap per wheel — a short cylinder slightly
+  // proud of the hub on both faces, so the wheel reads tyre + rim + cap.
+  const capGeo = new THREE.CylinderGeometry(shape.wheels * 0.28, shape.wheels * 0.28, 0.34, 8);
+  capGeo.rotateZ(Math.PI / 2);
   const wy = shape.wheels;
   const wzF = L / 2 - 0.85;
   const wzR = -L / 2 + 0.85;
@@ -237,6 +332,10 @@ function buildCarMesh(model, color) {
     const hub = new THREE.Mesh(hubGeo, matHub);
     hub.position.set(wx, wy, wz);
     group.add(hub);
+    const cap = new THREE.Mesh(capGeo, matTrim);
+    cap.position.set(wx, wy, wz);
+    group.add(cap);
+    sculptHubCaps += 1;
     wheels.push(wheel);
   }
   // Round-5: wheel arches — a dark fender box over each wheel, just
@@ -246,7 +345,18 @@ function buildCarMesh(model, color) {
     box(matTrim, 0.36, 0.16, 1.0, wx, shape.wheels * 2 + 0.05, wz);
   }
 
-  return { group, wheels, shape, tailMat: matTail, tailGlows: [tailGlowL, tailGlowR], headMat: matHead, headGlows, headGlowSprites };
+  // Round-6 sculpt summary, counted honestly from the built group:
+  // `angled` counts every mesh with a non-zero X/Z rotation (sloped
+  // hood, windshield, fastback/trunk, van shield). The stance probe's
+  // children[0] body box is untouched — it is still the first mesh.
+  const sculpt = {
+    angled: group.children.filter((m) => m.rotation.x !== 0 || m.rotation.z !== 0).length,
+    hood: sculptHood,
+    windshield: sculptWindshield,
+    hubCaps: sculptHubCaps,
+    silhouette: model,
+  };
+  return { group, wheels, shape, sculpt, tailMat: matTail, tailGlows: [tailGlowL, tailGlowR], headMat: matHead, headGlows, headGlowSprites };
 }
 
 // Create one car in `scene`.
@@ -255,7 +365,7 @@ function buildCarMesh(model, color) {
 export function createCar(scene, model, color, x, z, heading) {
   const name = VEHICLE_MODELS.includes(model) ? model : 'sedan';
   const tune = CONFIG.vehicleModels[name] || CONFIG.vehicleModels.sedan;
-  const { group, wheels, shape, tailMat, tailGlows, headMat, headGlows, headGlowSprites } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
+  const { group, wheels, shape, sculpt, tailMat, tailGlows, headMat, headGlows, headGlowSprites } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
   group.position.set(x || 0, 0, z || 0);
   scene.add(group);
 
@@ -274,6 +384,7 @@ export function createCar(scene, model, color, x, z, heading) {
     headMat, // round 5: headlight material, brightened at dusk by traffic.js
     headGlows, // round 5: headlight glow sprite materials (dusk headlights)
     headGlowSprites, // round 5: headlight glow sprites (dusk scale-up)
+    sculpt, // round 6: { angled, hood, windshield, hubCaps, silhouette }
     braking: false, // round 3: true while the brakes are on
     skidding: false, // round 3: true on a hard handbrake turn at speed
     length: shape.length,

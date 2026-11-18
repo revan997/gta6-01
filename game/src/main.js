@@ -11,7 +11,7 @@
 // No network anywhere: everything is local files, Web Audio synthesis only.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { createRng } from './random.js';
+import { createRng, clamp01, lerp } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
 import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
@@ -70,6 +70,55 @@ world.locations = {
   lookout: { x: -40, y: 0, z: -120, label: 'Lookout' },
 };
 world.getLocation = (name) => world.locations[name] || null;
+
+// ---- round-6 landmarks --------------------------------------------------
+// The Solmar Spire and the Marina Bridge (world.landmarks, Lane L).
+// Each entry carries the VISIT point (x, z — where Rico stands to
+// "visit" it: the Spire's base, the Bridge's western abutment) and the
+// FOCUS point (focusX/Z/Y — where the L key points the camera: the
+// Spire's crown, the Bridge's mid-span). Defensive: an older world
+// build returns no landmarks, and every caller guards on an empty list.
+const landmarkList = (() => {
+  const lm = world.landmarks || null;
+  const list = [];
+  if (lm?.spire) {
+    list.push({
+      name: 'Solmar Spire',
+      x: lm.spire.x, z: lm.spire.z,
+      focusX: lm.spire.x, focusZ: lm.spire.z, focusY: lm.spire.height || 95,
+    });
+  }
+  if (lm?.bridge) {
+    list.push({
+      name: 'Marina Bridge',
+      x: lm.bridge.x0, z: lm.bridge.z, // western abutment — reachable on foot
+      focusX: (lm.bridge.x0 + lm.bridge.x1) / 2, focusZ: lm.bridge.z, focusY: 8,
+    });
+  }
+  return list;
+})();
+
+// Nearest landmark to a position ({x, z}) — the entry, or null.
+function nearestLandmark(position) {
+  if (!landmarkList.length || !position) return null;
+  let best = null;
+  let bestD = Infinity;
+  for (const lm of landmarkList) {
+    const d = Math.hypot((position.x || 0) - lm.x, (position.z || 0) - lm.z);
+    if (d < bestD) { bestD = d; best = lm; }
+  }
+  return best;
+}
+
+// Name of the nearest landmark within `radius` metres of a position, or
+// null — used by the police radio so dispatch names the Spire / Bridge
+// when the chase runs past one.
+function nearestLandmarkName(position, radius = 60) {
+  const lm = nearestLandmark(position);
+  if (!lm) return null;
+  const d = Math.hypot((position.x || 0) - lm.x, (position.z || 0) - lm.z);
+  return d <= radius ? lm.name : null;
+}
 
 const player = createPlayer(scene, world, world.spawns.player);
 
@@ -135,8 +184,9 @@ const police = new PoliceSystem({
     },
     // Round-3 polish: police radio chatter when the heat rises.
     // Round-4 polish: roadblock toast + wanted-up sting / radio static.
+    // Round-6: when the chase runs past a landmark, dispatch names it.
     onWantedChange: ({ wanted, before }) => {
-      if (wanted > 0) showMessage(police.radioLine(wanted), 5);
+      if (wanted > 0) showMessage(police.radioLineNearLandmark(wanted, nearestLandmarkName(player.position, 60)), 5);
       if (wanted > before) { audio.playWantedUp(); audio.playRadioBlip(); }
     },
     onRoadblock: () => showMessage('Roadblock ahead — they are cutting you off!', 5),
@@ -153,7 +203,13 @@ const missions = new MissionManager({
       showMessage(introCard ? `${name} — ${introCard}` : name, 6);
       audio.playMissionStart();
     },
-    onObjective: ({ objective, flavour }) => showMessage(flavour || objective),
+    onObjective: ({ objective, flavour }) => {
+      // Round 6: a flavour line naming the nearest landmark rides along
+      // with the objective — never an objective itself, so the mission
+      // flow cannot change.
+      const hint = missions.getLandmarkHint?.(player.position, landmarkList);
+      showMessage((flavour || objective) + (hint ? ' ' + hint : ''));
+    },
     onComplete: ({ name, reward }) => {
       showMissionComplete(name, reward);
     },
@@ -201,6 +257,7 @@ let camYaw = player.heading + Math.PI;
 let camPitch = 0;
 let camFar = false; // round 3: C toggles the chase camera near / far
 let camZoom = 1; // round 5: mouse wheel zooms the chase camera (0.8..1.35)
+let landmarkFocus = null; // round 6: { x, y, z, name, until } — the L key points the camera at a landmark for a few seconds
 let orbitAngle = 0.6;
 let messageText = '';
 let muzzleTimer = 0;
@@ -380,6 +437,9 @@ function startPlaying() {
       totalEarned = loaded.totalEarned || 0; // round 3: save v3 field
       gamesPlayed = loaded.gamesPlayed || 0; // round 4: save v3 field
       for (const n of loaded.completedMissions || []) missions.completed.add(n);
+      // Round 6: restore the landmarks visited on this profile, so a
+      // returning player is not re-credited for the same landmark.
+      for (const n of loaded.landmarksVisited || []) player.landmarksVisited.add(n);
       if (loaded.position) {
         player.teleport(loaded.position.x, loaded.position.z, loaded.heading ?? player.heading);
         camYaw = player.heading + Math.PI;
@@ -434,10 +494,18 @@ function showMissionComplete(name, reward) {
   input.exitPointerLock();
   audio.stopSiren();
   if (!thisSessionCounted) { thisSessionCounted = true; gamesPlayed += 1; } // round 4
+  saveProgress(null); // mission done — no current mission to resume
+}
+
+// Round-6: one checkpoint save — the same fields, whether the trigger
+// is a mission complete or a first landmark visit, so a discovery is
+// never lost when the tab closes. `currentMission` is the mission to
+// resume (null when a mission just completed).
+function saveProgress(currentMission) {
   save.save({
     money,
     completedMissions: missions.getCompletedMissions(),
-    currentMission: null,
+    currentMission: currentMission ?? null,
     position: player.position,
     heading: player.heading,
     wanted: police.getWantedLevel(),
@@ -450,6 +518,7 @@ function showMissionComplete(name, reward) {
     totalEarned, // round 3: save v3 field
     gamesPlayed, // round 4: save v3 field
     parBonuses: missions.getParBonusesEarned(), // round 5: save v4 field
+    landmarksVisited: [...(player.landmarksVisited || [])], // round 6: save v5 field
   });
 }
 
@@ -556,9 +625,22 @@ function updateCamera(dt) {
   const pz = focus.z + Math.cos(camYaw) * dist;
   const py = (focus.y || 0) + height + Math.sin(camPitch) * dist * 0.45;
   camera.position.set(px, py, pz);
-  const lookX = focus.x - Math.sin(camYaw) * CONFIG.camera.lookAhead;
-  const lookZ = focus.z - Math.cos(camYaw) * CONFIG.camera.lookAhead;
-  camera.lookAt(lookX, (focus.y || 0) + 1.4, lookZ);
+  let lookX = focus.x - Math.sin(camYaw) * CONFIG.camera.lookAhead;
+  let lookZ = focus.z - Math.cos(camYaw) * CONFIG.camera.lookAhead;
+  let lookY = (focus.y || 0) + 1.4;
+  // Round 6: the L key points the camera at a landmark — while the
+  // focus window is open, the look target blends toward the landmark
+  // (ease in/out over 0.5 s), then blends back to the player.
+  if (landmarkFocus && performance.now() < landmarkFocus.until) {
+    const remaining = landmarkFocus.until - performance.now();
+    const w = clamp01(Math.min((4000 - remaining) / 500, remaining / 500));
+    lookX = lerp(lookX, landmarkFocus.x, w);
+    lookZ = lerp(lookZ, landmarkFocus.z, w);
+    lookY = lerp(lookY, landmarkFocus.y, w);
+  } else if (landmarkFocus) {
+    landmarkFocus = null; // focus window expired
+  }
+  camera.lookAt(lookX, lookY, lookZ);
   followSun(focus.x, focus.z);
 }
 
@@ -580,6 +662,17 @@ function doPunch() {
   const targets = combat.collectTargets({ traffic, police });
   const hit = combat.punch(player, targets);
   if (hit && hit.killed) showMessage('Target down.');
+  // Round 6: a landed punch near a landmark pays a one-off $25
+  // showdown bonus per landmark (combat tracks which are claimed).
+  if (hit && typeof combat.landmarkBonusAt === 'function') {
+    const bonus = combat.landmarkBonusAt(player.position, landmarkList, 30);
+    if (bonus) {
+      money += bonus.bonus;
+      totalEarned += bonus.bonus;
+      audio.playCash();
+      showMessage(`Showdown at ${bonus.landmark}: +$${bonus.bonus}.`);
+    }
+  }
 }
 
 function doShoot() {
@@ -636,6 +729,25 @@ window.addEventListener('keydown', (event) => {
     }
     return;
   }
+  // Round 6: L looks at the nearest landmark — the camera swings to
+  // frame the Solmar Spire or the Marina Bridge for a few seconds.
+  if (code === 'KeyL') {
+    if (state === 'playing' && landmarkList.length) {
+      const nearest = nearestLandmark(player.position);
+      if (nearest) {
+        landmarkFocus = {
+          x: nearest.focusX ?? nearest.x,
+          y: nearest.focusY ?? 30,
+          z: nearest.focusZ ?? nearest.z,
+          name: nearest.name,
+          until: performance.now() + 4000,
+        };
+        hud.showLandmark?.(nearest.name, 4);
+        showMessage(`Look: ${nearest.name}.`);
+      }
+    }
+    return;
+  }
   if (state !== 'playing') return;
   if (code === 'KeyE') tryEnterExitCar();
   else if (code === 'KeyF') doPunch();
@@ -668,7 +780,9 @@ document.getElementById('restart-button')?.addEventListener('click', () => reset
     const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
     el.textContent = 'Profile: ' + plural(summary.missionsCompleted, 'mission') + ' done'
       + ' · $' + summary.totalEarned.toLocaleString() + ' earned'
-      + ' · ' + plural(summary.gamesPlayed, 'game') + ' finished';
+      + ' · ' + plural(summary.gamesPlayed, 'game') + ' finished'
+      // Round 6: the landmarks this profile has visited, when any.
+      + (summary.landmarksVisited ? ' · ' + plural(summary.landmarksVisited, 'landmark') + ' visited' : '');
   }
 }
 document.getElementById('busted-retry-button')?.addEventListener('click', () => {
@@ -780,6 +894,20 @@ function update(dt) {
 
   // 5. missions.
   missions.update(dt, world, player, systems());
+
+  // Round 6: landmark visits — the first time Rico reaches a landmark,
+  // mark it visited (gold HUD label + chime + saved to the profile).
+  // The checkpoint save runs here so the discovery survives a closed
+  // tab: the next session restores it in startPlaying().
+  if (landmarkList.length && typeof player.checkLandmark === 'function') {
+    const visited = player.checkLandmark(landmarkList, 25);
+    if (visited) {
+      hud.showLandmark?.(visited, 5);
+      if (typeof audio.playLandmark === 'function') audio.playLandmark();
+      showMessage(`Landmark visited: ${visited}.`);
+      saveProgress(missions.getCurrentMissionNumber?.() ?? null);
+    }
+  }
 
   // 6. combat (cooldowns) + health mirror.
   combat.update(dt);
@@ -1050,6 +1178,25 @@ window.__solmar = {
         sun: r5.sun || null,
       },
       windows: world.round5 || null,
+    };
+  },
+  // Round-6 probes: the warm sunset sky, sculpted cars, the Solmar
+  // Spire and the Marina Bridge — the three gaps round 6 exists to close.
+  get round6() {
+    const r6 = CONFIG.round6 || {};
+    const cars = typeof traffic.getCars === 'function' ? traffic.getCars() : [];
+    return {
+      sky: {
+        top: '#' + CONFIG.colors.skyTop.toString(16).padStart(6, '0'),
+        horizon: '#' + CONFIG.colors.skyHorizon.toString(16).padStart(6, '0'),
+        fog: scene.fog ? '#' + scene.fog.color.getHexString() : null,
+        sun: r6.sun || null,
+        warm: !!(r6.sky && r6.sky.top === 0x40203a),
+      },
+      landmarks: world.landmarks || null,
+      landmarkList: landmarkList.map((lm) => ({ name: lm.name, x: lm.x, z: lm.z })),
+      visited: [...(player.landmarksVisited || [])],
+      cars: cars.map((c) => ({ model: c.model || c.kind || null, sculpt: c.sculpt || null })),
     };
   },
 };

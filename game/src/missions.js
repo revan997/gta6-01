@@ -339,6 +339,27 @@ export class MissionManager {
     };
   }
 
+  // Round-6: a hint naming the nearest landmark (the Spire or the
+  // Marina Bridge) for the HUD — a flavour line, never an objective, so
+  // it cannot change the mission flow. `landmarks` is an array of
+  // { name, x, z }; `position` is the player's position. Returns null
+  // when there is no landmark to name.
+  getLandmarkHint(position, landmarks) {
+    if (!position || !Array.isArray(landmarks) || !landmarks.length) return null;
+    let best = null;
+    let bestD = Infinity;
+    for (const lm of landmarks) {
+      if (!lm || typeof lm.x !== 'number' || typeof lm.z !== 'number') continue;
+      const d = Math.hypot((position.x || 0) - lm.x, (position.z || 0) - lm.z);
+      if (d < bestD) { bestD = d; best = lm; }
+    }
+    if (!best) return null;
+    const dist = Math.round(bestD);
+    if (best.name === 'Solmar Spire') return `The Solmar Spire towers over Downtown, ${dist} m away — worth a look.`;
+    if (best.name === 'Marina Bridge') return `The Marina Bridge arches over the basin, ${dist} m away.`;
+    return `${best.name || 'A landmark'} is ${dist} m away.`;
+  }
+
   // Round-3 polish: seconds left on the current mission's par time, or
   // null when no mission is active or it has no par. The HUD shows it.
   getParRemaining() {

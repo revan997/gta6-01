@@ -97,6 +97,29 @@ export function createPlayer(scene, world, spawn) {
     speed: 0,
     punchWindup: 0, // round 4: seconds left of the punch wind-up lean
     shadow, // round 4: ground blob (scene-owned, see createPlayer)
+    // Round-6: landmarks Rico has visited this session (names from
+    // world.landmarks.list). main.js persists them into the save file.
+    landmarksVisited: new Set(),
+
+    // Round-6: mark a landmark visited when Rico comes within `radius`
+    // metres of it. `landmarks` is an array of { name, x, z }. Returns
+    // the landmark's name the FIRST time it is visited, or null when
+    // nothing new was visited (or when there is no landmark nearby).
+    // Pure bookkeeping — the caller plays the chime / HUD / save.
+    checkLandmark(landmarks, radius = 25) {
+      if (!Array.isArray(landmarks) || !landmarks.length) return null;
+      for (const lm of landmarks) {
+        if (!lm || typeof lm.x !== 'number' || typeof lm.z !== 'number') continue;
+        const key = lm.name || (lm.x + ',' + lm.z);
+        if (this.landmarksVisited.has(key)) continue;
+        const d = Math.hypot((this.position.x || 0) - lm.x, (this.position.z || 0) - lm.z);
+        if (d <= radius) {
+          this.landmarksVisited.add(key);
+          return lm.name || key;
+        }
+      }
+      return null;
+    },
 
     // Round 4: start the punch wind-up — Rico leans back for a beat,
     // then the arm swings through (applied in update()). The game loop

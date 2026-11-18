@@ -74,7 +74,19 @@ const server = createServer((request, response) => {
   // tell the dev server is up without fetching the game.
   if (pathname === '/__health') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: true, round: 5, root }));
+    response.end(JSON.stringify({ ok: true, round: 6, root }));
+    return;
+  }
+  // Round-6: a version endpoint — the build identity (game, round,
+  // landmark count) for the test harness and for a human checking which
+  // polish pass is being served. No file access, no state.
+  if (pathname === '/__version') {
+    response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    response.end(JSON.stringify({
+      game: 'solmar-bay', competition: 'gta6-01', round: 6,
+      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset'],
+      root,
+    }));
     return;
   }
   const file = resolve(join(root, normalize(pathname)));

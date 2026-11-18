@@ -73,6 +73,21 @@ const RADIO_LINES = {
     'Dispatch: five stars — the whole city is looking for him. Do not lose him.'],
 };
 
+// Round-6: dispatch lines that name a landmark — the chase reads as
+// happening in a real place, not a generic grid. Used by
+// radioLineNearLandmark() when the suspect is close to the Spire or
+// the Marina Bridge; the plain radioLine() is the fallback.
+const LANDMARK_RADIO = {
+  'Solmar Spire': [
+    'Dispatch: suspect is under the Spire — seal off Downtown, all units.',
+    'Dispatch: eyes on the Spire — the suspect is circling the tower.',
+  ],
+  'Marina Bridge': [
+    'Dispatch: suspect is on the Marina Bridge — block both ends, do not let him cross.',
+    'Dispatch: bridge unit — the suspect is over the basin, cut him off at the far side.',
+  ],
+};
+
 function makePoliceCar(spec, rng) {
   return {
     kind: 'police-car',
@@ -151,6 +166,18 @@ export class PoliceSystem {
     const n = Math.max(1, Math.min(5, Math.round(level) || 1));
     const lines = RADIO_LINES[n] || RADIO_LINES[1];
     return this.rng?.pick ? this.rng.pick(lines) : lines[0];
+  }
+
+  // Round-6: a dispatch line that names a nearby landmark when the
+  // suspect is close to one — the chase reads as happening in a real
+  // place. `landmarkName` is 'Solmar Spire' / 'Marina Bridge' (or null);
+  // unknown names and null fall back to the plain radioLine(level).
+  radioLineNearLandmark(level, landmarkName) {
+    const lines = LANDMARK_RADIO[landmarkName];
+    if (Array.isArray(lines) && lines.length) {
+      return this.rng?.pick ? this.rng.pick(lines) : lines[0];
+    }
+    return this.radioLine(level);
   }
 
   // Round 4: the intercept point — where the player will be in `lead`

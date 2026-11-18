@@ -46,19 +46,22 @@ if (!existsSync(gameFavicon)) {
     throw new Error(`missing input: game/favicon.ico at ${gameFavicon} is not a valid ICO file (bad magic bytes)`);
   }
 }
-// Round 5: the sunset palette must be present — the submission's sky is
-// a dramatic violet-to-gold sunset, and a copy that lost CONFIG.round5
-// would ship the old pale-grey sky. Fail loudly here instead of at the
-// intake check.
+// Round 6: the warm sunset palette must be present — the submission's
+// sky is a warm orange/gold sunset (round 6 shifted it warmer than the
+// round-5 magenta/rose, and lowered the sun), and a copy that lost
+// CONFIG.round6 would ship the old magenta sky. Fail loudly here
+// instead of at the intake check.
 {
   const configMod = await import(join(gameDir, 'src', 'config.js'));
   const cfg = configMod?.CONFIG;
-  const sunsetOk = cfg?.colors?.skyTop === 0x2e1a4e
-    && Array.isArray(cfg?.round5?.sky?.mids) && cfg.round5.sky.mids.length >= 4;
+  const sunsetOk = cfg?.colors?.skyTop === 0x40203a
+    && Array.isArray(cfg?.round5?.sky?.mids) && cfg.round5.sky.mids.length >= 4
+    && cfg?.round6?.sky && cfg?.round6?.landmarks?.spire;
   if (!sunsetOk) {
-    throw new Error('missing input: CONFIG.round5 sunset palette not found in game/src/config.js');
+    throw new Error('missing input: CONFIG.round6 warm sunset palette / landmarks not found in game/src/config.js');
   }
-  console.log(`sunset palette: skyTop #${cfg.colors.skyTop.toString(16).padStart(6, '0')} horizon #${cfg.colors.skyHorizon.toString(16).padStart(6, '0')}`);
+  console.log(`sunset palette: skyTop #${cfg.colors.skyTop.toString(16).padStart(6, '0')} horizon #${cfg.colors.skyHorizon.toString(16).padStart(6, '0')} (round 6 warm)`);
+  console.log(`landmarks: Solmar Spire at (${cfg.round6.landmarks.spire.x}, ${cfg.round6.landmarks.spire.z}), ${cfg.round6.landmarks.spire.height} m; Marina Bridge x ${cfg.round6.landmarks.bridge.x0}..${cfg.round6.landmarks.bridge.x1} at z ${cfg.round6.landmarks.bridge.z}`);
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)

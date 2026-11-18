@@ -121,6 +121,23 @@ function consumeWheelDelta() {
   return out;
 }
 
+// Round-6: consume and return which of the given codes were pressed
+// since the last consumePressed() — a multi-code pressed-edge check for
+// one-shot keys that share the press queue (the landmark-focus key L
+// and the camera toggle C both read the same queue in main.js).
+function consumePressedCodes(...codes) {
+  const hit = [];
+  for (const code of codes) {
+    const alt = typeof code === 'string' && code.length === 1 ? 'Key' + code.toUpperCase() : null;
+    if (pressedKeys.has(code) || (alt && pressedKeys.has(alt))) {
+      pressedKeys.delete(code);
+      if (alt) pressedKeys.delete(alt);
+      hit.push(code);
+    }
+  }
+  return hit;
+}
+
 // Consume and return the e.code values pressed since the last call,
 // then clear the set. A held key is reported once, on its first keydown.
 function consumePressed() {
@@ -170,6 +187,7 @@ export const input = {
   pressed,
   anyPressed,
   consumePressedCode,
+  consumePressedCodes,
   moveVector,
   consumeMouseDelta,
   consumeWheelDelta,

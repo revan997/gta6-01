@@ -185,6 +185,31 @@ export class HUD {
     }
   }
 
+  // Round-6: a gold landmark label under the district line, shown for
+  // a few seconds when Rico first reaches a landmark (the Spire or the
+  // Marina Bridge). Built lazily like the combo label, so index.html
+  // needs no new slot. Re-showing the same landmark refreshes the timer.
+  showLandmark(name, seconds = 5) {
+    if (!this.doc || typeof this.doc.createElement !== 'function' || !name) return;
+    if (!this._landmarkEl) {
+      const district = this._el('district');
+      const parent = district?.parentNode || this.doc.body;
+      if (!parent) return;
+      const el = this.doc.createElement('div');
+      el.id = 'hud-landmark';
+      el.style.cssText = 'position:absolute;top:88px;left:50%;transform:translateX(-50%);'
+        + 'font-size:15px;font-weight:bold;letter-spacing:3px;color:#ffe98a;'
+        + 'text-shadow:0 2px 6px rgba(0,0,0,0.9);pointer-events:none;display:none;';
+      parent.appendChild(el);
+      this._landmarkEl = el;
+    }
+    const el = this._landmarkEl;
+    el.textContent = '★ ' + String(name).toUpperCase() + ' ★';
+    el.style.display = '';
+    if (this._landmarkTimer) clearTimeout(this._landmarkTimer);
+    this._landmarkTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(1, seconds) * 1000);
+  }
+
   // update(state) — the single HUD entry point, called once per frame.
   update(state = {}) {
     if (!state) return;

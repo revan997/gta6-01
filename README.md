@@ -37,6 +37,7 @@ $250 and five jobs waiting. No account, no install, no network.
 | F | Punch, shoot (pistol) |
 | H | Horn (in a car) |
 | C | Camera near / far |
+| L | Look at the nearest landmark (Solmar Spire / Marina Bridge) |
 | M | Mute / unmute |
 | P | Pause |
 | Mouse | Look around (click to lock the pointer) |
@@ -54,23 +55,29 @@ same seed always builds the same streets:
 
 - **Downtown** — stepped towers with setbacks and pitched roofs,
   balconies on the mid-rise blocks, rooftop billboards and a helipad,
-  traffic lights at every junction.
+  traffic lights at every junction — and the **Solmar Spire**, a curved
+  glass tower that rises above the whole skyline, crowned with a glowing
+  ring and a beacon. Press **L** to look at it from anywhere.
 - **Old Town** — neon shopfronts, awnings, street-name blades, bus
   stops, planters and bins.
 - **Marina** — moored boats that bob on the swell, docks, cranes and
-  containers.
+  containers — and the **Marina Bridge**, an arched span across the
+  basin with lamps along its rails.
 - **Beach** — sand, umbrellas and loungers, a lifeguard tower, buoys
   and cruising boats offshore, birds overhead.
 - **The sea** — a textured, breathing water plane with a foam strip at
   the shoreline.
 
 The sun sits low over the water — a big low disc with a halo, hanging
-in a violet-to-magenta-to-gold sky — and the shadows stretch long across
-the roads. Clouds catch the pink and orange light, and the buildings
+in a warm orange-to-gold sky — and the shadows stretch long across
+the roads. Clouds catch the orange and gold light, and the buildings
 wear real recessed windows: dark frames set into the facades, warm lit
 glass, sloped awnings that throw shade, parapets and stepped towers
 that read in profile. At street level the ground is mottled grass and
-paved sidewalks, not flat colour.
+paved sidewalks, not flat colour. Reach a landmark for the first time
+and the game marks it visited (a gold label, a chime, and a line in
+your saved profile) — land a punch near one and it pays a $25
+showdown bonus.
 
 ## The law
 
@@ -100,11 +107,14 @@ and a best time that is saved to your profile.
 
 Driving has weight: five car models plus traffic variety (taxi with a
 checker band and roof sign, a six-wheel city bus, beach buggy, food
-truck, limo), all sitting planted on bigger wheels with arches and side
-skirts — the van has a sloped windshield and a real nose now — brake
-lights that flare, tyre screech on a hard skid, an engine whose pitch
-follows your speed through five gears, and a camera whose field of view
-opens up as you go faster (scroll the mouse wheel to zoom it in or out).
+truck, limo), all sculpted now — sloped hoods and windshields, glass
+cabins with body-coloured roofs, detailed wheels with hubs, and a
+silhouette of its own per model, so the red pickup no longer reads as
+a box on a box — sitting planted on bigger wheels with arches and side
+skirts, brake lights that flare, tyre screech on a hard skid, an engine
+whose pitch follows your speed through five gears, and a camera whose
+field of view opens up as you go faster (scroll the mouse wheel to zoom
+it in or out, press L to look at the nearest landmark).
 On foot, Rico leans into turns, hunches when he sprints, catches the
 sunset on his shoulders, and casts a soft shadow that keeps him
 planted on the pavement. Punches knock targets back and freeze the
@@ -116,7 +126,9 @@ All sound is synthesised live with the Web Audio API — engine hum,
 sirens that swell as the nearest unit closes in, footsteps, door slams,
 a laid-back chord loop, a city hum that gives way to surf near the
 beach, a warm golden-hour chord pad underneath it all, and stings for
-mission starts, rising heat, combos, cash earned and the sunset itself.
+mission starts, rising heat, combos, cash earned, the sunset itself —
+and a bright chime the first time you reach a landmark. Dispatch
+names the Spire and the Bridge when the chase runs past them.
 Pressing SPACE a fraction early still jumps, thanks to jump
 buffering.
 
@@ -131,10 +143,10 @@ foot), a pulsing mission marker and your own arrow — gold while the law
 is after you.
 
 Progress persists in localStorage: cash, lifetime earnings, completed
-missions and best times, position, wanted level and health — across
-save versions, so an old profile still loads. The menu shows your
-saved profile (missions done, cash earned, games finished) before you
-press START.
+missions and best times, position, wanted level and health, and the
+landmarks you have visited — across save versions, so an old profile
+still loads. The menu shows your saved profile (missions done, cash
+earned, games finished) before you press START.
 
 ## Inside the code
 
@@ -153,12 +165,12 @@ press START.
 ## Screenshots
 
 The `screenshots/` folder holds staged shots from the test harness
-(menu, driving, chase, pause). The test itself (`round5-test.mjs` in
+(menu, driving, chase, pause). The test itself (`round6-test.mjs` in
 the workdir) loads the game in headless Chromium, drives it (menu →
 START → driving → carjack → wanted 1 → police spawn → mission advance
 → pause/resume), lands a live punch, completes mission 1, checks the
-save round-trip, triggers a busted, proves the round-5 sunset sky,
-planted-car stance and recessed geometry windows, and requires zero
+save round-trip, triggers a busted, proves the round-6 warm sunset sky,
+sculpted cars, the Solmar Spire and the Marina Bridge, and requires zero
 console errors, zero warnings, zero failed requests and zero external
 requests in two separate full runs.
 

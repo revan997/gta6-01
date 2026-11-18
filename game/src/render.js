@@ -98,21 +98,23 @@ export function makeSignTexture(text, bg = '#1d5c2e', fg = '#ffffff') {
 // and a wide soft halo for atmosphere. Both are procedural canvas
 // textures, so the game stays fully offline. world.js uses them for the
 // low sunset sun sprites.
+// Round-6: stops warmed toward gold (less pink) — #ffb347 / #ff8a2a
+// family throughout, matching the warmer round-6 sky.
 export function makeSunDiscTexture() {
   return makeCanvasTexture(256, 256, (ctx, w, h) => {
     const cx = w / 2;
     const cy = h / 2;
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2);
     grad.addColorStop(0, '#fffdf0');
-    grad.addColorStop(0.22, '#fff0b0');
-    grad.addColorStop(0.42, '#ffc46b');
-    grad.addColorStop(0.6, 'rgba(255,138,42,0.55)');
-    grad.addColorStop(0.8, 'rgba(255,122,42,0.18)');
-    grad.addColorStop(1, 'rgba(255,122,42,0)');
+    grad.addColorStop(0.22, '#ffedb0');
+    grad.addColorStop(0.42, '#ffb347');
+    grad.addColorStop(0.6, 'rgba(255,150,40,0.55)');
+    grad.addColorStop(0.8, 'rgba(255,138,42,0.18)');
+    grad.addColorStop(1, 'rgba(255,138,42,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
     // Corona rings: thin warm circles outside the bright core.
-    ctx.strokeStyle = 'rgba(255,200,120,0.35)';
+    ctx.strokeStyle = 'rgba(255,190,90,0.35)';
     ctx.lineWidth = 3;
     for (const r of [0.52, 0.64, 0.76]) {
       ctx.beginPath();
@@ -127,10 +129,27 @@ export function makeHaloTexture() {
     const cx = w / 2;
     const cy = h / 2;
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2);
-    grad.addColorStop(0, 'rgba(255,170,80,0.55)');
-    grad.addColorStop(0.4, 'rgba(255,140,50,0.22)');
-    grad.addColorStop(0.75, 'rgba(255,120,40,0.07)');
-    grad.addColorStop(1, 'rgba(255,120,40,0)');
+    grad.addColorStop(0, 'rgba(255,179,71,0.55)');
+    grad.addColorStop(0.4, 'rgba(255,150,50,0.22)');
+    grad.addColorStop(0.75, 'rgba(255,140,42,0.07)');
+    grad.addColorStop(1, 'rgba(255,140,42,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+}
+
+// Round-6: a small bright radial glow for the Solmar Spire beacon —
+// white-gold core fading to transparent, so the beacon tip reads as a
+// light at dusk from across the city. world.js uses it on the spire.
+export function makeBeaconTexture() {
+  return makeCanvasTexture(128, 128, (ctx, w, h) => {
+    const cx = w / 2;
+    const cy = h / 2;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w / 2);
+    grad.addColorStop(0, '#fffbe0');
+    grad.addColorStop(0.25, '#ffd94a');
+    grad.addColorStop(0.6, 'rgba(255,180,60,0.35)');
+    grad.addColorStop(1, 'rgba(255,180,60,0)');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
   });

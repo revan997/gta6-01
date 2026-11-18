@@ -55,9 +55,10 @@ export const CONFIG = {
     // Round-2 polish: sky gradient, sunset palette, awning colours.
     // Round-5: the default sky IS the sunset (deep violet zenith, gold
     // horizon); stageEnd reuses the same deep palette.
-    skyTop: 0x2e1a4e,
+    // Round-6: zenith warmed violet -> warm plum (less magenta).
+    skyTop: 0x40203a,
     skyHorizon: 0xffc46b,
-    sunsetTop: 0x2e1a4e,
+    sunsetTop: 0x40203a,
     sunsetHorizon: 0xff7a2a,
     sunsetFog: 0xd96a35,
     awningPalette: [0xc23a2a, 0x2e86c1, 0x1e8449, 0xe67e22, 0x8e44ad],
@@ -206,10 +207,12 @@ export const CONFIG = {
     exposure: 1.12, // render.js tone-mapping exposure (was 1.05)
     // Multi-stop sunset gradient (zenith -> horizon). paintSky(top,
     // horizon) uses these mids unless the caller passes its own.
+    // Round-6: mids warmed — magenta/rose replaced by warm mauve /
+    // burnt orange so the sky reads golden sunset, not pink.
     sky: {
       mids: [
-        { stop: 0.30, hex: 0x7a2d6e }, // magenta
-        { stop: 0.52, hex: 0xc13a5e }, // rose
+        { stop: 0.30, hex: 0x8a3a4a }, // warm mauve
+        { stop: 0.52, hex: 0xd84a2e }, // burnt orange
         { stop: 0.72, hex: 0xff7a2a }, // deep orange band
         { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
       ],
@@ -254,6 +257,35 @@ export const CONFIG = {
       // mostly-lit or mostly-dark); mean ~0.31 lit overall.
       floorLitRatios: [0.05, 0.2, 0.4, 0.6],
       awningChance: 0.3, // upper floors only (floor index >= 2)
+    },
+  },
+
+  // ---- Round-6 polish (Lane L): warmer sky + skyline landmarks ----
+  // Warmer sunset (warm plum zenith, mauve/burnt-orange mids, gold
+  // horizon), a lower sun on the horizon, and two signature landmarks
+  // (Solmar Spire downtown, Marina Bridge over the basin) so the
+  // skyline is not uniform boxes. world.js reads this block; the plain
+  // CONFIG.colors / CONFIG.round5 values above mirror it.
+  round6: {
+    sky: {
+      top: 0x40203a, // warm plum zenith
+      mids: [
+        { stop: 0.30, hex: 0x8a3a4a }, // warm mauve
+        { stop: 0.52, hex: 0xd84a2e }, // burnt orange
+        { stop: 0.72, hex: 0xff7a2a }, // deep orange band
+        { stop: 0.88, hex: 0xffc46b }, // bright gold right at the horizon
+      ],
+      horizon: 0xffc46b,
+    },
+    // Sun sprites: lower on the horizon (y 130, was 215) and bigger,
+    // so the disc sits visibly low in the main view.
+    sun: {
+      x: 730, y: 130, z: 375,
+      glowScale: 480, discScale: 170, haloScale: 700,
+    },
+    landmarks: {
+      spire: { x: 80, z: -80, height: 95, radiusTop: 7, radiusBottom: 13 },
+      bridge: { x0: 150, x1: 330, z: -240, spans: 7 },
     },
   },
 

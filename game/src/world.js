@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createRng } from './random.js';
-import { makeCanvasTexture, makeGlowTexture, makeHaloTexture, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
+import { makeBeaconTexture, makeCanvasTexture, makeGlowTexture, makeHaloTexture, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
 export function districtAt(x, z) {
@@ -28,6 +28,18 @@ export function buildWorld(scene, seedOrRng) {
   const R4b = CONFIG.round4b;
   // Round-5 config (sunset sky + recessed geometry windows).
   const R5 = CONFIG.round5;
+  // Round-6 config (warmer sky, lower sun, landmarks) — falls back to
+  // round-5 values where round-6 does not override.
+  const R6 = CONFIG.round6 || {};
+  const R6Sun = R6.sun || R5.sun;
+  const sunCfg = {
+    x: R6Sun.x !== undefined ? R6Sun.x : R5.sun.x,
+    y: R6Sun.y !== undefined ? R6Sun.y : R5.sun.y,
+    z: R6Sun.z !== undefined ? R6Sun.z : R5.sun.z,
+    glowScale: R6Sun.glowScale || R5.sun.glowScale,
+    discScale: R6Sun.discScale || R5.sun.discScale,
+    haloScale: R6Sun.haloScale || R5.sun.haloScale,
+  };
   const R5W = R5.geometryWindows;
   // Plain facades get their own rng stream so the main rng sequence (and
   // therefore the round-4 city layout) is not disturbed by the extra
@@ -49,8 +61,9 @@ export function buildWorld(scene, seedOrRng) {
   // Sky dome: a big gradient sphere (BackSide, fog-free) so the horizon
   // reads as sky, not a flat colour. setPalette(top, horizon) repaints it
   // — stageEnd uses it for the sunset shot.
-  // Round-5: a multi-stop dramatic sunset — deep violet zenith ->
-  // magenta -> rose -> deep orange band -> bright gold at the horizon.
+  // Round-5: a multi-stop dramatic sunset — warm plum zenith ->
+  // warm mauve -> burnt orange -> deep orange band -> bright gold at
+  // the horizon. (Round-6 warmed the mids: magenta/rose out.)
   // `midStops` is optional; when omitted the CONFIG.round5 mids are used,
   // so the 2-arg setPalette(top, horizon) call in main.js keeps working.
   const skyCanvas = document.createElement('canvas');
@@ -86,26 +99,28 @@ export function buildWorld(scene, seedOrRng) {
   // corona rings + a wide faint halo, low on the horizon toward the sun
   // light, so the dusk reads as a real sunset. (Round-4b had a smaller,
   // higher, cooler sun at (520, 110, 280), glow 300 / disc 90.)
+  // Round-6: the sun sits lower (y 130, was 215) and bigger, read from
+  // CONFIG.round6.sun with a round-5 fallback (see sunCfg above).
   const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: makeGlowTexture('#ff8a2a', 0.1, 1), transparent: true, opacity: 0.85,
     depthWrite: false, fog: false,
   }));
-  sunGlow.scale.set(R5.sun.glowScale, R5.sun.glowScale, 1);
-  sunGlow.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
+  sunGlow.scale.set(sunCfg.glowScale, sunCfg.glowScale, 1);
+  sunGlow.position.set(sunCfg.x, sunCfg.y, sunCfg.z);
   scene.add(sunGlow);
   const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
     map: makeSunDiscTexture(), transparent: true, opacity: 0.95,
     depthWrite: false, fog: false,
   }));
-  sunDisc.scale.set(R5.sun.discScale, R5.sun.discScale, 1);
-  sunDisc.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
+  sunDisc.scale.set(sunCfg.discScale, sunCfg.discScale, 1);
+  sunDisc.position.set(sunCfg.x, sunCfg.y, sunCfg.z);
   scene.add(sunDisc);
   const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({
     map: makeHaloTexture(), transparent: true, opacity: R5.sun.haloOpacity,
     depthWrite: false, fog: false,
   }));
-  sunHalo.scale.set(R5.sun.haloScale, R5.sun.haloScale, 1);
-  sunHalo.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
+  sunHalo.scale.set(sunCfg.haloScale, sunCfg.haloScale, 1);
+  sunHalo.position.set(sunCfg.x, sunCfg.y, sunCfg.z);
   scene.add(sunHalo);
 
   // Building facades: 6 procedural variants (base colour + window grid
@@ -659,6 +674,12 @@ export function buildWorld(scene, seedOrRng) {
       if (bz0 >= CONFIG.beachStartZ) continue; // beach / sea, no buildings
       if (inMarinaBasin(cx, cz)) continue; // marina water
       if (rng.chance(0.12)) { parkGaps.push({ x: cx, z: cz }); continue; } // plaza / park gap
+      // Round-6: the downtown block centred (80, -80) is reserved for
+      // the Solmar Spire landmark (built after the loop) — no normal
+      // buildings here. The park-gap rng draw above is still consumed
+      // so the seeded layout of later blocks is disturbed as little as
+      // possible.
+      if (cx === 80 && cz === -80) continue; // Solmar Spire reserve
       const district = districtAt(cx, cz) || 'Downtown';
       const isDowntown = district === 'Downtown';
       const count = rng.int(CONFIG.world.buildingsPerBlockMin, CONFIG.world.buildingsPerBlockMax);
@@ -884,6 +905,137 @@ export function buildWorld(scene, seedOrRng) {
     makeInstanced(geoWinGlassDark, matGeoGlassDark, false, planeUnit);
     makeInstanced(geoWinAwnings, matBalcony, false);
   }
+
+  // ---- Round-6 landmarks: Solmar Spire + Marina Bridge ----
+  // Two signature landmarks so the skyline is not uniform boxes.
+  // Deterministic (no rng consumed) so the seeded layout of everything
+  // after this block is unchanged. Cheap: reuses matGlass / matRoof /
+  // matPole, a handful of meshes, no shadow-casting on the small
+  // pieces (only the tower itself casts).
+  const spireCfg = (R6.landmarks && R6.landmarks.spire)
+    || { x: 80, z: -80, height: 95, radiusTop: 7, radiusBottom: 13 };
+  const bridgeCfg = (R6.landmarks && R6.landmarks.bridge)
+    || { x0: 150, x1: 330, z: -240, spans: 7 };
+  // (a) Solmar Spire — tapered glass cylinder, tallest in the city.
+  // Its downtown block (centred 80, -80) was left empty by the building
+  // loop above, so nothing underneath it needs removing.
+  const spireGroup = new THREE.Group();
+  spireGroup.position.set(spireCfg.x, 0, spireCfg.z);
+  scene.add(spireGroup);
+  const spireBase = new THREE.Mesh(
+    new THREE.CylinderGeometry(15, 16, 1, 24), matRoof);
+  spireBase.position.y = 0.5;
+  spireBase.receiveShadow = true;
+  spireGroup.add(spireBase);
+  const spireTower = new THREE.Mesh(
+    new THREE.CylinderGeometry(spireCfg.radiusTop, spireCfg.radiusBottom, spireCfg.height, 24),
+    matGlass);
+  spireTower.position.y = spireCfg.height / 2;
+  spireTower.castShadow = true;
+  spireTower.receiveShadow = true;
+  spireGroup.add(spireTower);
+  // Lit window bands: thin emissive rings every ~12 m. The tower
+  // tapers, so each ring's radius is interpolated to sit just proud
+  // of the glass at its height.
+  const matSpireBand = new THREE.MeshBasicMaterial({ color: 0xffe9a8 });
+  for (let y = 12; y <= spireCfg.height - 11; y += 12) {
+    const r = spireCfg.radiusBottom
+      + (spireCfg.radiusTop - spireCfg.radiusBottom) * (y / spireCfg.height);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.15, r + 0.15, 0.8, 24), matSpireBand);
+    band.position.y = y;
+    spireGroup.add(band);
+  }
+  // Glowing crown ring + thin spire mast with a beacon tip.
+  const matCrown = new THREE.MeshStandardMaterial({
+    color: 0xffc46b, emissive: 0xffb347, emissiveIntensity: 1.6, roughness: 0.4,
+  });
+  const crown = new THREE.Mesh(
+    new THREE.CylinderGeometry(spireCfg.radiusTop + 0.6, spireCfg.radiusTop + 0.6, 1.2, 24), matCrown);
+  crown.position.y = spireCfg.height + 0.6;
+  spireGroup.add(crown);
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 10, 8), matPole);
+  mast.position.y = spireCfg.height + 6;
+  spireGroup.add(mast);
+  const beaconTip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.9, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0 }));
+  beaconTip.position.y = spireCfg.height + 11.5;
+  spireGroup.add(beaconTip);
+  const beaconGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeBeaconTexture(), transparent: true, opacity: 0.9, depthWrite: false,
+  }));
+  beaconGlow.scale.set(14, 14, 1);
+  beaconGlow.position.y = spireCfg.height + 11.5;
+  spireGroup.add(beaconGlow);
+  // Collision footprint so the player / car cannot pass through it.
+  buildings.push({
+    minX: spireCfg.x - 13, maxX: spireCfg.x + 13,
+    minZ: spireCfg.z - 13, maxZ: spireCfg.z + 13,
+    height: spireCfg.height, district: 'Downtown',
+    x: spireCfg.x, z: spireCfg.z, w: 26, d: 26,
+  });
+  // (b) Marina Bridge — arched deck over the marina basin, east-west at
+  // z = -240 from x 150 to x 330. Seven angled deck segments follow a
+  // shallow arch (peak ~8 m mid-span), with railings, two support
+  // pillars in the water and lamp posts. Purely visual (over water).
+  const bridgeGroup = new THREE.Group();
+  scene.add(bridgeGroup);
+  const bridgeSpan = bridgeCfg.x1 - bridgeCfg.x0;
+  const bridgeSegLen = bridgeSpan / bridgeCfg.spans;
+  const bridgeArch = (t) => 8 * Math.sin(Math.PI * t); // peak ~8 m at mid-span
+  const matBridgeDeck = new THREE.MeshStandardMaterial({ color: 0x4a4f58, roughness: 0.8 });
+  const matBridgeRail = matPole;
+  for (let i = 0; i < bridgeCfg.spans; i++) {
+    const t0 = i / bridgeCfg.spans;
+    const t1 = (i + 1) / bridgeCfg.spans;
+    const tc = (t0 + t1) / 2;
+    const xc = bridgeCfg.x0 + (i + 0.5) * bridgeSegLen;
+    const yc = bridgeArch(tc);
+    // Slope of the arch at mid-segment (radians about z).
+    const angle = Math.atan2(8 * Math.PI * Math.cos(Math.PI * tc), bridgeSpan);
+    const deck = new THREE.Mesh(boxGeo, matBridgeDeck);
+    deck.scale.set(bridgeSegLen + 0.6, 1, 6);
+    deck.position.set(xc, yc, bridgeCfg.z);
+    deck.rotation.z = angle;
+    deck.receiveShadow = true;
+    bridgeGroup.add(deck);
+    for (const side of [-1, 1]) {
+      const rail = new THREE.Mesh(boxGeo, matBridgeRail);
+      rail.scale.set(bridgeSegLen + 0.6, 0.9, 0.25);
+      rail.position.set(xc, yc + 0.9, bridgeCfg.z + side * 2.9);
+      rail.rotation.z = angle;
+      bridgeGroup.add(rail);
+    }
+  }
+  // Support pillars in the water (deck underside ~6.4 m there).
+  for (const px of [210, 270]) {
+    const py = bridgeArch((px - bridgeCfg.x0) / bridgeSpan);
+    const pillar = new THREE.Mesh(boxGeo, matRoof);
+    pillar.scale.set(3, py, 4);
+    pillar.position.set(px, py / 2, bridgeCfg.z);
+    pillar.receiveShadow = true;
+    bridgeGroup.add(pillar);
+  }
+  // Lamp posts with glow sprites along the deck.
+  const bridgeLampTex = makeGlowTexture('#ffe9a0');
+  for (const lx of [180, 240, 300]) {
+    const ly = bridgeArch((lx - bridgeCfg.x0) / bridgeSpan);
+    const pole = new THREE.Mesh(boxGeo, matPole);
+    pole.scale.set(0.22, 4, 0.22);
+    pole.position.set(lx, ly + 2, bridgeCfg.z - 2.6);
+    bridgeGroup.add(pole);
+    const lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: bridgeLampTex, transparent: true, depthWrite: false, opacity: 0.7,
+    }));
+    lampGlow.scale.set(4, 4, 1);
+    lampGlow.position.set(lx, ly + 4.2, bridgeCfg.z - 2.6);
+    bridgeGroup.add(lampGlow);
+  }
+  const landmarks = {
+    spire: { x: spireCfg.x, z: spireCfg.z, height: spireCfg.height },
+    bridge: { x0: bridgeCfg.x0, x1: bridgeCfg.x1, z: bridgeCfg.z, spans: bridgeCfg.spans },
+    count: 2,
+  };
 
   // ---- Rooftop billboard + helipad (round-3 polish) ----
   // The tallest downtown tower gets a lit billboard (weighted copy from
@@ -1210,7 +1362,14 @@ export function buildWorld(scene, seedOrRng) {
   // Round-4: the moored boats bob and rock gently (updateWater).
   const mooredBoats = [];
   for (const bx of [211, 253, 295]) {
-    const boat = addBoat(bx, -240 + rng.range(-8, 8));
+    // Round-6: keep moored boats clear of the Marina Bridge deck line
+    // (z = -240) — a mast tip (y ~4.65) would poke through the deck
+    // near the east end, where the arch underside drops to ~4.1 m.
+    // The rng draw is unchanged; boats are just pushed >= 7 m off the
+    // bridge centreline, still between the piers.
+    const bz0 = -240 + rng.range(-8, 8);
+    const bz = Math.abs(bz0 + 240) < 7 ? bz0 + (bz0 >= -240 ? 10 : -10) : bz0;
+    const boat = addBoat(bx, bz);
     mooredBoats.push({
       group: boat, phase: rng.range(0, Math.PI * 2), baseY: 0.15, baseRotY: boat.rotation.y,
     });
@@ -1448,8 +1607,8 @@ export function buildWorld(scene, seedOrRng) {
   const clouds = [];
   const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(18, 16, 16), matSun);
   // Round-5: the solid sun ball sits with the low sunset sprites, not
-  // high in the sky (was 420, 520, 210).
-  sunMesh.position.set(R5.sun.x, R5.sun.y, R5.sun.z);
+  // high in the sky (was 420, 520, 210). Round-6: lower still (y 130).
+  sunMesh.position.set(sunCfg.x, sunCfg.y, sunCfg.z);
   scene.add(sunMesh);
   for (let i = 0; i < CONFIG.world.cloudCount; i++) {
     const g = new THREE.Group();
@@ -1553,6 +1712,10 @@ export function buildWorld(scene, seedOrRng) {
       windowAwnings: geoWinAwnings.length,
       litWindows: r5LitWindows,
     },
+    // Round-6: skyline landmarks + warmer sky — the test harness reads
+    // these to prove the pass.
+    landmarks,
+    round6: { skyWarm: true, landmarks: 2, spireHeight: 95, bridgeSpans: 7 },
     districts: CONFIG.districts,
     citySize: CONFIG.citySize,
     halfCity: half,
