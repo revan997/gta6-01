@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createRng } from './random.js';
-import { makeCanvasTexture } from './render.js';
+import { makeCanvasTexture, makeGlowTexture } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
 export function districtAt(x, z) {
@@ -287,9 +287,70 @@ export function buildWorld(scene, seedOrRng) {
     }
   }
 
+  // ---- Traffic lights (round-3 polish) ----
+  // One signal head per downtown intersection, on the sidewalk corner.
+  // Each light cycles green -> amber -> red on a fixed game-time loop
+  // (CONFIG.trafficLights); updateTrafficLights(dt) advances the clock
+  // and writes light.state, which traffic.js reads to stop cars at red.
+  const trafficLights = [];
+  let lightClock = 0;
+  const matLightPole = new THREE.MeshStandardMaterial({ color: 0x2e3138, roughness: 0.6, metalness: 0.5 });
+  function addTrafficLight(ix, iz, phaseOffset) {
+    const g = new THREE.Group();
+    g.position.set(ix + 9, 0, iz + 9);
+    scene.add(g);
+    const pole = new THREE.Mesh(boxGeo, matLightPole);
+    pole.scale.set(0.28, 4.6, 0.28);
+    pole.position.set(0, 2.3, 0);
+    pole.castShadow = true;
+    g.add(pole);
+    const head = new THREE.Mesh(boxGeo, matLightPole);
+    head.scale.set(0.55, 1.35, 0.5);
+    head.position.set(0, 5.1, 0);
+    head.castShadow = true;
+    g.add(head);
+    const lampGeo = new THREE.SphereGeometry(0.17, 8, 8);
+    function lamp(color, y) {
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.08 });
+      const m = new THREE.Mesh(lampGeo, mat);
+      m.position.set(0, y, 0.26);
+      g.add(m);
+      return mat;
+    }
+    const redMat = lamp(0xff2a2a, 5.55);
+    const amberMat = lamp(0xffb020, 5.1);
+    const greenMat = lamp(0x2aff66, 4.65);
+    trafficLights.push({
+      x: ix + 9, z: iz + 9, phaseOffset,
+      redMat, amberMat, greenMat, state: 'green',
+    });
+  }
+  for (const ix of [-120, -40, 40, 120]) {
+    for (const iz of [-120, -40, 40]) {
+      addTrafficLight(ix, iz, rng.range(0, 18));
+    }
+  }
+  function updateTrafficLights(dt) {
+    lightClock += dt || 0;
+    const cycle = CONFIG.trafficLights.greenSeconds
+      + CONFIG.trafficLights.amberSeconds + CONFIG.trafficLights.redSeconds;
+    for (const light of trafficLights) {
+      const phase = (lightClock + light.phaseOffset) % cycle;
+      const state = phase < CONFIG.trafficLights.greenSeconds ? 'green'
+        : phase < CONFIG.trafficLights.greenSeconds + CONFIG.trafficLights.amberSeconds ? 'amber' : 'red';
+      light.state = state;
+      light.redMat.emissiveIntensity = state === 'red' ? 2.4 : 0.08;
+      light.amberMat.emissiveIntensity = state === 'amber' ? 2.4 : 0.08;
+      light.greenMat.emissiveIntensity = state === 'green' ? 2.4 : 0.08;
+    }
+  }
+
   // ---- Buildings ----
   // Blocks are the cells between neighbouring road centrelines.
   // Blocks the rng leaves as gaps become small parks (parkGaps).
+  // Round 3 tracks the tallest downtown tower for the rooftop billboard
+  // and helipad placed after the loop.
+  let tallestDowntown = null;
   const parkGaps = [];
   const edges = [-half, ...lines, half];
   const windowMatLit = new THREE.MeshStandardMaterial({
@@ -390,18 +451,82 @@ export function buildWorld(scene, seedOrRng) {
           awMesh.rotation.x = 0.28; // outer edge dips down
           // Glass shopfront below the awning.
           addBox(matGlass, aw, 2.2, 0.2, 0, -1.2, -0.5, awning);
+          // Round-3 polish: a neon sign strip above the shopfront, in a
+          // random neon colour — the street glows after dark.
+          if (rng.chance(0.55)) {
+            const neonColor = rng.pick(CONFIG.neonPalette);
+            const neonMat = new THREE.MeshStandardMaterial({
+              color: neonColor, emissive: neonColor, emissiveIntensity: 1.8,
+            });
+            addBox(neonMat, aw * 0.7, 0.22, 0.12, 0, 1.1, -0.5, awning);
+          }
         }
         buildings.push({
           minX: px - bw / 2, maxX: px + bw / 2,
           minZ: pz - bd / 2, maxZ: pz + bd / 2,
           height, district, x: px, z: pz, w: bw, d: bd,
         });
+        if (isDowntown && (!tallestDowntown || height > tallestDowntown.height)) {
+          tallestDowntown = { x: px, z: pz, height, w: bw, d: bd };
+        }
       }
+    }
+  }
+
+  // ---- Rooftop billboard + helipad (round-3 polish) ----
+  // The tallest downtown tower gets a lit billboard (weighted copy from
+  // CONFIG.billboards) and a helipad circle with an H on its roof.
+  if (tallestDowntown) {
+    const { x: tx, z: tz, height: th, w: tw, d: td } = tallestDowntown;
+    const billboardText = rng.weightedPick
+      ? rng.weightedPick(CONFIG.billboards.map((b) => ({ value: b.text, weight: b.weight })))
+      : rng.pick(CONFIG.billboards).text;
+    const billboardTex = makeCanvasTexture(256, 96, (ctx, w, h) => {
+      ctx.fillStyle = '#14202e';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#ffd94a';
+      ctx.lineWidth = 5;
+      ctx.strokeRect(4, 4, w - 8, h - 8);
+      ctx.fillStyle = '#ffd94a';
+      ctx.font = 'bold 40px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(billboardText, w / 2, h / 2 + 2);
+    });
+    const billboard = new THREE.Mesh(
+      new THREE.PlaneGeometry(Math.min(20, tw * 0.8), 7),
+      new THREE.MeshBasicMaterial({ map: billboardTex }),
+    );
+    billboard.position.set(tx, th + 5.5, tz - td / 2 - 0.4);
+    billboard.rotation.y = Math.PI;
+    scene.add(billboard);
+    // Helipad: dark circle + white H bars on the roof.
+    const pad = new THREE.Mesh(
+      new THREE.CircleGeometry(Math.min(tw, td) * 0.32, 24),
+      new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: 1 }),
+    );
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(tx, th + 0.65, tz);
+    pad.receiveShadow = true;
+    scene.add(pad);
+    const matH = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const hLen = Math.min(tw, td) * 0.32;
+    for (const [hx, hz, hw, hd] of [
+      [-hLen * 0.45, 0, 0.5, hLen], [hLen * 0.45, 0, 0.5, hLen], [0, 0, hLen * 1.1, 0.5],
+    ]) {
+      const bar = new THREE.Mesh(new THREE.PlaneGeometry(hw, hd), matH);
+      bar.rotation.x = -Math.PI / 2;
+      bar.position.set(tx + hx, th + 0.68, tz + hz);
+      scene.add(bar);
     }
   }
 
   // ---- Street props ----
   // Lamps along every road, palms along the beachfront, benches + hydrants.
+  // Round-3 polish: every fourth lamp gets a soft glow halo (a sprite
+  // from render.js's makeGlowTexture) so the street reads as lit.
+  const lampGlowTex = makeGlowTexture('rgba(255,223,128,0.85)');
+  let lampCount = 0;
   function addLamp(x, z) {
     const g = new THREE.Group();
     g.position.set(x, 0, z);
@@ -409,6 +534,15 @@ export function buildWorld(scene, seedOrRng) {
     addBox(matPole, 0.22, 5.2, 0.22, 0, 2.6, 0, g);
     addBox(matPole, 1.4, 0.18, 0.18, 0.6, 5.1, 0, g);
     addBox(matLamp, 0.9, 0.3, 0.5, 1.2, 5.0, 0, g);
+    lampCount += 1;
+    if (lampCount % 4 === 0) {
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: lampGlowTex, transparent: true, depthWrite: false, opacity: 0.55,
+      }));
+      halo.scale.setScalar(3.5);
+      halo.position.set(1.2, 5.0, 0);
+      g.add(halo);
+    }
   }
   function addPalm(x, z, scale) {
     const g = new THREE.Group();
@@ -480,6 +614,51 @@ export function buildWorld(scene, seedOrRng) {
     addBench(rng.range(-280, 280), CONFIG.beachStartZ - 6, 0);
     addHydrant(rng.range(-280, 280), rng.pick(lines) + roadW / 2 + 2);
   }
+  // Round-3 polish: beach umbrellas + sun loungers on the sand, and small
+  // moored boats between the marina piers.
+  function addUmbrella(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    scene.add(g);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 6), matPole);
+    pole.position.y = 1.2;
+    pole.castShadow = true;
+    g.add(pole);
+    const canopy = new THREE.Mesh(
+      new THREE.ConeGeometry(1.7, 0.7, 8),
+      new THREE.MeshStandardMaterial({ color: rng.pick(CONFIG.beachUmbrellaPalette), roughness: 0.9 }),
+    );
+    canopy.position.y = 2.6;
+    canopy.castShadow = true;
+    g.add(canopy);
+    addBox(matBench, 1.9, 0.3, 0.8, 1.6, 0.25, 0.4, g);
+  }
+  for (let i = 0; i < 10; i++) {
+    addUmbrella(rng.range(-280, 280), rng.range(CONFIG.beachStartZ + 3, CONFIG.seaStartZ - 3));
+  }
+  function addBoat(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.15, z);
+    g.rotation.y = rng.range(-0.3, 0.3);
+    scene.add(g);
+    const hull = new THREE.Mesh(
+      new THREE.BoxGeometry(2.2, 0.9, 5),
+      new THREE.MeshStandardMaterial({ color: rng.pick(CONFIG.boatPalette), roughness: 0.6 }),
+    );
+    hull.position.y = 0.3;
+    hull.castShadow = true;
+    g.add(hull);
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 4.2, 6), matPole);
+    mast.position.y = 2.4;
+    g.add(mast);
+    const sail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 2.6, 1.9),
+      new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.9 }),
+    );
+    sail.position.set(0, 2.6, 0.4);
+    g.add(sail);
+  }
+  for (const bx of [211, 253, 295]) addBoat(bx, -240 + rng.range(-8, 8));
   // Parks (round-2 polish): the blocks the rng left as gaps get grass
   // patches, a round tree and sometimes a bench.
   for (const gap of parkGaps) {
@@ -499,6 +678,9 @@ export function buildWorld(scene, seedOrRng) {
   }
 
   // ---- Sky: sun disc + clouds ----
+  // Round-3 polish: clouds drift slowly eastward and wrap at the sky-dome
+  // edge; main.js calls updateClouds(dt) every frame.
+  const clouds = [];
   const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(18, 16, 16), matSun);
   sunMesh.position.set(420, 520, 210);
   scene.add(sunMesh);
@@ -515,6 +697,13 @@ export function buildWorld(scene, seedOrRng) {
       s.scale.y = 0.45;
       s.position.set(rng.range(-16, 16), rng.range(-2, 2), rng.range(-8, 8));
       g.add(s);
+    }
+    clouds.push({ group: g, speed: CONFIG.clouds.driftSpeed * rng.range(0.7, 1.3) });
+  }
+  function updateClouds(dt) {
+    for (const c of clouds) {
+      c.group.position.x += c.speed * (dt || 0);
+      if (c.group.position.x > CONFIG.clouds.wrapAt) c.group.position.x = -CONFIG.clouds.wrapAt;
     }
   }
 
@@ -565,6 +754,10 @@ export function buildWorld(scene, seedOrRng) {
     roads,
     buildings,
     sky, // gradient sky dome with setPalette(top, horizon)
+    trafficLights, // round 3: { x, z, phaseOffset, state, ...mats }
+    clouds, // round 3: [{ group, speed }] — drifted by updateClouds(dt)
+    updateClouds,
+    updateTrafficLights,
     districts: CONFIG.districts,
     citySize: CONFIG.citySize,
     halfCity: half,

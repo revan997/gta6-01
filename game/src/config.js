@@ -71,6 +71,43 @@ export const CONFIG = {
     shadowFrustum: 120, // half-extent (metres) of the shadow camera box
   },
 
+  // ---- Round-3 polish: traffic lights, billboards, neon, beach, boats ----
+  // Traffic lights cycle green -> amber -> red on a fixed game-time loop;
+  // traffic.js reads world.trafficLights and stops cars at red.
+  trafficLights: {
+    greenSeconds: 8,
+    amberSeconds: 2,
+    redSeconds: 8,
+    stopDistance: 14, // metres ahead of the light where a car must stop
+  },
+  // Rooftop billboard copy (weighted: the city name shows most often).
+  billboards: [
+    { text: 'SOLMAR BAY', weight: 4 },
+    { text: "MAMA LOU'S", weight: 2 },
+    { text: 'PALMS HOTEL', weight: 2 },
+    { text: 'HARBOUR', weight: 1 },
+    { text: 'DANTE AUTO', weight: 1 },
+  ],
+  neonPalette: [0xff2a6d, 0x05d9e8, 0xffd319, 0x39ff6a, 0xb537f2],
+  beachUmbrellaPalette: [0xe74c3c, 0xf39c12, 0x2ecc71, 0x3498db, 0xe67e22],
+  boatPalette: [0xe8e8e8, 0x2e86c1, 0xc0392b, 0xf39c12],
+  // Drifting clouds: slow eastward drift, wrapping at the sky-dome edge.
+  clouds: {
+    driftSpeed: 1.6, // metres per game-second
+    wrapAt: 520, // x beyond which a cloud re-enters from the west
+  },
+  // Driving feel (round 3): camera FOV kicks up at speed, brake lights
+  // flare, and a hard handbrake turn at speed counts as a skid (screech).
+  drivingFeel: {
+    fovBase: 62,
+    fovKick: 8, // extra degrees at top speed
+    skidSpeed: 18, // m/s above which a handbrake turn skids
+    screechCooldown: 0.9, // seconds between skid sounds
+  },
+  // Mission par times (seconds): finish under par for a $100 bonus.
+  missionPar: { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300 },
+  parBonus: 100,
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

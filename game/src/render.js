@@ -19,6 +19,21 @@ export function makeCanvasTexture(width, height, draw) {
   return tex;
 }
 
+// Round-3 polish: a soft radial glow sprite (bright centre fading to
+// transparent), for lamp halos and muzzle/impact flashes. `color` is a
+// CSS colour; `inner`/`outer` are 0..1 stops of the gradient.
+export function makeGlowTexture(color, inner = 0.15, outer = 1) {
+  const tex = makeCanvasTexture(128, 128, (ctx, w, h) => {
+    const grad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    grad.addColorStop(0, color);
+    grad.addColorStop(inner, color);
+    grad.addColorStop(outer, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  });
+  return tex;
+}
+
 // Create the renderer for `canvas`, a perspective camera, and the lights.
 // Returns { renderer, camera, sunLight, hemiLight, resize, setSize }.
 // The caller owns the render loop; resize() is also bound to window resize.

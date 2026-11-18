@@ -55,6 +55,16 @@ export const CRIME_HEAT = {
   assaultPolice: 1,
 };
 
+// Round-3 polish: police radio chatter — a dispatch line per wanted
+// level, shown by the game loop when the heat rises.
+const RADIO_LINES = {
+  1: 'Dispatch: petty theft reported — one unit, respond.',
+  2: 'Dispatch: suspect is fleeing. All units in the area, converge.',
+  3: 'Dispatch: three stars. Suspect is armed and mobile — do not let him reach the marina.',
+  4: 'Dispatch: four stars! Roadblocks up — harbour and docks covered.',
+  5: 'Dispatch: five stars. Full city response — bring Rico Vega in.',
+};
+
 function makePoliceCar(spec, rng) {
   return {
     kind: 'police-car',
@@ -123,6 +133,24 @@ export class PoliceSystem {
   getOfficers() { return this.officers; }
   // Flat list of every police unit (cars + officers) for the minimap.
   getUnits() { return [...this.policeCars, ...this.officers]; }
+
+  // The dispatch line for a wanted level (round 3).
+  radioLine(level) {
+    const n = Math.max(1, Math.min(5, Math.round(level) || 1));
+    return RADIO_LINES[n] || RADIO_LINES[1];
+  }
+
+  // Distance to the nearest police unit, or Infinity when none is out.
+  // The game loop scales the siren volume with it (round 3).
+  nearestUnitDistance(player) {
+    if (!player?.position) return Infinity;
+    let best = Infinity;
+    for (const unit of this.getUnits()) {
+      if (!unit?.position) continue;
+      best = Math.min(best, dist2D(unit.position, player.position));
+    }
+    return best;
+  }
 
   _emit(name, payload) {
     const fn = this.events[name];

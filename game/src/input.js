@@ -78,6 +78,13 @@ function isDown(code) {
   return false;
 }
 
+// Round-3 polish: true when ANY of the given codes is held. The game
+// loop uses it to tell throttle input apart from coasting (FOV kick).
+function isDownAny(...codes) {
+  for (const code of codes) if (isDown(code)) return true;
+  return false;
+}
+
 // Movement helpers used by the player / vehicle update.
 // Forward is W / ArrowUp, back is S / ArrowDown, left A, right D.
 function moveVector() {
@@ -113,6 +120,7 @@ export const input = {
   requestPointerLock,
   exitPointerLock,
   isDown,
+  isDownAny,
   moveVector,
   consumeMouseDelta,
   consumePressed,

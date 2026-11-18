@@ -34,6 +34,23 @@ export function createRng(seed) {
     return array[Math.floor(next() * array.length)];
   }
 
+  // Weighted pick: `pairs` is [{ value, weight }] (or [value, weight]
+  // tuples); heavier weights are picked more often. Round 3 uses it for
+  // billboard copy so the city name shows most often.
+  function weightedPick(pairs) {
+    if (!pairs || pairs.length === 0) return undefined;
+    let total = 0;
+    for (const p of pairs) total += (Array.isArray(p) ? p[1] : p.weight) || 0;
+    if (total <= 0) return pick(pairs);
+    let roll = next() * total;
+    for (const p of pairs) {
+      roll -= (Array.isArray(p) ? p[1] : p.weight) || 0;
+      if (roll <= 0) return Array.isArray(p) ? p[0] : p.value;
+    }
+    const last = pairs[pairs.length - 1];
+    return Array.isArray(last) ? last[0] : last.value;
+  }
+
   // True with probability p (0..1).
   function chance(p) {
     return next() < p;
@@ -76,7 +93,7 @@ export function createRng(seed) {
     return out;
   }
 
-  return { next, range, int, pick, chance, noise2, shuffle, seed: seed >>> 0 };
+  return { next, range, int, pick, weightedPick, chance, noise2, shuffle, seed: seed >>> 0 };
 }
 
 export default createRng;

@@ -16,7 +16,7 @@
 //
 //   MAKEFUN_OUTPUT_DIR=/path/to/out node main.ts
 //   node main.ts   (defaults to /output)
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -38,10 +38,17 @@ if (!existsSync(gameFavicon)) {
   throw new Error(`missing input: game/favicon.ico not found at ${gameFavicon}`);
 }
 const gameSrc = join(gameDir, 'src');
-const hasJs = existsSync(gameSrc)
-  && readdirSync(gameSrc).some((name) => name.endsWith('.js'));
-if (!hasJs) {
+const gameJsFiles = existsSync(gameSrc)
+  ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
+  : [];
+if (gameJsFiles.length === 0) {
   throw new Error(`missing input: no .js file found in ${gameSrc}`);
+}
+// Round 3: the game ships 15 source modules; fewer than 10 means the
+// copy is incomplete (a partial tree would still pass the single-file
+// check above and fail later, at the intake check, instead of here).
+if (gameJsFiles.length < 10) {
+  throw new Error(`missing input: only ${gameJsFiles.length} .js files in ${gameSrc} (expected at least 10)`);
 }
 const screenshotsDir = join(repoRoot, 'screenshots');
 if (!existsSync(screenshotsDir)) {
@@ -74,3 +81,21 @@ const dossier = buildDossier(outDir, {
 });
 writeFileSync(join(outDir, 'dossier.json'), dossier);
 console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
+// Round 3: print what was copied, so a bad copy is visible at a glance
+// (file count + total bytes of the game tree that was just assembled).
+{
+  let files = 0;
+  let bytes = 0;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else if (entry.isFile()) {
+        files += 1;
+        bytes += statSync(p).size;
+      }
+    }
+  };
+  walk(join(outDir, 'game'));
+  console.log(`game tree: ${files} files, ${bytes} bytes (${gameJsFiles.length} .js modules)`);
+}

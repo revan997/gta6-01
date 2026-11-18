@@ -48,6 +48,7 @@ export class HUD {
       message: 'hud-message',
       ammo: 'hud-ammo',
       minimap: 'hud-minimap',
+      district: 'hud-district', // round 3: current district under the clock
       ...(options.ids || {}),
     };
     this.elements = options.elements || {};
@@ -55,6 +56,8 @@ export class HUD {
     this.mapRange = options.mapRange ?? 220; // world metres shown across the map
     this._lastMessage = '';
     this._messageTimer = 0;
+    this._lastWanted = 0; // round 3: flash the stars when the heat rises
+    this._wantedFlashTimer = 0;
   }
 
   _el(name) {
@@ -90,7 +93,17 @@ export class HUD {
       starsEl.style.color = wanted > 0 ? '#ffcf3f' : '#9aa0a6';
       // Pulse hook: the stylesheet animates .hot while any heat is on.
       if (starsEl.classList) starsEl.classList.toggle('hot', wanted > 0);
+      // Round 3: a red flash when the heat rises (a new star appears).
+      if (wanted > this._lastWanted) this._wantedFlashTimer = 0.6;
+      if (this._wantedFlashTimer > 0) {
+        this._wantedFlashTimer -= dt;
+        if (starsEl.classList) starsEl.classList.toggle('flash', this._wantedFlashTimer > 0);
+      }
     }
+    this._lastWanted = wanted;
+
+    // --- District label (round 3): where Rico is standing right now. ---
+    this._setText('district', state.district || '');
 
     // --- Health / armour bars. ---
     const maxHealth = state.maxHealth || 100;
@@ -111,6 +124,9 @@ export class HUD {
     this._setText('money', formatMoney(state.money));
     const kmh = Math.round(Math.abs(state.speed ?? 0) * 3.6);
     this._setText('speed', String(kmh) + ' km/h');
+    // Round 3: the speedo warms up with speed — white, then gold, then red.
+    const speedEl = this._el('speed');
+    if (speedEl) speedEl.style.color = kmh >= 100 ? '#ff6b5e' : kmh >= 60 ? '#ffd94a' : '#ffffff';
     if (state.mag !== undefined || state.ammo !== undefined) {
       this._setText('ammo', (state.mag ?? '–') + ' / ' + (state.ammo ?? '–'));
     }

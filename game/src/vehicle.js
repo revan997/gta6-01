@@ -109,7 +109,7 @@ function buildCarMesh(model, color) {
     wheels.push(wheel);
   }
 
-  return { group, wheels, shape };
+  return { group, wheels, shape, tailMat: matTail };
 }
 
 // Create one car in `scene`.
@@ -118,7 +118,7 @@ function buildCarMesh(model, color) {
 export function createCar(scene, model, color, x, z, heading) {
   const name = VEHICLE_MODELS.includes(model) ? model : 'sedan';
   const tune = CONFIG.vehicleModels[name] || CONFIG.vehicleModels.sedan;
-  const { group, wheels, shape } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
+  const { group, wheels, shape, tailMat } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
   group.position.set(x || 0, 0, z || 0);
   scene.add(group);
 
@@ -132,6 +132,9 @@ export function createCar(scene, model, color, x, z, heading) {
     speed: 0, // signed m/s, forward positive
     driver: null,
     wheels,
+    tailMat, // round 3: brake lights flare by setting its emissiveIntensity
+    braking: false, // round 3: true while the brakes are on
+    skidding: false, // round 3: true on a hard handbrake turn at speed
     length: shape.length,
     width: shape.width,
     topSpeed: CONFIG.vehicle.maxSpeed * tune.topSpeed,
@@ -188,6 +191,14 @@ export function createCar(scene, model, color, x, z, heading) {
       const grip = handbrake ? CONFIG.vehicle.handbrakeGripLoss : 1;
       this.heading += steer * steerAuthority * Math.sign(this.speed) * grip * safeDt * (2.2 - speedRatio);
       if (handbrake) this.speed *= (1 - 0.9 * safeDt);
+
+      // Round-3 polish: brake lights flare while braking, and a hard
+      // handbrake turn at speed counts as a skid (main.js plays the
+      // screech from the `skidding` flag).
+      this.braking = brake || (throttle < 0 && this.speed > 0.5);
+      if (this.tailMat) this.tailMat.emissiveIntensity = this.braking ? 2.6 : 0.7;
+      this.skidding = Boolean(handbrake && steer !== 0
+        && Math.abs(this.speed) > (CONFIG.drivingFeel?.skidSpeed ?? 18));
 
       const nx = this.position.x + Math.sin(this.heading) * this.speed * safeDt;
       const nz = this.position.z + Math.cos(this.heading) * this.speed * safeDt;

@@ -1,15 +1,21 @@
 // A tiny static server for game/ (Node 22, standard library only), so an entry can be played
 // locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
-// `node serve.ts --port 9000 --host 127.0.0.1` changes the port/host. HEAD requests are
-// answered with headers only (no body). It sends the MIME types a browser game needs,
-// refuses any path outside game/, and otherwise does nothing clever: this is a
-// development convenience, not a web server for the internet.
+// `node serve.ts --port 9000 --host 127.0.0.1` changes the port/host.
+// `node serve.ts --root ../other-game` serves a different directory instead
+// of game/ (round 3: handy when comparing two builds side by side).
+// HEAD requests are answered with headers only (no body). It sends the MIME
+// types a browser game needs, refuses any path outside the served root, and
+// otherwise does nothing clever: this is a development convenience, not a
+// web server for the internet.
 import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const rootArgIndex = process.argv.indexOf('--root');
+const root = rootArgIndex === -1
+  ? resolve(fileURLToPath(new URL('./game', import.meta.url)))
+  : resolve(process.argv[rootArgIndex + 1] || './game');
 const args = process.argv.slice(2);
 const portIndex = args.indexOf('--port');
 const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);

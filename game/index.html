@@ -25,6 +25,11 @@
   /* Round-2 polish: the stars pulse while the heat is on (hud.js toggles .hot). */
   #wanted-stars.hot { animation: starpulse 0.9s ease-in-out infinite; }
   @keyframes starpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+  /* Round-3 polish: the stars flash red when the heat rises (hud.js toggles .flash). */
+  #wanted-stars.flash { animation: starflash 0.6s ease-out; }
+  @keyframes starflash { 0% { color: #ff3b30; transform: scale(1.25); } 100% { color: #ffd94a; transform: scale(1); } }
+  #hud-district { position: absolute; top: 42px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; letter-spacing: 3px; opacity: 0.85; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
   #wanted-stars .off { color: rgba(255,255,255,0.28); }
   #health-wrap { position: absolute; right: 16px; top: 58px; width: 190px; text-align: right; }
   #health-wrap .label, #money .label { font-size: 11px; letter-spacing: 2px; opacity: 0.85; }
@@ -97,9 +102,10 @@
   <div id="hud-ammo"></div>
   <div id="objective"><div class="obj-title" id="mission-name"></div><div class="obj-title">OBJECTIVE</div><span id="objective-text">Explore Solmar Bay.</span></div>
   <div id="clock"><span id="clock-time">12:00</span> <span class="day" id="clock-day">Day 1</span></div>
+  <div id="hud-district"></div>
   <div id="message"></div>
   <div id="crosshair" class="hidden"></div>
-  <div id="controls-hint">WASD move &middot; SHIFT run &middot; SPACE jump / handbrake<br>E enter / exit car &middot; F punch / shoot &middot; H horn (in car) &middot; P pause &middot; M mute</div>
+  <div id="controls-hint">WASD move &middot; SHIFT run &middot; SPACE jump / handbrake<br>E enter / exit car &middot; F punch / shoot &middot; H horn (in car) &middot; C camera &middot; P pause &middot; M mute</div>
 </div>
 
 <!-- Start screen -->
@@ -108,7 +114,7 @@
   <p class="subtitle">Rico Vega is back in the city that raised him. Drive it, walk it,
     outrun the law — and make the Bay yours.</p>
   <p class="keys">WASD — move / drive &nbsp;&middot;&nbsp; SHIFT — run &nbsp;&middot;&nbsp; SPACE — jump / handbrake<br>
-    E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
+    E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; C — camera &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
   <button id="start-button" type="button">START</button>
 </div>
 

@@ -6,10 +6,11 @@
 // instead of crashing on an old save.
 
 export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 2;
-// Version 1 saves are still readable: they migrate with the v2 fields
-// (playTimeSeconds, timesPlayed) defaulting to 0.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2];
+export const SAVE_VERSION = 3;
+// Version 1 and 2 saves are still readable: they migrate with the v2
+// fields (playTimeSeconds, timesPlayed) and the v3 field (totalEarned)
+// defaulting to 0.
+export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3];
 
 function safeParse(text) {
   try {
@@ -56,7 +57,7 @@ export class SaveSystem {
   // fields are persisted; anything else is ignored.
   //   { money, completedMissions, currentMission, position: {x,y,z},
   //     heading, wanted, health, armour, ammo, timeOfDay,
-  //     playTimeSeconds, timesPlayed }
+  //     playTimeSeconds, timesPlayed, totalEarned }
   save(state = {}) {
     const store = this._store();
     if (!store) return false;
@@ -78,6 +79,8 @@ export class SaveSystem {
       timeOfDay: state.timeOfDay ?? null,
       playTimeSeconds: Math.max(0, Math.round(state.playTimeSeconds ?? state.player?.playTimeSeconds ?? 0)),
       timesPlayed: Math.max(0, Math.round(state.timesPlayed ?? 0)),
+      // Round 3: lifetime cash earned across all missions on this profile.
+      totalEarned: Math.max(0, Math.round(state.totalEarned ?? 0)),
     };
     try {
       store.setItem(this.key, JSON.stringify(data));
@@ -100,7 +103,7 @@ export class SaveSystem {
     }
     if (!raw) return null;
     const data = safeParse(raw);
-    // Accept v1 and v2; a v1 save migrates with the new fields as 0.
+    // Accept v1, v2 and v3; older saves migrate with the new fields as 0.
     if (!isPlainObject(data) || !SUPPORTED_SAVE_VERSIONS.includes(data.version)) return null;
     return {
       version: data.version,
@@ -119,6 +122,7 @@ export class SaveSystem {
       timeOfDay: typeof data.timeOfDay === 'number' ? data.timeOfDay : null,
       playTimeSeconds: typeof data.playTimeSeconds === 'number' ? Math.max(0, data.playTimeSeconds) : 0,
       timesPlayed: typeof data.timesPlayed === 'number' ? Math.max(0, data.timesPlayed) : 0,
+      totalEarned: typeof data.totalEarned === 'number' ? Math.max(0, data.totalEarned) : 0,
     };
   }
 

@@ -165,6 +165,15 @@ export function createPlayer(scene, world, spawn) {
       armR.rotation.x = swing * 0.8;
       torso.position.y = 1.12 + (this.speed > 0.2 ? Math.abs(Math.cos(this.walkPhase)) * 0.04 : 0);
 
+      // Round-3 polish: Rico leans into turns and hunches forward when
+      // sprinting, so on-foot movement reads as running, not gliding.
+      const turnRate = (this.heading - (this._prevHeading ?? this.heading)) / Math.max(safeDt, 0.001);
+      this._prevHeading = this.heading;
+      const targetLean = Math.max(-0.22, Math.min(0.22, -turnRate * 0.03));
+      this.leanZ = (this.leanZ ?? 0) + (targetLean - (this.leanZ ?? 0)) * Math.min(1, safeDt * 10);
+      torso.rotation.z = this.leanZ;
+      torso.rotation.x = running ? 0.12 : 0;
+
       group.rotation.y = this.heading;
     },
 

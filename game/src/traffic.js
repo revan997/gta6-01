@@ -7,6 +7,8 @@
 //   world  — roads / spawn points / nearest-road queries
 //   car    — { position, heading, speed, model, colour, setDriver, update }
 //   player — { position, heading, health, inCar, vehicle }
+// Round 3: cars stop at red traffic lights (world.trafficLights).
+import { CONFIG } from './config.js';
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -55,6 +57,10 @@ const CAR_MODELS = [
   { model: 'Palm Coupe', colour: '#16a085' },
   { model: 'Dune Pickup', colour: '#a04000' },
   { model: 'City Bus', colour: '#2471a3' },
+  // Round-3 additions: a beach buggy, a food truck and a long limo.
+  { model: 'Beach Buggy', colour: '#f1c40f' },
+  { model: 'Food Truck', colour: '#e67e22' },
+  { model: 'Solmar Limo', colour: '#1a1a1a' },
 ];
 
 const PED_SHIRTS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
@@ -401,6 +407,20 @@ export class TrafficManager {
       car.stopped = false;
       const aheadX = car.position.x + Math.sin(car.heading) * 7;
       const aheadZ = car.position.z + Math.cos(car.heading) * 7;
+      // Round-3 polish: stop at a red traffic light ahead. The light sits
+      // on the intersection corner, so a car on either approach road
+      // passes within ~10 m of it; the light cycles, so the wait is short.
+      if (world && Array.isArray(world.trafficLights)) {
+        const stopD = CONFIG.trafficLights?.stopDistance ?? 14;
+        for (const light of world.trafficLights) {
+          if (light.state !== 'red') continue;
+          const dx = light.x - car.position.x;
+          const dz = light.z - car.position.z;
+          const along = Math.sin(car.heading) * dx + Math.cos(car.heading) * dz;
+          const side = Math.abs(Math.cos(car.heading) * dx - Math.sin(car.heading) * dz);
+          if (along > 0 && along < stopD && side < 12) { car.stopped = true; break; }
+        }
+      }
       for (const other of this.cars) {
         if (other === car || other.driver === 'player') continue;
         const d = dist2D({ x: aheadX, z: aheadZ }, other.position);

@@ -66,6 +66,7 @@ export class CombatSystem {
     this.muzzleTimer = 0;
     this.muzzlePosition = null;
     this.lastTracer = null; // { from, to, timer } for the last shot — see shoot()
+    this.lastImpact = null; // { position, timer } for the last hit — the game loop flashes it
     this.lastHit = null; // { target, damage, killed } for the HUD / log
     this.isDown = false;
   }
@@ -87,6 +88,17 @@ export class CombatSystem {
     const tracer = this.lastTracer;
     this.lastTracer = null;
     return tracer;
+  }
+
+  // The impact flash from the last hit, or null. The game loop polls
+  // this to draw a brief orange flash at the hit point (round 3).
+  getImpact() { return this.lastImpact; }
+
+  // Return the last impact once, then clear it.
+  consumeImpact() {
+    const impact = this.lastImpact;
+    this.lastImpact = null;
+    return impact;
   }
 
   selectWeapon(name) {
@@ -278,6 +290,8 @@ export class CombatSystem {
     const moved = Math.min(needed, this.ammo);
     this.mag += moved;
     this.ammo -= moved;
+    // Round 3: the reload has a sound (two metallic clicks).
+    this.hooks.audio?.playReload?.();
     return true;
   }
 
@@ -300,6 +314,17 @@ export class CombatSystem {
       // Killing is a heavier crime than merely hitting.
       this.hooks.police?.reportCrime?.('kill');
       if (target.kind === 'pedestrian') this.hooks.traffic?.removePedestrian?.(target);
+    }
+    // Round 3: record the hit point so the game loop can flash it.
+    if (target?.position) {
+      this.lastImpact = {
+        position: {
+          x: target.position.x,
+          y: (target.position.y || 0) + 1.1,
+          z: target.position.z,
+        },
+        timer: 0.12,
+      };
     }
     this.lastHit = result;
     return result;
@@ -334,6 +359,7 @@ export class CombatSystem {
     this.isDown = false;
     this.lastHit = null;
     this.lastTracer = null;
+    this.lastImpact = null;
   }
 }
 

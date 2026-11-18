@@ -133,6 +133,11 @@ export class MissionManager {
     this.rng = normaliseRng(options.rng, options.seed ?? 777);
     this.events = options.events || {}; // { onMissionStart, onObjective, onComplete, onFail }
     this.locations = { ...DEFAULT_LOCATIONS, ...(options.locations || {}) };
+    // Round-3 polish: par times (seconds per mission) and the under-par
+    // bonus. main.js passes CONFIG.missionPar / CONFIG.parBonus; the
+    // defaults keep the chain playable standalone.
+    this.parSeconds = options.parSeconds || { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300 };
+    this.parBonus = options.parBonus ?? 100;
     this.completed = new Set(options.completed || []);
     this.current = null; // active mission runtime state
     this.lastReward = 0;
@@ -259,6 +264,18 @@ export class MissionManager {
   getCompletedMissions() { return [...this.completed].sort((a, b) => a - b); }
   hasCompleted(number) { return this.completed.has(number); }
 
+  // Round-3 polish: seconds left on the current mission's par time, or
+  // null when no mission is active or it has no par. The HUD shows it.
+  getParRemaining() {
+    if (!this.current) return null;
+    const par = this.parSeconds[this.current.number];
+    if (!par) return null;
+    return Math.max(0, par - this.current.elapsed);
+  }
+  getParSeconds() {
+    return this.current ? (this.parSeconds[this.current.number] ?? null) : null;
+  }
+
   _advance(world, systems) {
     const def = this.getMissionDef(this.current.number);
     this.current.objectiveIndex += 1;
@@ -289,10 +306,19 @@ export class MissionManager {
     this.lastReward = def.reward;
     this.lastCompletedMission = def.number;
     if (typeof systems.addMoney === 'function') systems.addMoney(def.reward);
+    // Round-3 polish: finish under par and the bonus lands with the reward.
+    const par = this.parSeconds[def.number];
+    const underPar = Boolean(par && this.current.elapsed <= par);
+    let parBonus = 0;
+    if (underPar) {
+      parBonus = this.parBonus;
+      this.lastReward += parBonus;
+      if (typeof systems.addMoney === 'function') systems.addMoney(parBonus);
+    }
     if (typeof def.onComplete === 'function') {
       def.onComplete({ police: systems.police, traffic: systems.traffic, world });
     }
-    this._emit('onComplete', { number: def.number, name: def.name, reward: def.reward });
+    this._emit('onComplete', { number: def.number, name: def.name, reward: this.lastReward, parBonus });
     if (systems.audio?.playMissionComplete) systems.audio.playMissionComplete();
     this.current = null;
   }

@@ -98,7 +98,7 @@ export class AudioEngine {
     osc.stop(t0 + duration + 0.05);
   }
 
-  _noise(duration, volume = 0.5, filterFreq = 1200, when = 0) {
+  _noise(duration, volume = 0.5, filterFreq = 1200, when = 0, filterType = 'lowpass') {
     if (!this.ensureContext()) return;
     const t0 = this.ctx.currentTime + when;
     const len = Math.max(1, Math.floor(this.ctx.sampleRate * duration));
@@ -116,7 +116,7 @@ export class AudioEngine {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
+    filter.type = filterType;
     filter.frequency.value = filterFreq;
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(volume, t0);
@@ -224,6 +224,15 @@ export class AudioEngine {
     this.sirenGain = null;
   }
 
+  // Round-3 polish: the siren gets louder as the nearest police unit
+  // closes in. `v` is 0..1 (1 = right on top of the player); the game
+  // loop derives it from police.nearestUnitDistance().
+  setSirenVolume(v) {
+    if (!this.sirenOn || !this.sirenGain || !this.ctx) return;
+    const level = 0.02 + 0.09 * clamp(v, 0, 1);
+    this.sirenGain.gain.setTargetAtTime(level, this.ctx.currentTime, 0.2);
+  }
+
   // ---- one-shots ----
 
   playGunshot() {
@@ -267,6 +276,22 @@ export class AudioEngine {
   playDoorSlam() {
     this._noise(0.12, 0.6, 300);
     this._blip(90, 0.14, 'sine', 0.5, 0, 45);
+  }
+
+  // Round-3 polish: reload clicks (two metallic taps), tyre screech for
+  // a handbrake skid, and a soft footstep thud for Rico's walk cycle.
+  playReload() {
+    this._blip(1250, 0.05, 'square', 0.25);
+    this._blip(820, 0.06, 'square', 0.25, 0.08);
+  }
+
+  playSkid() {
+    this._noise(0.28, 0.3, 900, 0, 'bandpass');
+  }
+
+  playStep() {
+    this._noise(0.05, 0.14, 250);
+    this._blip(70, 0.06, 'sine', 0.22, 0, 50);
   }
 
   // ---- ambient music loop: soft plucked chords, one bar every 1.6 s ----

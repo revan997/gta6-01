@@ -86,6 +86,10 @@ function laneAModel(name) {
   if (n.includes('pickup')) return 'pickup';
   if (n.includes('van') || n.includes('bus')) return 'van';
   if (n.includes('sports')) return 'sports';
+  // Round-3 models: the food truck is a boxy van, the beach buggy is a
+  // low fun car, the limo rides on the sedan.
+  if (n.includes('truck')) return 'van';
+  if (n.includes('buggy')) return 'sports';
   return 'sedan';
 }
 function makeCar(spec) {
@@ -125,11 +129,17 @@ const police = new PoliceSystem({
       if (on) audio.startSiren();
       else audio.stopSiren();
     },
+    // Round-3 polish: police radio chatter when the heat rises.
+    onWantedChange: ({ wanted }) => {
+      if (wanted > 0) showMessage(police.radioLine(wanted), 5);
+    },
   },
 });
 const missions = new MissionManager({
   rng,
   locations: world.locations,
+  parSeconds: CONFIG.missionPar, // round 3: under-par bonus times
+  parBonus: CONFIG.parBonus,
   events: {
     onMissionStart: ({ name }) => {
       // The briefing is long; the HUD already shows the objective, so the
@@ -176,15 +186,20 @@ const save = new SaveSystem();
 // ---- game state ---------------------------------------------------------
 let state = 'menu'; // menu | playing | paused | busted | wasted | mission-complete
 let money = 250;
+let totalEarned = 0; // round 3: lifetime cash earned, persisted by save v3
 let timeOfDay = 12; // hours 0-24
 let playTimeSeconds = 0; // accumulated in update(); persisted by save v2
 let timesPlayed = 0; // sessions on this profile; persisted by save v2
 let camYaw = player.heading + Math.PI;
 let camPitch = 0;
+let camFar = false; // round 3: C toggles the chase camera near / far
 let orbitAngle = 0.6;
 let messageText = '';
 let muzzleTimer = 0;
+let impactTimer = 0; // round 3: hit-impact flash lifetime
 let lastMouseMoveAt = 0;
+let lastSkidAt = 0; // round 3: seconds (performance clock) of the last screech
+let lastStepPhase = 0; // round 3: walk-phase step index of the last footstep
 
 function showMessage(text, seconds) {
   messageText = text || '';
@@ -197,7 +212,7 @@ function systems() {
     traffic,
     combat,
     audio,
-    addMoney: (n) => { money += n; },
+    addMoney: (n) => { money += n; totalEarned += n; },
   };
 }
 
@@ -232,6 +247,15 @@ const muzzle = new THREE.Mesh(
 muzzle.visible = false;
 scene.add(muzzle);
 
+// Round-3 polish: the hit-impact flash — a brief orange burst at the
+// point a shot or punch lands (combat.consumeImpact).
+const impactMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(0.32, 8, 8),
+  new THREE.MeshBasicMaterial({ color: 0xff8c2a, transparent: true, opacity: 0.9 }),
+);
+impactMesh.visible = false;
+scene.add(impactMesh);
+
 // Shot tracer (round-2 polish): a short-lived line from the muzzle to the
 // shot's target, faded out over its 0.09 s lifetime (combat.consumeTracer).
 const tracerGeo = new THREE.BufferGeometry();
@@ -249,6 +273,14 @@ function flashMuzzle(pos) {
   muzzle.scale.setScalar(1.6); // starts big, shrinks as it fades
   muzzle.visible = true;
   muzzleTimer = 0.06;
+}
+
+function flashImpact(pos) {
+  if (!pos) return;
+  impactMesh.position.set(pos.x, pos.y, pos.z);
+  impactMesh.scale.setScalar(1.8);
+  impactMesh.visible = true;
+  impactTimer = 0.12;
 }
 
 function makePersonMesh(shirtColor) {
@@ -328,6 +360,7 @@ function startPlaying() {
       timeOfDay = loaded.timeOfDay ?? timeOfDay;
       playTimeSeconds = loaded.playTimeSeconds || 0;
       timesPlayed = (loaded.timesPlayed || 0) + 1;
+      totalEarned = loaded.totalEarned || 0; // round 3: save v3 field
       for (const n of loaded.completedMissions || []) missions.completed.add(n);
       if (loaded.position) {
         player.teleport(loaded.position.x, loaded.position.z, loaded.heading ?? player.heading);
@@ -395,6 +428,7 @@ function showMissionComplete(name, reward) {
     timeOfDay,
     playTimeSeconds,
     timesPlayed,
+    totalEarned, // round 3: save v3 field
   });
 }
 
@@ -472,8 +506,20 @@ function updateCamera(dt) {
 
   const focus = player.onFoot ? player.position : (player.currentCar ? player.currentCar.position : player.position);
   const driving = !player.onFoot;
-  const dist = driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance;
+  // Round 3: C toggles the chase camera near / far.
+  const dist = (driving ? CONFIG.camera.drivingDistance : CONFIG.camera.onFootDistance) * (camFar ? 1.35 : 1);
   const height = driving ? CONFIG.camera.drivingHeight : CONFIG.camera.onFootHeight;
+  // Round-3 polish: the field of view opens up at speed while the
+  // throttle is held, so fast driving feels fast.
+  const feel = CONFIG.drivingFeel;
+  const speedRatio = driving && player.currentCar
+    ? Math.min(1, Math.abs(player.currentCar.speed || 0) / (player.currentCar.topSpeed || 38)) : 0;
+  const throttling = typeof input.isDownAny === 'function' && input.isDownAny('KeyW', 'ArrowUp');
+  const targetFov = feel.fovBase + (driving && throttling ? feel.fovKick * speedRatio : 0);
+  if (Math.abs(camera.fov - targetFov) > 0.05) {
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 4);
+    camera.updateProjectionMatrix();
+  }
   // Ease the chase camera behind the car when the player is not steering it.
   if (driving && player.currentCar && performance.now() - lastMouseMoveAt > 2500) {
     const want = player.currentCar.heading + Math.PI;
@@ -557,6 +603,14 @@ window.addEventListener('keydown', (event) => {
     else if (state === 'paused') resumeGame();
     return;
   }
+  // Round 3: C toggles the chase camera near / far.
+  if (code === 'KeyC') {
+    if (state === 'playing') {
+      camFar = !camFar;
+      showMessage(camFar ? 'Camera: far.' : 'Camera: near.');
+    }
+    return;
+  }
   if (state !== 'playing') return;
   if (code === 'KeyE') tryEnterExitCar();
   else if (code === 'KeyF') doPunch();
@@ -594,6 +648,11 @@ document.getElementById('mission-continue-button')?.addEventListener('click', ()
 // ---- the frame update, in the specified order ------------------------------
 
 function update(dt) {
+  // Round-3 polish: the living world — clouds drift and traffic lights
+  // cycle in every state (the menu backdrop included).
+  if (typeof world.updateClouds === 'function') world.updateClouds(dt);
+  if (typeof world.updateTrafficLights === 'function') world.updateTrafficLights(dt);
+
   // 1. input — mouse look while playing with pointer lock.
   if (state === 'playing') {
     const { dx, dy } = input.consumeMouseDelta();
@@ -635,6 +694,23 @@ function update(dt) {
     // headless shot, so drag would otherwise bleed it to a crawl).
     if (SHOT === 'play' && SEED !== 2) player.currentCar.speed = 26;
     player.currentCar.update(dt, world, undefined, input);
+  }
+
+  // Round-3 polish: a tyre screech on a hard handbrake skid (throttled),
+  // and a footstep thud each time Rico's walk cycle crosses a step.
+  if (player.currentCar?.skidding) {
+    const nowS = performance.now() / 1000;
+    if (nowS - lastSkidAt > (CONFIG.drivingFeel?.screechCooldown ?? 0.9)) {
+      lastSkidAt = nowS;
+      audio.playSkid();
+    }
+  }
+  if (player.onFoot && player.speed > 0.5) {
+    const stepPhase = Math.floor(player.walkPhase / Math.PI);
+    if (stepPhase !== lastStepPhase) {
+      lastStepPhase = stepPhase;
+      audio.playStep();
+    }
   }
 
   // 3. traffic.
@@ -685,6 +761,14 @@ function update(dt) {
     tracerMat.opacity = Math.max(0, tracerTimer / 0.09);
     if (tracerTimer <= 0) tracerLine.visible = false;
   }
+  // Round-3 polish: the hit-impact flash at the point a shot or punch lands.
+  const impact = combat.consumeImpact();
+  if (impact) flashImpact(impact.position);
+  if (impactTimer > 0) {
+    impactTimer -= dt;
+    impactMesh.scale.setScalar(Math.max(0.3, 1.8 * (impactTimer / 0.12)));
+    if (impactTimer <= 0) impactMesh.visible = false;
+  }
 
   // Busted / wasted can be raised by police or combat during the update.
   if (police.isBusted()) { showBusted(); return; }
@@ -705,6 +789,12 @@ function update(dt) {
   } else {
     beacon.visible = false;
   }
+  // Round-3 polish: the mission name carries the par-time countdown, and
+  // the HUD shows which district Rico is standing in.
+  const mission = missions.getCurrentMission();
+  const parLeft = missions.getParRemaining();
+  const parText = parLeft === null ? ''
+    : ` · PAR ${Math.floor(parLeft / 60)}:${String(Math.floor(parLeft % 60)).padStart(2, '0')}`;
   hud.update({
     dt,
     health: combat.getHealth(),
@@ -714,7 +804,8 @@ function update(dt) {
     wanted: police.getWantedLevel(),
     speed: speedMs,
     objective: missions.getCurrentObjectiveText() || 'Explore Solmar Bay.',
-    missionName: missions.getCurrentMission() ? missions.getCurrentMission().name : '',
+    missionName: mission ? mission.name + parText : '',
+    district: world.districtAt(player.position.x, player.position.z) || '',
     timeOfDay,
     message: messageText || undefined,
     ammo: combat.getAmmo(),
@@ -733,6 +824,11 @@ function update(dt) {
     audio.setEngineSpeed(Math.abs(car.speed || 0), true);
   } else {
     audio.stopEngine();
+  }
+  // Round-3 polish: the siren swells as the nearest police unit closes in.
+  if (police.isSirenOn()) {
+    const d = police.nearestUnitDistance(player);
+    audio.setSirenVolume(1 - Math.min(1, d / 120));
   }
 
   updateCamera(dt);
