@@ -6,10 +6,13 @@
 // deterministic over the copied tree.
 //
 // Validation: before anything is copied (or any previous output cleared),
-// the inputs are checked — game/ and game/index.html must exist, and
-// screenshots/ must exist and hold at least one image file. Any missing
-// input stops the run immediately with an error naming what is missing,
-// instead of failing halfway through with a cryptic copy error.
+// the inputs are checked — game/ and game/index.html must exist, the
+// favicon must exist (browsers request it on every load; a missing one
+// shows up as a console error), game/src/ must hold at least one .js
+// file, and screenshots/ must exist and hold at least one image file.
+// Any missing input stops the run immediately with an error naming what
+// is missing, instead of failing halfway through with a cryptic copy
+// error.
 //
 //   MAKEFUN_OUTPUT_DIR=/path/to/out node main.ts
 //   node main.ts   (defaults to /output)
@@ -29,6 +32,16 @@ if (!existsSync(gameDir)) {
 const gameIndex = join(gameDir, 'index.html');
 if (!existsSync(gameIndex)) {
   throw new Error(`missing input: game/index.html not found at ${gameIndex}`);
+}
+const gameFavicon = join(gameDir, 'favicon.ico');
+if (!existsSync(gameFavicon)) {
+  throw new Error(`missing input: game/favicon.ico not found at ${gameFavicon}`);
+}
+const gameSrc = join(gameDir, 'src');
+const hasJs = existsSync(gameSrc)
+  && readdirSync(gameSrc).some((name) => name.endsWith('.js'));
+if (!hasJs) {
+  throw new Error(`missing input: no .js file found in ${gameSrc}`);
 }
 const screenshotsDir = join(repoRoot, 'screenshots');
 if (!existsSync(screenshotsDir)) {

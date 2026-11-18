@@ -221,7 +221,25 @@ export class MissionManager {
     return obj.text;
   }
 
-  getCurrentObjectiveText() { return this.getCurrentObjective(); }
+  getCurrentObjectiveText() {
+    const text = this.getCurrentObjective();
+    if (!text || !this.current) return text;
+    const def = this.getMissionDef(this.current.number);
+    const total = def ? def.objectives.length : 0;
+    return (this.current.objectiveIndex + 1) + '/' + total + ' · ' + text;
+  }
+
+  // Progress accessor for the HUD: { number, objectiveIndex, objectiveCount }
+  // — all null when no mission is active. objectiveIndex is 0-based.
+  getMissionProgress() {
+    if (!this.current) return { number: null, objectiveIndex: null, objectiveCount: null };
+    const def = this.getMissionDef(this.current.number);
+    return {
+      number: this.current.number,
+      objectiveIndex: this.current.objectiveIndex,
+      objectiveCount: def ? def.objectives.length : null,
+    };
+  }
 
   // Marker position { x, y, z, label } for the current objective, or null.
   getMarkerPosition(world) {

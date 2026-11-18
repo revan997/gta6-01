@@ -39,7 +39,44 @@ export function createRng(seed) {
     return next() < p;
   }
 
-  return { next, range, int, pick, chance, seed: seed >>> 0 };
+  // Deterministic 2D value noise in [0, 1): smooth interpolation of a
+  // hashed integer lattice, seeded by this generator's seed. Used for
+  // texture speckle and ground variation — same seed, same pattern.
+  function hash2(ix, iy) {
+    let h = (Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed >>> 0, 974634211)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h = (h ^ (h >>> 16)) >>> 0;
+    return h / 4294967296;
+  }
+  function noise2(x, y) {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const fx = x - ix;
+    const fy = y - iy;
+    const sx = fx * fx * (3 - 2 * fx);
+    const sy = fy * fy * (3 - 2 * fy);
+    const a = hash2(ix, iy);
+    const b = hash2(ix + 1, iy);
+    const c = hash2(ix, iy + 1);
+    const d = hash2(ix + 1, iy + 1);
+    const ab = a + (b - a) * sx;
+    const cd = c + (d - c) * sx;
+    return ab + (cd - ab) * sy;
+  }
+
+  // Fisher-Yates shuffle of a copy of `array`, using this generator.
+  function shuffle(array) {
+    const out = array.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(next() * (i + 1));
+      const tmp = out[i];
+      out[i] = out[j];
+      out[j] = tmp;
+    }
+    return out;
+  }
+
+  return { next, range, int, pick, chance, noise2, shuffle, seed: seed >>> 0 };
 }
 
 export default createRng;

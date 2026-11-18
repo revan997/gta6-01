@@ -257,6 +257,18 @@ export class AudioEngine {
     this._blip(660, 0.05, 'square', 0.2);
   }
 
+  // Two-tone car horn: two short square-wave blips, ~370 Hz then ~440 Hz.
+  playHorn() {
+    this._blip(370, 0.16, 'square', 0.35);
+    this._blip(440, 0.16, 'square', 0.35, 0.16);
+  }
+
+  // Door slam: a short lowpass noise burst plus a low sine blip sliding down.
+  playDoorSlam() {
+    this._noise(0.12, 0.6, 300);
+    this._blip(90, 0.14, 'sine', 0.5, 0, 45);
+  }
+
   // ---- ambient music loop: soft plucked chords, one bar every 1.6 s ----
 
   startMusic() {

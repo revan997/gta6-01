@@ -25,6 +25,9 @@ export function createPlayer(scene, world, spawn) {
   const matPants = new THREE.MeshStandardMaterial({ color: PANTS, roughness: 0.9 });
   const matShoes = new THREE.MeshStandardMaterial({ color: SHOES, roughness: 0.7 });
   const matHair = new THREE.MeshStandardMaterial({ color: HAIR, roughness: 1 });
+  const matBandana = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.85 });
+  const matGold = new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.3, metalness: 0.8 });
+  const matBelt = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
 
   function part(material, w, h, d, x, y, z, parent) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -37,6 +40,12 @@ export function createPlayer(scene, world, spawn) {
   // Torso (jacket over shirt), head, hair, arms, legs, shoes.
   const torso = part(matJacket, 0.62, 0.72, 0.34, 0, 1.12, 0);
   part(matShirt, 0.5, 0.6, 0.1, 0, 1.12, 0.16);
+  // Rico detail: red bandana at the neck, gold chain on the chest front,
+  // dark belt at the waist. Static meshes, like the shirt — they sit on
+  // the group, not on the bobbing torso.
+  part(matBandana, 0.38, 0.07, 0.36, 0, 1.5, 0);
+  part(matGold, 0.3, 0.06, 0.05, 0, 1.32, 0.2);
+  part(matBelt, 0.64, 0.08, 0.36, 0, 0.78, 0);
   const head = part(matSkin, 0.36, 0.38, 0.34, 0, 1.68, 0);
   part(matHair, 0.38, 0.14, 0.36, 0, 1.9, 0);
   part(matHair, 0.38, 0.22, 0.08, 0, 1.78, -0.16);

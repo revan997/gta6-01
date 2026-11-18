@@ -65,6 +65,7 @@ export class CombatSystem {
     this.shotCooldown = 0;
     this.muzzleTimer = 0;
     this.muzzlePosition = null;
+    this.lastTracer = null; // { from, to, timer } for the last shot — see shoot()
     this.lastHit = null; // { target, damage, killed } for the HUD / log
     this.isDown = false;
   }
@@ -76,6 +77,17 @@ export class CombatSystem {
   getMag() { return this.mag; }
   getWeapon() { return this.weapon; }
   isPlayerDown() { return this.isDown; }
+
+  // The tracer from the last shot, or null. The game loop polls this to
+  // draw a fading shot line.
+  getTracer() { return this.lastTracer; }
+
+  // Return the last tracer once, then clear it.
+  consumeTracer() {
+    const tracer = this.lastTracer;
+    this.lastTracer = null;
+    return tracer;
+  }
 
   selectWeapon(name) {
     if (name === 'fists' || name === 'pistol') this.weapon = name;
@@ -199,6 +211,26 @@ export class CombatSystem {
       : { ...(targetPoint || { x: 0, y: 1.4, z: 0 }) };
     this.muzzlePosition = muzzle;
     this.muzzleTimer = 0.06;
+    // Shot tracer for the game loop to draw as a fading line: from the
+    // muzzle to the target point, or — with no target point — to the point
+    // at max pistol range along the shot line from the origin.
+    const tracerTo = targetPoint
+      ? { x: targetPoint.x, y: targetPoint.y ?? 0, z: targetPoint.z }
+      : (() => {
+          if (!player?.position) return { ...muzzle };
+          const origin = {
+            x: player.position.x,
+            y: (player.position.y || 0) + 1.4,
+            z: player.position.z,
+          };
+          const h = player.heading || 0;
+          return {
+            x: origin.x + Math.sin(h) * WEAPONS.pistol.range,
+            y: origin.y,
+            z: origin.z + Math.cos(h) * WEAPONS.pistol.range,
+          };
+        })();
+    this.lastTracer = { from: { ...muzzle }, to: tracerTo, timer: 0.09 };
     if (typeof this.hooks.onMuzzle === 'function') this.hooks.onMuzzle(muzzle);
     this.hooks.audio?.playGunshot?.();
     // Shooting is a crime — the police hear it.
@@ -301,6 +333,7 @@ export class CombatSystem {
     this.weapon = 'fists';
     this.isDown = false;
     this.lastHit = null;
+    this.lastTracer = null;
   }
 }
 

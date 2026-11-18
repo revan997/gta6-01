@@ -1,6 +1,23 @@
-// Renderer, camera and lighting (Lane A).
+// Renderer, camera and lighting (Lane A; round-2 polish: canvas-texture
+// helper, tighter player-following shadows, stronger sun contrast).
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+
+// Procedural canvas texture: `draw(ctx, width, height)` paints the canvas;
+// returns a THREE.CanvasTexture with sRGB colours and mild anisotropy.
+// Used by world.js for building facades, road markings and crosswalks —
+// all art stays procedural and offline, no image files.
+export function makeCanvasTexture(width, height, draw) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  draw(ctx, width, height);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
 
 // Create the renderer for `canvas`, a perspective camera, and the lights.
 // Returns { renderer, camera, sunLight, hemiLight, resize, setSize }.
@@ -23,22 +40,31 @@ export function createRenderContext(canvas) {
   );
   camera.position.set(0, 8, 14);
 
-  // Sun: warm directional light with soft shadows over the whole city.
-  const sunLight = new THREE.DirectionalLight(CONFIG.colors.sun, 2.6);
-  sunLight.position.set(140, 190, 70);
+  // Sun: warm directional light with crisp shadows. The shadow frustum is
+  // tight (±120 m) because main.js re-centres the light on the camera
+  // focus every frame — a city-wide frustum made shadows invisible.
+  // The initial position matches CONFIG.lighting.sunOffset; the loop owns it.
+  const sunLight = new THREE.DirectionalLight(CONFIG.colors.sun, CONFIG.lighting.sunIntensity);
+  sunLight.position.set(
+    CONFIG.lighting.sunOffset[0],
+    CONFIG.lighting.sunOffset[1],
+    CONFIG.lighting.sunOffset[2],
+  );
   sunLight.castShadow = true;
   sunLight.shadow.mapSize.set(2048, 2048);
-  sunLight.shadow.camera.left = -360;
-  sunLight.shadow.camera.right = 360;
-  sunLight.shadow.camera.top = 360;
-  sunLight.shadow.camera.bottom = -360;
+  const frustum = CONFIG.lighting.shadowFrustum;
+  sunLight.shadow.camera.left = -frustum;
+  sunLight.shadow.camera.right = frustum;
+  sunLight.shadow.camera.top = frustum;
+  sunLight.shadow.camera.bottom = -frustum;
   sunLight.shadow.camera.near = 10;
-  sunLight.shadow.camera.far = 700;
+  sunLight.shadow.camera.far = 520;
   sunLight.shadow.bias = -0.0004;
   sunLight.shadow.normalBias = 0.4;
 
   // Hemisphere light: bright sky bounce + warm ground bounce, no shadows.
-  const hemiLight = new THREE.HemisphereLight(0xbfe3f2, 0x8a7a5a, 1.1);
+  // Kept dimmer than round 1 (1.1 washed the shadows out).
+  const hemiLight = new THREE.HemisphereLight(0xbfe3f2, 0x8a7a5a, CONFIG.lighting.hemiIntensity);
 
   function resize() {
     const w = window.innerWidth;

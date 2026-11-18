@@ -73,7 +73,7 @@ function makeTrafficCar(spec, rng) {
     targetSpeed: spec.targetSpeed || rng.range(8, 14),
     model: spec.model,
     colour: spec.colour,
-    driver: 'ai',
+    driver: spec.driver || 'ai',
     roadIndex: spec.roadIndex ?? 0,
     roadT: spec.roadT ?? 0,
     roadDirection: spec.roadDirection ?? 1,
@@ -131,6 +131,7 @@ export class TrafficManager {
     this.cars = [];
     this.pedestrians = [];
     this._spawnCooldown = 0;
+    this._parkedSpawned = false; // parked cars are placed once, on first update()
   }
 
   // ---- world queries (duck-typed, with safe fallbacks) ----
@@ -272,6 +273,60 @@ export class TrafficManager {
     return car;
   }
 
+  // ---- parked cars (visual polish): 6 decorative cars at road edges near
+  // downtown, placed once on the first update() call. They are real cars
+  // (Lane A factory when available) with driver 'parked' and speed 0: the
+  // update loop never AI-drives them (it skips non-'ai' drivers), the
+  // despawn filter keeps them, and jackNearestCar can target them (it only
+  // skips driver 'player').
+  _spawnParkedCars(world, player) {
+    const downtown = world && world.spawns && world.spawns.downtown;
+    const anchor = downtown || (player && player.position
+      ? { x: player.position.x, z: player.position.z, heading: player.heading || 0 }
+      : { x: 0, z: 0, heading: 0 });
+    const anchorPlayer = { position: { x: anchor.x, z: anchor.z }, heading: anchor.heading || 0 };
+    for (let i = 0; i < 6; i++) {
+      const pick = this._pickSpawnPoint(world, anchorPlayer, false);
+      const roads = this._roads(world);
+      const road = roads[pick.roadIndex];
+      const baseHeading = road ? this._roadHeading(road, pick.roadT) : this.rng.range(0, Math.PI * 2);
+      const direction = this.rng.next() < 0.5 ? 1 : -1;
+      const heading = direction > 0 ? baseHeading : baseHeading + Math.PI;
+      const side = this.rng.next() < 0.5 ? 1 : -1;
+      // Lane offset at the road edge: centreline half-width minus a car
+      // half-width, so the car hugs the edge instead of the centreline.
+      const edgeOffset = (road?.width ? road.width * 0.5 - 1.2 : 2.5) * side;
+      const position = {
+        x: pick.position.x + Math.cos(baseHeading) * edgeOffset,
+        y: pick.position.y || 0,
+        z: pick.position.z - Math.sin(baseHeading) * edgeOffset,
+      };
+      const spec = this.rng.pick(CAR_MODELS);
+      let car;
+      if (this.createCar) {
+        car = this.createCar({
+          position, heading, model: spec.model, colour: spec.colour,
+          driver: 'parked', roadIndex: pick.roadIndex, roadT: pick.roadT,
+          roadDirection: direction,
+        });
+      } else {
+        car = makeTrafficCar({
+          position, heading, model: spec.model, colour: spec.colour,
+          driver: 'parked', roadIndex: pick.roadIndex, roadT: pick.roadT,
+          roadDirection: direction, targetSpeed: 0,
+        }, this.rng);
+      }
+      car.driver = 'parked';
+      car.speed = 0;
+      car.targetSpeed = 0;
+      car.roadIndex = pick.roadIndex;
+      car.roadT = pick.roadT;
+      car.roadDirection = direction;
+      car.laneOffset = edgeOffset;
+      this.cars.push(car);
+    }
+  }
+
   _spawnPedestrian(world, player) {
     const pick = this._pickSpawnPoint(world, player, false);
     const roads = this._roads(world);
@@ -301,6 +356,12 @@ export class TrafficManager {
     const px = player?.position?.x ?? 0;
     const pz = player?.position?.z ?? 0;
     const playerPos = { x: px, z: pz };
+
+    // Parked cars: placed once, on the first update() call.
+    if (!this._parkedSpawned) {
+      this._parkedSpawned = true;
+      this._spawnParkedCars(world, player);
+    }
 
     // Maintain population.
     this._spawnCooldown -= step;
@@ -398,6 +459,7 @@ export class TrafficManager {
     // --- Despawn anything far from the player; the spawn loop refills. ---
     this.cars = this.cars.filter((car) => {
       if (car.driver === 'player') return true; // never despawn the player's car
+      if (car.driver === 'parked') return true; // never despawn parked cars
       return dist2D(car.position, playerPos) < this.despawnRadius;
     });
     this.pedestrians = this.pedestrians.filter((ped) => {
@@ -443,6 +505,7 @@ export class TrafficManager {
   }
 
   getCars() { return this.cars; }
+  getParkedCars() { return this.cars.filter((c) => c.driver === 'parked'); }
   getPedestrians() { return this.pedestrians.filter((p) => p.alive); }
 
   // Remove a pedestrian (hit / shot). Returns true when one was removed.
@@ -456,6 +519,7 @@ export class TrafficManager {
     this.cars = [];
     this.pedestrians = [];
     this._spawnCooldown = 0;
+    this._parkedSpawned = false;
   }
 }
 

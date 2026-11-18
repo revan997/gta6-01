@@ -49,6 +49,26 @@ export const CONFIG = {
     lampGlow: 0xffe9a0,
     bench: 0x7a5a34,
     hydrant: 0xc23a2a,
+    curb: 0x8f8880,
+    // Round-2 polish: sky gradient, sunset palette, awning colours.
+    skyTop: 0x4a90d9,
+    skyHorizon: 0xd8f0f8,
+    sunsetTop: 0x5a3a6e,
+    sunsetHorizon: 0xe8833a,
+    sunsetFog: 0xe08a4a,
+    awningPalette: [0xc23a2a, 0x2e86c1, 0x1e8449, 0xe67e22, 0x8e44ad],
+    grassPatch: [0x7d8f60, 0x93a86e, 0x6b8256, 0xa8b878],
+  },
+
+  // ---- Lighting (round-2 polish) ----
+  // The sun sits lower than round 1 so shadows are long and visible, and
+  // the shadow frustum is tight because main.js re-centres the light on
+  // the camera focus every frame (a city-wide frustum made shadows faint).
+  lighting: {
+    sunIntensity: 2.9,
+    hemiIntensity: 0.85,
+    sunOffset: [110, 95, 60], // light position relative to the shadow focus
+    shadowFrustum: 120, // half-extent (metres) of the shadow camera box
   },
 
   // ---- Player movement (metres / second) ----
@@ -88,12 +108,14 @@ export const CONFIG = {
   },
 
   // ---- Camera ----
+  // Round-2 polish: the on-foot camera sits a little higher and farther
+  // than round 1, so Rico no longer blocks the centre of the screen.
   camera: {
     fov: 62,
     near: 0.1,
     far: 1400,
-    onFootDistance: 7.5,
-    onFootHeight: 3.2,
+    onFootDistance: 8.5,
+    onFootHeight: 4.0,
     drivingDistance: 10.5,
     drivingHeight: 4.2,
     lookAhead: 4,

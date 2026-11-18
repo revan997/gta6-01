@@ -86,7 +86,11 @@ export class HUD {
     const wanted = clamp(Math.round(state.wanted ?? 0), 0, 5);
     this._setText('stars', '★'.repeat(wanted) + '☆'.repeat(5 - wanted));
     const starsEl = this._el('stars');
-    if (starsEl) starsEl.style.color = wanted > 0 ? '#ffcf3f' : '#9aa0a6';
+    if (starsEl) {
+      starsEl.style.color = wanted > 0 ? '#ffcf3f' : '#9aa0a6';
+      // Pulse hook: the stylesheet animates .hot while any heat is on.
+      if (starsEl.classList) starsEl.classList.toggle('hot', wanted > 0);
+    }
 
     // --- Health / armour bars. ---
     const maxHealth = state.maxHealth || 100;
@@ -154,6 +158,32 @@ export class HUD {
     ctx.fillRect(0, 0, size, size);
     ctx.fillStyle = '#1d3a2a';
     ctx.fillRect(0, 0, size, size);
+
+    // Coastal water + sand, drawn before the roads so the map reads as a
+    // coastal city. Bounds come from state.world when present (a bounds
+    // object { minX, maxX, minZ, maxZ } with optional seaStartZ /
+    // beachStartZ / marina), otherwise the Solmar Bay constants.
+    const world = state.world || null;
+    const bounds = world?.bounds || null;
+    const halfCity = world?.halfCity ?? 320;
+    const minX = bounds?.minX ?? (Array.isArray(bounds?.x) ? bounds.x[0] : -halfCity);
+    const maxX = bounds?.maxX ?? (Array.isArray(bounds?.x) ? bounds.x[1] : halfCity);
+    const seaStartZ = bounds?.seaStartZ ?? 300;
+    const beachStartZ = bounds?.beachStartZ ?? 272;
+    const marina = bounds?.marina ?? world?.marina ?? { minX: 160, maxX: 320, minZ: -320, maxZ: -160 };
+    const farZ = Math.max(
+      bounds?.maxZ ?? (Array.isArray(bounds?.z) ? bounds.z[1] : seaStartZ),
+      seaStartZ + this.mapRange,
+    );
+    const fillWorldRect = (x0, z0, x1, z1, color) => {
+      const [ax, ay] = toMap(x0, z0);
+      const [bx, by] = toMap(x1, z1);
+      ctx.fillStyle = color;
+      ctx.fillRect(Math.min(ax, bx), Math.min(ay, by), Math.abs(bx - ax), Math.abs(by - ay));
+    };
+    fillWorldRect(minX, seaStartZ, maxX, farZ, '#1e7fa8'); // open sea (z > 300)
+    fillWorldRect(marina.minX, marina.minZ, marina.maxX, marina.maxZ, '#1e7fa8'); // marina basin
+    fillWorldRect(minX, beachStartZ, maxX, seaStartZ, '#e8d5a0'); // beach strip
 
     // Roads from the world description. Lane A roads are segments
     // ({ start, end, width }); other callers pass polylines ({ points }).

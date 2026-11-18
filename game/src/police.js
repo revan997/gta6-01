@@ -110,12 +110,15 @@ export class PoliceSystem {
     this._spawnCooldown = 0;
     this._speedingCooldown = 0; // speeding adds heat at most once per window
     this._sirenOn = false;
+    this.sirenPhase = 0; // light-bar flash phase: 0 = red bright, 1 = blue bright
+    this._sirenTimer = 0; // seconds since the last phase toggle
   }
 
   getWantedLevel() { return this.wanted; }
   isBusted() { return this.busted; }
   isWasted() { return this.wasted; }
   isSirenOn() { return this._sirenOn; }
+  getSirenPhase() { return this.sirenPhase; }
   getPoliceCars() { return this.policeCars; }
   getOfficers() { return this.officers; }
   // Flat list of every police unit (cars + officers) for the minimap.
@@ -176,6 +179,8 @@ export class PoliceSystem {
       this._sirenOn = false;
       this._emit('onSiren', { on: false });
     }
+    this.sirenPhase = 0;
+    this._sirenTimer = 0;
     this._emit('onWantedChange', { wanted: 0, before: -1 });
   }
 
@@ -343,6 +348,20 @@ export class PoliceSystem {
       this._sirenOn = false;
       this._emit('onSiren', { on: false });
     }
+
+    // --- Siren light-bar phase: alternate red/blue every 0.45 s of game
+    // time while the siren is on. main.js drives each police car's light
+    // bar from getSirenPhase(). Phase resets to 0 when the siren stops. ---
+    if (this._sirenOn) {
+      this._sirenTimer += step;
+      if (this._sirenTimer >= 0.45) {
+        this._sirenTimer -= 0.45;
+        this.sirenPhase = this.sirenPhase === 0 ? 1 : 0;
+      }
+    } else {
+      this.sirenPhase = 0;
+      this._sirenTimer = 0;
+    }
   }
 
   _bust(player) {
@@ -360,6 +379,8 @@ export class PoliceSystem {
     this.hiddenTimer = 0;
     this.decayTimer = 0;
     this._sirenOn = false;
+    this.sirenPhase = 0;
+    this._sirenTimer = 0;
   }
 }
 

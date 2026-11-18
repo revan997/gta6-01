@@ -67,6 +67,28 @@ function buildCarMesh(model, color) {
   box(matTail, 0.42, 0.16, 0.08, -W / 2 + 0.35, bodyY, -L / 2 - 0.01);
   box(matTail, 0.42, 0.16, 0.08, W / 2 - 0.35, bodyY, -L / 2 - 0.01);
 
+  // Detail pass: bumpers, grille, mirrors, door seams, license plate.
+  const matPlate = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 });
+  // Front + rear bumpers (thin dark boxes at both ends).
+  box(matTrim, W, 0.14, 0.18, 0, bodyY - 0.1, L / 2 + 0.02);
+  box(matTrim, W, 0.14, 0.18, 0, bodyY - 0.1, -L / 2 - 0.02);
+  // Front grille (dark box at front centre, between the headlights).
+  box(matTrim, W * 0.35, 0.16, 0.06, 0, bodyY, L / 2 + 0.03);
+  // Side mirrors (small boxes on both sides, near the cabin front).
+  const mirrorZ = shape.cabinZ + shape.cabinL / 2 - 0.15;
+  const mirrorY = bodyY + shape.bodyH / 2 + 0.18;
+  box(matTrim, 0.12, 0.08, 0.2, -W / 2 - 0.05, mirrorY, mirrorZ);
+  box(matTrim, 0.12, 0.08, 0.2, W / 2 + 0.05, mirrorY, mirrorZ);
+  // Door seam strips (thin dark vertical boxes on both sides).
+  const seamZF = shape.cabinZ + shape.cabinL * 0.15;
+  const seamZR = shape.cabinZ - shape.cabinL * 0.25;
+  for (const sz of [seamZF, seamZR]) {
+    box(matTrim, 0.03, shape.bodyH * 0.7, 0.06, -W / 2 - 0.005, bodyY, sz);
+    box(matTrim, 0.03, shape.bodyH * 0.7, 0.06, W / 2 + 0.005, bodyY, sz);
+  }
+  // Rear license plate (small light box, just proud of the rear bumper).
+  box(matPlate, 0.5, 0.14, 0.04, 0, bodyY - 0.02, -L / 2 - 0.14);
+
   // Wheels.
   const wheels = [];
   const wheelGeo = new THREE.CylinderGeometry(shape.wheels, shape.wheels, 0.28, 14);
@@ -205,6 +227,57 @@ export function createCar(scene, model, color, x, z, heading) {
 
   group.rotation.y = car.heading;
   return car;
+}
+
+// Police light bar: a red + blue emissive bar on the roof plus white side
+// stripes. Attached by the caller (main.js / police wiring) via
+// attachPoliceLightBar, NOT by createCar, so ordinary traffic cars stay
+// unmarked. Idempotent: calling it twice on the same car returns the
+// existing bar. Returns the lightBar record, or null for a car with no
+// 3D group (e.g. a stand-in police car).
+export function attachPoliceLightBar(car) {
+  if (!car || !car.group) return null;
+  if (car.lightBar) return car.lightBar;
+  // The mesh was built from the Lane A model shape; the display name on
+  // car.model (e.g. 'Solmar Police Interceptor') is not a shape key, so
+  // fall back to the sedan shape, which is what the interceptor uses.
+  const shape = MODEL_SHAPES[car.model] || MODEL_SHAPES.sedan;
+  const L = shape.length;
+  const W = shape.width;
+  const bodyY = shape.wheels * 2 + shape.bodyH / 2;
+  const roofY = bodyY + shape.bodyH / 2 + shape.cabinH - 0.04;
+  const matBase = new THREE.MeshStandardMaterial({ color: 0x14161a, roughness: 0.6 });
+  const matStripe = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.5 });
+  const matRed = new THREE.MeshStandardMaterial({ color: 0xcc0000, emissive: 0xff2222, emissiveIntensity: 2.2 });
+  const matBlue = new THREE.MeshStandardMaterial({ color: 0x0033cc, emissive: 0x2244ff, emissiveIntensity: 0.15 });
+
+  function add(material, w, h, d, x, y, z) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    car.group.add(mesh);
+    return mesh;
+  }
+
+  // Bar base + one red (driver side) and one blue (passenger side) lamp.
+  add(matBase, 0.95, 0.08, 0.42, 0, roofY + 0.02, shape.cabinZ);
+  add(matRed, 0.42, 0.13, 0.32, -0.25, roofY + 0.1, shape.cabinZ);
+  add(matBlue, 0.42, 0.13, 0.32, 0.25, roofY + 0.1, shape.cabinZ);
+  // White side stripes along the body.
+  add(matStripe, 0.03, 0.14, L * 0.55, -W / 2 - 0.01, bodyY + 0.02, 0);
+  add(matStripe, 0.03, 0.14, L * 0.55, W / 2 + 0.01, bodyY + 0.02, 0);
+
+  car.lightBar = { red: matRed, blue: matBlue };
+  return car.lightBar;
+}
+
+// Set the police light-bar flash phase. Phase 0: red bright / blue dim;
+// phase 1: red dim / blue bright. Safe no-op on a car with no light bar.
+export function setPoliceLightPhase(car, phase) {
+  if (!car || !car.lightBar) return;
+  const blueOn = phase === 1;
+  car.lightBar.red.emissiveIntensity = blueOn ? 0.15 : 2.2;
+  car.lightBar.blue.emissiveIntensity = blueOn ? 2.2 : 0.15;
 }
 
 // Nearest car to `point` ({x, z} or THREE.Vector3) within `maxDistance`.

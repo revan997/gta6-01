@@ -14,7 +14,7 @@ import { CONFIG } from './config.js';
 import { createRng } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
-import { createCar, findNearestCar } from './vehicle.js';
+import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
 import { createRenderContext } from './render.js';
 import { input } from './input.js';
 import { TrafficManager } from './traffic.js';
@@ -102,6 +102,8 @@ function makeCar(spec) {
   // driving code reads car.model after construction.
   if (spec.model) car.model = spec.model;
   car.driver = spec.driver || 'ai';
+  // Police interceptors get a flashing roof light bar (round-2 polish).
+  if (car.driver === 'police') attachPoliceLightBar(car);
   spawnedCars.add(car);
   return car;
 }
@@ -175,6 +177,8 @@ const save = new SaveSystem();
 let state = 'menu'; // menu | playing | paused | busted | wasted | mission-complete
 let money = 250;
 let timeOfDay = 12; // hours 0-24
+let playTimeSeconds = 0; // accumulated in update(); persisted by save v2
+let timesPlayed = 0; // sessions on this profile; persisted by save v2
 let camYaw = player.heading + Math.PI;
 let camPitch = 0;
 let orbitAngle = 0.6;
@@ -227,9 +231,22 @@ const muzzle = new THREE.Mesh(
 );
 muzzle.visible = false;
 scene.add(muzzle);
+
+// Shot tracer (round-2 polish): a short-lived line from the muzzle to the
+// shot's target, faded out over its 0.09 s lifetime (combat.consumeTracer).
+const tracerGeo = new THREE.BufferGeometry();
+tracerGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3));
+const tracerMat = new THREE.LineBasicMaterial({ color: 0xffe98a, transparent: true, opacity: 0 });
+const tracerLine = new THREE.Line(tracerGeo, tracerMat);
+tracerLine.visible = false;
+tracerLine.frustumCulled = false;
+scene.add(tracerLine);
+let tracerTimer = 0;
+
 function flashMuzzle(pos) {
   if (!pos) return;
   muzzle.position.set(pos.x, pos.y, pos.z);
+  muzzle.scale.setScalar(1.6); // starts big, shrinks as it fades
   muzzle.visible = true;
   muzzleTimer = 0.06;
 }
@@ -300,8 +317,32 @@ function startPlaying() {
     audio.ensureContext();
     audio.startMusic();
   }
+  // Resume a previous session (round-2 polish): the save system was
+  // writing on mission complete but never loading. v1 and v2 saves both
+  // load; a fresh profile just starts at the defaults.
+  if (!startPlaying.loadedSave) {
+    startPlaying.loadedSave = true;
+    const loaded = save.load();
+    if (loaded) {
+      money = loaded.money ?? money;
+      timeOfDay = loaded.timeOfDay ?? timeOfDay;
+      playTimeSeconds = loaded.playTimeSeconds || 0;
+      timesPlayed = (loaded.timesPlayed || 0) + 1;
+      for (const n of loaded.completedMissions || []) missions.completed.add(n);
+      if (loaded.position) {
+        player.teleport(loaded.position.x, loaded.position.z, loaded.heading ?? player.heading);
+        camYaw = player.heading + Math.PI;
+      }
+      if (typeof loaded.wanted === 'number') police.setWanted(loaded.wanted);
+    } else {
+      timesPlayed = 1;
+    }
+  }
   if (!missions.current && !missions.getCurrentMissionNumber()) {
-    missions.startMission(1, world, systems());
+    // Resume at the next uncompleted mission, not always mission 1.
+    const done = missions.getCompletedMissions();
+    const next = done.length ? Math.min(5, Math.max(...done) + 1) : 1;
+    missions.startMission(next, world, systems());
   }
 }
 
@@ -352,6 +393,8 @@ function showMissionComplete(name, reward) {
     armour: combat.getArmour(),
     ammo: combat.getAmmo(),
     timeOfDay,
+    playTimeSeconds,
+    timesPlayed,
   });
 }
 
@@ -386,6 +429,17 @@ function resetGame(missionNumber) {
 
 // ---- camera --------------------------------------------------------------
 
+// Sun-follow (round-2 polish): re-centre the tight shadow frustum on the
+// camera focus every frame, so shadows stay crisp wherever the player
+// goes. The staged end vista keeps its fixed low sun (updateCamera
+// returns early for it).
+function followSun(fx, fz) {
+  const off = CONFIG.lighting.sunOffset;
+  sunLight.position.set(fx + off[0], off[1], fz + off[2]);
+  sunLight.target.position.set(fx, 0, fz);
+  sunLight.target.updateMatrixWorld();
+}
+
 function updateCamera(dt) {
   if (state === 'menu') {
     orbitAngle += dt * 0.045;
@@ -393,6 +447,7 @@ function updateCamera(dt) {
     const cz = -40;
     camera.position.set(cx + Math.cos(orbitAngle) * 135, 58, cz + Math.sin(orbitAngle) * 135);
     camera.lookAt(cx, 24, cz);
+    followSun(cx, cz);
     return;
   }
   if (state === 'mission-complete' && SHOT === 'end') return; // staged vista stays put
@@ -434,6 +489,7 @@ function updateCamera(dt) {
   const lookX = focus.x - Math.sin(camYaw) * CONFIG.camera.lookAhead;
   const lookZ = focus.z - Math.cos(camYaw) * CONFIG.camera.lookAhead;
   camera.lookAt(lookX, (focus.y || 0) + 1.4, lookZ);
+  followSun(focus.x, focus.z);
 }
 
 // ---- combat input ---------------------------------------------------------
@@ -468,17 +524,22 @@ function tryEnterExitCar() {
   if (state !== 'playing') return;
   if (!player.onFoot) {
     player.exitCar();
+    audio.playDoorSlam();
     return;
   }
   const jacked = traffic.jackNearestCar(player, CONFIG.player.enterCarDistance);
   if (jacked) {
+    audio.playDoorSlam();
     police.reportCrime('carjack');
     showMessage('Carjacked — the law is coming.');
     return;
   }
   // Parked / staged cars (not traffic) can be entered too.
   const near = findNearestCar([...spawnedCars], player.position, CONFIG.player.enterCarDistance);
-  if (near && near.driver !== 'police') player.enterCar(near);
+  if (near && near.driver !== 'police') {
+    player.enterCar(near);
+    audio.playDoorSlam();
+  }
 }
 
 // ---- keyboard / mouse ------------------------------------------------------
@@ -541,8 +602,13 @@ function update(dt) {
       camPitch = Math.max(-0.55, Math.min(0.55, camPitch - dy * 0.0022));
       lastMouseMoveAt = performance.now();
     }
+    // One-shot keys (round-2 polish): H honks the horn while driving.
+    for (const code of input.consumePressed()) {
+      if (code === 'KeyH' && player.currentCar) audio.playHorn();
+    }
   } else {
     input.consumeMouseDelta();
+    input.consumePressed(); // drain so menu keypresses never fire in-game
   }
 
   if (state === 'menu') {
@@ -559,6 +625,7 @@ function update(dt) {
 
   // Clock advances slowly (a full day in ~14 minutes of play).
   timeOfDay = (timeOfDay + dt * 0.024) % 24;
+  playTimeSeconds += dt; // persisted by save v2
 
   // 2. player or driven car.
   if (player.onFoot) {
@@ -585,6 +652,12 @@ function update(dt) {
   });
   syncPersonMeshes(police.getOfficers(), officerMeshes, '#1a2a4a');
 
+  // Police light bars (round-2 polish): flash every police car's roof
+  // bar on the siren phase.
+  for (const pc of police.getPoliceCars()) {
+    setPoliceLightPhase(pc, police.getSirenPhase());
+  }
+
   // 5. missions.
   missions.update(dt, world, player, systems());
 
@@ -593,7 +666,24 @@ function update(dt) {
   player.health = combat.getHealth();
   if (muzzleTimer > 0) {
     muzzleTimer -= dt;
+    muzzle.scale.setScalar(Math.max(0.4, 1.6 * (muzzleTimer / 0.06)));
     if (muzzleTimer <= 0) muzzle.visible = false;
+  }
+  // Shot tracer (round-2 polish): draw the line from the muzzle to the
+  // shot's target and fade it over its 0.09 s lifetime.
+  const tracer = combat.consumeTracer();
+  if (tracer) {
+    const pos = tracerGeo.attributes.position;
+    pos.setXYZ(0, tracer.from.x, tracer.from.y, tracer.from.z);
+    pos.setXYZ(1, tracer.to.x, tracer.to.y, tracer.to.z);
+    pos.needsUpdate = true;
+    tracerTimer = tracer.timer;
+    tracerLine.visible = true;
+  }
+  if (tracerTimer > 0) {
+    tracerTimer -= dt;
+    tracerMat.opacity = Math.max(0, tracerTimer / 0.09);
+    if (tracerTimer <= 0) tracerLine.visible = false;
   }
 
   // Busted / wasted can be raised by police or combat during the update.
@@ -705,9 +795,12 @@ function stagePlay() {
 function stageEnd() {
   state = 'mission-complete';
   timeOfDay = 18.6;
-  // Sunset: low warm sun, orange sky and haze.
-  scene.background = new THREE.Color(0xe8833a);
-  scene.fog = new THREE.Fog(0xe08a4a, 200, 850);
+  // Sunset: low warm sun, orange sky and haze. The sky dome is repainted
+  // with the sunset palette (round-2 polish); the scene background stays
+  // as a fallback colour behind it.
+  world.sky.setPalette(CONFIG.colors.sunsetTop, CONFIG.colors.sunsetHorizon);
+  scene.background = new THREE.Color(CONFIG.colors.sunsetHorizon);
+  scene.fog = new THREE.Fog(CONFIG.colors.sunsetFog, 200, 850);
   sunLight.color.set(0xffb36b);
   sunLight.intensity = 2.4;
   sunLight.position.set(-260, 70, 260);

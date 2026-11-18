@@ -3,6 +3,9 @@
 // Lane B reads this each frame; nothing here touches the game state itself.
 
 const heldKeys = new Set();
+// Keys newly pressed since the last consumePressed() call (pressed-edge
+// detection — a key is added here only when it was not already held).
+const pressedKeys = new Set();
 let mouseDX = 0;
 let mouseDY = 0;
 let pointerLocked = false;
@@ -10,6 +13,7 @@ let attachedCanvas = null;
 let listenersAttached = false;
 
 function onKeyDown(event) {
+  if (!heldKeys.has(event.code)) pressedKeys.add(event.code);
   heldKeys.add(event.code);
   // Keep the page from scrolling on game keys.
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(event.code)) {
@@ -40,7 +44,7 @@ function attach(canvas) {
   attachedCanvas = canvas || null;
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', () => heldKeys.clear());
+  window.addEventListener('blur', () => { heldKeys.clear(); pressedKeys.clear(); });
   document.addEventListener('mousemove', onMouseMove);
   document.addEventListener('pointerlockchange', onPointerLockChange);
   listenersAttached = true;
@@ -94,6 +98,16 @@ function consumeMouseDelta() {
   return out;
 }
 
+// Consume and return the e.code values pressed since the last call,
+// then clear the set. A held key is reported once, on its first keydown.
+function consumePressed() {
+  const out = [...pressedKeys];
+  pressedKeys.clear();
+  return out;
+}
+
+export { consumePressed };
+
 export const input = {
   attach,
   requestPointerLock,
@@ -101,6 +115,7 @@ export const input = {
   isDown,
   moveVector,
   consumeMouseDelta,
+  consumePressed,
   get pointerLocked() {
     return pointerLocked;
   },
