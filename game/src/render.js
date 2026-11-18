@@ -34,6 +34,66 @@ export function makeGlowTexture(color, inner = 0.15, outer = 1) {
   return tex;
 }
 
+// Round-4 polish: a black/white checker tile (taxi checker band) and a
+// bold text sign plate (street-name blades, taxi roof sign, bus-stop sign).
+// Both are procedural canvas textures, so the game stays fully offline.
+export function makeCheckerTexture(checksX = 8, checksY = 2, colorA = '#111111', colorB = '#f5f5f5') {
+  return makeCanvasTexture(128, 32, (ctx, w, h) => {
+    const cw = w / checksX;
+    const ch = h / checksY;
+    for (let y = 0; y < checksY; y++) {
+      for (let x = 0; x < checksX; x++) {
+        ctx.fillStyle = (x + y) % 2 === 0 ? colorA : colorB;
+        ctx.fillRect(x * cw, y * ch, cw, ch);
+      }
+    }
+  });
+}
+
+// Round-4b: a subtle water-surface texture — soft light streaks and
+// fine ripple speckle on a deep blue base, so the sea reads as water
+// instead of a flat blue plane. Deterministic (no Math.random), so the
+// same build always paints the same sea. world.js tiles it on the water.
+export function makeWaterTexture() {
+  return makeCanvasTexture(256, 256, (ctx, w, h) => {
+    ctx.fillStyle = '#1e7fa8';
+    ctx.fillRect(0, 0, w, h);
+    // Diagonal caustic bands, placed by a fixed hash pattern.
+    for (let i = 0; i < 26; i++) {
+      const x = (i * 97) % w;
+      const y = (i * 57) % h;
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.05 + (i % 3) * 0.02).toFixed(2) + ')';
+      ctx.lineWidth = 2 + (i % 3);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.bezierCurveTo(x + 40, y + 12, x + 80, y - 8, x + 120, y + 6);
+      ctx.stroke();
+    }
+    // Fine ripple speckle.
+    for (let i = 0; i < 500; i++) {
+      const x = (i * 53) % w;
+      const y = (i * 91) % h;
+      ctx.fillStyle = i % 2 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+      ctx.fillRect(x, y, 2, 1);
+    }
+  });
+}
+
+export function makeSignTexture(text, bg = '#1d5c2e', fg = '#ffffff') {
+  return makeCanvasTexture(256, 64, (ctx, w, h) => {
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = fg;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(3, 3, w - 6, h - 6);
+    ctx.fillStyle = fg;
+    ctx.font = 'bold 34px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(text), w / 2, h / 2 + 1);
+  });
+}
+
 // Create the renderer for `canvas`, a perspective camera, and the lights.
 // Returns { renderer, camera, sunLight, hemiLight, resize, setSize }.
 // The caller owns the render loop; resize() is also bound to window resize.

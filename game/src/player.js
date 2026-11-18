@@ -65,6 +65,17 @@ export function createPlayer(scene, world, spawn) {
   part(matShoes, 0.24, 0.12, 0.36, -0.16, 0.06, 0.04);
   part(matShoes, 0.24, 0.12, 0.36, 0.16, 0.06, 0.04);
 
+  // Round 4: Rico's ground shadow — a cheap dark circle on the pavement
+  // that grounds him visually (the renderer has no blob shadows). It
+  // lives in the scene, not the group, so it stays flat on the ground
+  // while Rico jumps; it shrinks and fades as he rises, and hides while
+  // he is driving (the group is hidden then too).
+  const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.55, 20), shadowMat);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(start.x, 0.02, start.z);
+  scene.add(shadow);
+
   const player = {
     group,
     mesh: group,
@@ -77,8 +88,19 @@ export function createPlayer(scene, world, spawn) {
     currentCar: null,
     verticalVelocity: 0,
     grounded: true,
+    jumpBuffer: 0, // round-4b: seconds of buffered jump input (see update)
     walkPhase: 0,
     speed: 0,
+    punchWindup: 0, // round 4: seconds left of the punch wind-up lean
+    shadow, // round 4: ground blob (scene-owned, see createPlayer)
+
+    // Round 4: start the punch wind-up — Rico leans back for a beat,
+    // then the arm swings through (applied in update()). The game loop
+    // calls this just before combat.punch(); it never blocks the hit.
+    startPunchWindup() {
+      this.punchWindup = 0.14;
+      return this.punchWindup;
+    },
 
     // Per-frame update. `inputState` is the input singleton (or any object
     // with moveVector() / isDown()); `cameraHeading` rotates movement to
@@ -141,10 +163,18 @@ export function createPlayer(scene, world, spawn) {
       this.position.x = px;
       this.position.z = pz;
 
-      // Jump / gravity.
-      if (inputState && typeof inputState.isDown === 'function' && inputState.isDown('Space') && this.grounded) {
+      // Jump / gravity. Round-4b: jump buffering — pressing Space up to
+      // 0.12 s before landing still fires the jump on touchdown, so the
+      // controls feel responsive instead of dropping an early press.
+      if (inputState && typeof inputState.pressed === 'function' && inputState.pressed('Space')) {
+        this.jumpBuffer = 0.12;
+      }
+      this.jumpBuffer = Math.max(0, (this.jumpBuffer || 0) - safeDt);
+      if (inputState && typeof inputState.isDown === 'function'
+        && (inputState.isDown('Space') || this.jumpBuffer > 0) && this.grounded) {
         this.verticalVelocity = CONFIG.player.jumpSpeed;
         this.grounded = false;
+        this.jumpBuffer = 0;
       }
       if (!this.grounded) {
         this.verticalVelocity -= CONFIG.player.gravity * safeDt;
@@ -174,6 +204,28 @@ export function createPlayer(scene, world, spawn) {
       torso.rotation.z = this.leanZ;
       torso.rotation.x = running ? 0.12 : 0;
 
+      // Round 4: punch wind-up lean — while the timer runs Rico leans
+      // back (torso -0.22 rad) and the right arm cocks back, then the
+      // swing releases as the timer ends. Purely visual; the hit itself
+      // is decided by combat.punch().
+      if (this.punchWindup > 0) {
+        this.punchWindup = Math.max(0, this.punchWindup - safeDt);
+        const phase = this.punchWindup / 0.14; // 1 -> 0 over the wind-up
+        torso.rotation.x = -0.22 * phase + (running ? 0.12 : 0) * (1 - phase);
+        armR.rotation.x = -0.9 * phase + swing * 0.8 * (1 - phase);
+        armL.rotation.x = -swing * 0.8;
+      }
+
+      // Round 4: keep the ground shadow under Rico — flat on the ground,
+      // shrinking and fading as he jumps, so the eye always knows where
+      // his feet will land.
+      shadow.position.set(this.position.x, 0.02, this.position.z);
+      const airH = Math.max(0, this.position.y || 0);
+      const shadowScale = Math.max(0.55, 1 - airH * 0.18);
+      shadow.scale.setScalar(shadowScale);
+      shadowMat.opacity = Math.max(0.1, 0.32 - airH * 0.08);
+      shadow.visible = this.onFoot;
+
       group.rotation.y = this.heading;
     },
 
@@ -199,6 +251,7 @@ export function createPlayer(scene, world, spawn) {
       this.onFoot = false;
       if (typeof car.setDriver === 'function') car.setDriver(this);
       group.visible = false;
+      shadow.visible = false; // round 4: no blob while driving (update() is a no-op in a car)
       return true;
     },
     // Alias used by some callers.
@@ -227,6 +280,7 @@ export function createPlayer(scene, world, spawn) {
       this.verticalVelocity = 0;
       this.grounded = true;
       group.visible = true;
+      shadow.visible = true; // round 4: the blob comes back with Rico
       group.rotation.y = this.heading;
       return true;
     },

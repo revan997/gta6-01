@@ -108,6 +108,89 @@ export const CONFIG = {
   missionPar: { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300 },
   parBonus: 100,
 
+  // ---- Round-4 polish (Lane W): richer city, living water & sky ----
+  round4: {
+    // Rooftop clutter: AC units on most roofs, water towers / antennas
+    // on any roof above tallMinHeight (not just the tallest tower).
+    rooftop: {
+      acChance: 0.75,
+      acMax: 2,
+      bulkheadChance: 0.3, // stair bulkhead on low roofs
+      tallMinHeight: 18,
+      towerChance: 0.4,
+      antennaChance: 0.5,
+    },
+    // Facade base colours per district (labels match CONFIG.districts).
+    districtFacades: {
+      Downtown: [0x7a8a99, 0x6f7f8c, 0x5a7a9a, 0x8a9aa8, 0x9aa3ab],
+      'Old Town': [0xb0a08a, 0x8a6f5a, 0xc9a06a, 0xa89478, 0xb98a7a],
+      Beachfront: [0xe8d5a0, 0x9db8c4, 0xd8c9a8, 0x8fa98f, 0xf0e0c0],
+      Marina: [0xd0d0d0, 0x9db8c4, 0xe8e8e8, 0x7a9cc4, 0xb8c8d8],
+      Docks: [0x8a6f5a, 0x6f5a4a, 0x9a7a5a, 0x7a6a58, 0xa08a6a],
+    },
+    // Ground-floor shopfronts on low-rise buildings.
+    shopfront: { awningChance: 0.55, glassChance: 0.3, neonChance: 0.55 },
+    // Street furniture counts.
+    streetProps: { busStopCount: 4, trashBinCount: 24, planterCount: 20 },
+    // Beach + docks dressing.
+    beach: { lifeguardX: -80, lifeguardZ: 288 },
+    docks: {
+      containerPalette: [0xc23a2a, 0x2e86c1, 0x1e8449, 0xe67e22, 0x8e44ad, 0x7f8c8d],
+      craneCount: 2,
+    },
+    // Water & sky life (updateWater / updateBuoys / updateBirds read these).
+    water: {
+      foamOpacityMin: 0.22,
+      foamOpacityMax: 0.5,
+      foamPulseSpeed: 0.9, // radians per second
+      waterOpacityBase: 0.88,
+      waterOpacityAmp: 0.03,
+      buoySeaCount: 8,
+      buoyMarinaCount: 4,
+      buoyBobAmp: 0.22, // metres
+      buoyBobSpeed: 1.1,
+      mooredBobAmp: 0.09,
+      mooredRockAmp: 0.035, // radians
+      cruiseBoatCount: 2,
+    },
+    birds: { flocks: 3, perFlock: 4 },
+    // Traffic life (traffic.js): zebra-crossing probability per second
+    // near a crossing, and the per-car cruise-speed breathing amplitude.
+    traffic: {
+      pedCrossChance: 0.15,
+      speedWobble: 0.08,
+      parkedPalette: ['#c0392b', '#2e86c1', '#f1c40f', '#ecf0f1', '#8e44ad', '#16a085',
+        '#e67e22', '#1abc9c', '#d35400', '#7f8c8d', '#2c3e50', '#f5f5f5'],
+    },
+    // Car looks (vehicle.js): headlight / taillight glow sprite tuning.
+    vehicle: {
+      headlightGlowScale: 1.5,
+      headlightGlowOpacity: 0.75,
+      tailGlowScale: 1.3,
+      tailGlowIdle: 0.45,
+      tailGlowBrake: 0.95,
+    },
+  },
+
+  // ---- Round-4b: ambitious visual pass (coordinator) ----
+  // Geometry-level building variation + ground/sidewalk texture + sun.
+  // These close the audit's remaining visual gap (flat boxes, flat green).
+  round4b: {
+    // Stepped towers: tall downtown buildings get a narrower upper tier.
+    setbacks: { minHeight: 40, chance: 0.65, widthFracMin: 0.55, widthFracMax: 0.68, heightFracMin: 0.3, heightFracMax: 0.45 },
+    // Balconies on mid-rise residential facades (south face, a few floors).
+    balconies: { minHeight: 14, maxHeight: 30, chance: 0.5, perBuildingMin: 2, perBuildingMax: 4 },
+    // Pitched (pyramid) roofs on low buildings instead of a flat cap.
+    pitchedRoof: { maxHeight: 14, chance: 0.5, heightFracMin: 0.18, heightFracMax: 0.3 },
+    // Parapet rim around the roof edge on mid/high buildings.
+    parapet: { minHeight: 14, chance: 0.4, height: 0.5, thickness: 0.25 },
+    // Ground + sidewalk procedural texture tiling.
+    groundTex: { repeat: 9, patchCount: 90 },
+    sidewalkTex: { repeat: 24 },
+    // Sunset sun glow sprite (toward the sun light direction).
+    sun: { glowScale: 300, glowColor: 0xff9a3c, discScale: 90, x: 520, y: 110, z: 280 },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,
@@ -142,6 +225,9 @@ export const CONFIG = {
     pickup: { topSpeed: 0.85, accel: 0.85 },
     van: { topSpeed: 0.75, accel: 0.75 },
     sports: { topSpeed: 1.25, accel: 1.25 },
+    // Round-4 models: the taxi drives like a sedan; the bus is slow.
+    taxi: { topSpeed: 1.0, accel: 1.0 },
+    bus: { topSpeed: 0.6, accel: 0.55 },
   },
 
   // ---- Camera ----

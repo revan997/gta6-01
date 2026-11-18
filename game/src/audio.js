@@ -29,6 +29,10 @@ export class AudioEngine {
     this.engineOn = false;
     this.sirenOn = false;
     this.musicOn = false;
+    this.ambientOn = false;
+    this.ambientHum = null; // { osc, gain } — low city hum, always on
+    this.ambientWaves = null; // { src, gain, lfo } — surf swell near the beach
+    this._engineGear = 1;
     // Simple laid-back chord loop in A minor (frequencies, Hz).
     this.musicChords = [
       [220.0, 261.63, 329.63], // Am
@@ -157,17 +161,27 @@ export class AudioEngine {
   }
 
   // speed: normalised 0..1, or a speed in m/s when `isMs` is set.
-  // Call every frame while driving.
+  // Call every frame while driving. Round 4: the pitch follows speed
+  // AND a 5-speed gearbox — each gear change gets a soft shift click
+  // (the pitch itself stays continuous, so no jump is ever audible).
   setEngineSpeed(speed, isMs = false) {
     if (!this.engineOn || !this.ctx) return;
     const n = isMs ? clamp(speed / 40, 0, 1) : clamp(speed, 0, 1);
     const t = this.ctx.currentTime;
+    const gear = Math.min(5, Math.max(1, Math.floor(n * 5) + 1));
+    if (gear !== this._engineGear) {
+      this._engineGear = gear;
+      this._blip(220 + gear * 40, 0.04, 'square', 0.08);
+    }
     const freq = 55 + n * 165; // 55 Hz idle -> 220 Hz flat out
     this.engineOsc.frequency.setTargetAtTime(freq, t, 0.08);
     this.engineOsc2.frequency.setTargetAtTime(freq * 2, t, 0.08);
     this.engineFilter.frequency.setTargetAtTime(420 + n * 1600, t, 0.1);
     this.engineGain.gain.setTargetAtTime(0.10 + n * 0.10, t, 0.1);
   }
+
+  // Current gearbox step (1–5), derived from the last setEngineSpeed call.
+  getEngineGear() { return this._engineGear; }
 
   stopEngine() {
     if (!this.engineOn) return;
@@ -266,6 +280,14 @@ export class AudioEngine {
     this._blip(660, 0.05, 'square', 0.2);
   }
 
+  // Round-4b: the combo sting — a short blip whose pitch climbs with the
+  // combo count (capped at x8), so a long streak sounds like it is rising.
+  playCombo(combo) {
+    const n = Math.max(2, Math.min(combo || 2, 8));
+    this._blip(660 + n * 60, 0.07, 'triangle', 0.3);
+    this._blip(990 + n * 60, 0.1, 'sine', 0.2, 0.05);
+  }
+
   // Two-tone car horn: two short square-wave blips, ~370 Hz then ~440 Hz.
   playHorn() {
     this._blip(370, 0.16, 'square', 0.35);
@@ -292,6 +314,130 @@ export class AudioEngine {
   playStep() {
     this._noise(0.05, 0.14, 250);
     this._blip(70, 0.06, 'sine', 0.22, 0, 50);
+  }
+
+  // Round 4: mission-start sting (a rising fourth, then a bright chime),
+  // wanted-up sting (a dissonant low-high alarm), cash-register cha-ching
+  // on earn, and a short radio-static blip under dispatch chatter.
+  playMissionStart() {
+    this._blip(392, 0.16, 'triangle', 0.4, 0, 523.25);
+    this._blip(523.25, 0.22, 'triangle', 0.4, 0.14);
+    this._blip(1046.5, 0.4, 'sine', 0.18, 0.3);
+  }
+
+  playWantedUp() {
+    this._blip(233.08, 0.18, 'square', 0.3, 0, 220);
+    this._blip(311.13, 0.24, 'square', 0.3, 0.16, 294);
+  }
+
+  playCash() {
+    // Register drawer + cha-ching: metallic ticks, then two high pings.
+    this._noise(0.05, 0.25, 2400, 0, 'bandpass');
+    this._blip(1567.98, 0.12, 'sine', 0.35, 0.05);
+    this._blip(2093, 0.3, 'sine', 0.3, 0.14);
+  }
+
+  playRadioBlip() {
+    this._noise(0.09, 0.2, 1800, 0, 'bandpass');
+    this._blip(1200, 0.05, 'square', 0.12, 0.02);
+  }
+
+  // ---- ambient bed: soft city hum + surf near the beach (round 4) ----
+  // Two looping nodes built once: a low hum (55 Hz sine + filtered noise)
+  // and a surf swell (band-passed noise whose gain breathes on a slow
+  // LFO). setAmbient() scales the surf by how close Rico is to the sand.
+
+  _loopNoiseBuffer(seconds = 2) {
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * seconds));
+    const buffer = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    let s = (0xabcdef01 + (this._noiseSeed = (this._noiseSeed || 0) + 104729)) >>> 0;
+    for (let i = 0; i < len; i++) {
+      s ^= s << 13; s >>>= 0;
+      s ^= s >> 17; s ^= s << 5; s >>>= 0;
+      data[i] = (s / 4294967296) * 2 - 1;
+    }
+    return buffer;
+  }
+
+  startAmbient() {
+    if (this.ambientOn) return;
+    if (!this.ensureContext()) return;
+    this.ambientOn = true;
+    // City hum: a quiet 55 Hz sine under a low-passed noise loop.
+    const humOsc = this.ctx.createOscillator();
+    humOsc.type = 'sine';
+    humOsc.frequency.value = 55;
+    const humGain = this.ctx.createGain();
+    humGain.gain.value = 0.03;
+    humOsc.connect(humGain);
+    humGain.connect(this.master);
+    humOsc.start();
+    const humNoise = this.ctx.createBufferSource();
+    humNoise.buffer = this._loopNoiseBuffer(2);
+    humNoise.loop = true;
+    const humFilter = this.ctx.createBiquadFilter();
+    humFilter.type = 'lowpass';
+    humFilter.frequency.value = 220;
+    const humNoiseGain = this.ctx.createGain();
+    humNoiseGain.gain.value = 0.02;
+    humNoise.connect(humFilter);
+    humFilter.connect(humNoiseGain);
+    humNoiseGain.connect(this.master);
+    humNoise.start();
+    this.ambientHum = { osc: humOsc, noise: humNoise, gain: humGain };
+    // Surf: band-passed noise loop, gain breathing on a 0.12 Hz LFO so
+    // the waves swell and fade like real surf.
+    const waveSrc = this.ctx.createBufferSource();
+    waveSrc.buffer = this._loopNoiseBuffer(3);
+    waveSrc.loop = true;
+    const waveFilter = this.ctx.createBiquadFilter();
+    waveFilter.type = 'bandpass';
+    waveFilter.frequency.value = 480;
+    waveFilter.Q.value = 0.6;
+    const waveGain = this.ctx.createGain();
+    waveGain.gain.value = 0.0;
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 0.12;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 0.03;
+    lfo.connect(lfoGain);
+    lfoGain.connect(waveGain.gain);
+    waveSrc.connect(waveFilter);
+    waveFilter.connect(waveGain);
+    waveGain.connect(this.master);
+    waveSrc.start();
+    lfo.start();
+    this.ambientWaves = { src: waveSrc, gain: waveGain, lfo, base: 0 };
+  }
+
+  // position: { x, z } (or null); district: the HUD district string.
+  // Surf is loudest on the beach (z > ~240 / district "Beach") and fades
+  // to a whisper downtown. Call once per frame; cheap (two gain ramps).
+  setAmbient(position, district) {
+    if (!this.ambientOn || !this.ctx || !this.ambientWaves) return;
+    const z = position?.z ?? 0;
+    const name = String(district || '');
+    const nearBeach = /beach|marina|shore/i.test(name) || z > 240;
+    const midBeach = z > 180;
+    const target = nearBeach ? 0.09 : midBeach ? 0.04 : 0.012;
+    this.ambientWaves.base = target;
+    this.ambientWaves.gain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.8);
+  }
+
+  stopAmbient() {
+    if (!this.ambientOn) return;
+    this.ambientOn = false;
+    try {
+      const h = this.ambientHum;
+      const w = this.ambientWaves;
+      setTimeout(() => {
+        try { h?.osc?.stop(); h?.noise?.stop(); w?.src?.stop(); w?.lfo?.stop(); } catch (_) { /* already stopped */ }
+      }, 300);
+    } catch (_) { /* context already closed */ }
+    this.ambientHum = null;
+    this.ambientWaves = null;
   }
 
   // ---- ambient music loop: soft plucked chords, one bar every 1.6 s ----
@@ -352,6 +498,7 @@ export class AudioEngine {
     this.stopEngine();
     this.stopSiren();
     this.stopMusic();
+    this.stopAmbient();
   }
 
   dispose() {

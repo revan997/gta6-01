@@ -57,12 +57,19 @@ export const CRIME_HEAT = {
 
 // Round-3 polish: police radio chatter — a dispatch line per wanted
 // level, shown by the game loop when the heat rises.
+// Round-4b: two lines per level, picked by the seeded rng, so the same
+// heat level does not always repeat the same dispatch line.
 const RADIO_LINES = {
-  1: 'Dispatch: petty theft reported — one unit, respond.',
-  2: 'Dispatch: suspect is fleeing. All units in the area, converge.',
-  3: 'Dispatch: three stars. Suspect is armed and mobile — do not let him reach the marina.',
-  4: 'Dispatch: four stars! Roadblocks up — harbour and docks covered.',
-  5: 'Dispatch: five stars. Full city response — bring Rico Vega in.',
+  1: ['Dispatch: petty theft reported — one unit, respond.',
+    'Dispatch: shoplifting at the marina — nearest unit, check it out.'],
+  2: ['Dispatch: suspect is fleeing. All units in the area, converge.',
+    'Dispatch: two stars — suspect is mobile, cut him off at the bridge.'],
+  3: ['Dispatch: three stars. Suspect is armed and mobile — do not let him reach the marina.',
+    'Dispatch: three stars — air unit is up, keep eyes on the sedan.'],
+  4: ['Dispatch: four stars! Roadblocks up — harbour and docks covered.',
+    'Dispatch: four stars — spike strips on the highway, all units hold.'],
+  5: ['Dispatch: five stars. Full city response — bring Rico Vega in.',
+    'Dispatch: five stars — the whole city is looking for him. Do not lose him.'],
 };
 
 function makePoliceCar(spec, rng) {
@@ -109,6 +116,8 @@ export class PoliceSystem {
     this.maxPoliceCars = options.maxPoliceCars ?? null;
     this.maxOfficers = options.maxOfficers ?? null;
     // Callbacks the game loop may wire up: { onBusted, onWasted, onWantedChange, onSiren }
+    // Round 4 adds onRoadblock: fired once per intercept, so the loop can
+    // toast "Roadblock ahead!" before the cut-off car arrives.
     this.events = options.events || {};
     this.wanted = 0;
     this.busted = false;
@@ -120,6 +129,8 @@ export class PoliceSystem {
     this._spawnCooldown = 0;
     this._speedingCooldown = 0; // speeding adds heat at most once per window
     this._sirenOn = false;
+    this._interceptAnnounced = false; // round 4: roadblock toast fires once per chase
+    this._interceptCar = null; // round 4: the car currently cutting off ahead
     this.sirenPhase = 0; // light-bar flash phase: 0 = red bright, 1 = blue bright
     this._sirenTimer = 0; // seconds since the last phase toggle
   }
@@ -137,7 +148,24 @@ export class PoliceSystem {
   // The dispatch line for a wanted level (round 3).
   radioLine(level) {
     const n = Math.max(1, Math.min(5, Math.round(level) || 1));
-    return RADIO_LINES[n] || RADIO_LINES[1];
+    const lines = RADIO_LINES[n] || RADIO_LINES[1];
+    return this.rng?.pick ? this.rng.pick(lines) : lines[0];
+  }
+
+  // Round 4: the intercept point — where the player will be in `lead`
+  // seconds if they keep their current heading and speed. The cut-off car
+  // aims here instead of at the player's tail. Player velocity comes
+  // from the driven car, or from on-foot speed + heading.
+  interceptPoint(player, lead = 2.5) {
+    if (!player?.position) return null;
+    const car = player.vehicle || player.car || null;
+    const speed = Math.abs(car?.speed ?? player.speed ?? 0);
+    const heading = car ? (car.heading || 0) : (player.heading || 0);
+    return {
+      x: player.position.x + Math.sin(heading) * speed * lead,
+      y: 0,
+      z: player.position.z + Math.cos(heading) * speed * lead,
+    };
   }
 
   // Distance to the nearest police unit, or Infinity when none is out.
@@ -278,6 +306,11 @@ export class PoliceSystem {
     this._spawnCooldown -= step;
     if (this._spawnCooldown <= 0) {
       this._spawnCooldown = 0.75;
+      // Round 4 fix (found in the audit): dead officers stayed in the
+      // list forever, so the spawn loop thought the quota was full and no
+      // replacements ever arrived after Rico fought back. Prune them here
+      // (their meshes are removed by syncPersonMeshes in the game loop).
+      this.officers = this.officers.filter((o) => o.alive !== false);
       const want = this.desiredUnits();
       if (this.maxPoliceCars !== null) want.cars = Math.min(want.cars, this.maxPoliceCars);
       if (this.maxOfficers !== null) want.officers = Math.min(want.officers, this.maxOfficers);
@@ -285,6 +318,21 @@ export class PoliceSystem {
       while (this.officers.length < want.officers) this._spawnOfficer(player);
       while (this.policeCars.length > want.cars) this.policeCars.pop();
       while (this.officers.length > want.officers) this.officers.pop();
+      // Round 4: at 3+ stars, pick one car as the interceptor. It is
+      // re-picked whenever the wanted level drops below 3 or the pick
+      // leaves the field, and the roadblock toast fires once per chase.
+      if (this.wanted >= 3) {
+        if (!this._interceptCar || !this.policeCars.includes(this._interceptCar)) {
+          this._interceptCar = this.policeCars.length ? this.policeCars[0] : null;
+          if (this._interceptCar && !this._interceptAnnounced) {
+            this._interceptAnnounced = true;
+            this._emit('onRoadblock', { wanted: this.wanted });
+          }
+        }
+      } else {
+        this._interceptCar = null;
+        this._interceptAnnounced = false;
+      }
     }
 
     const playerSpeed = Math.abs(player.vehicle?.speed ?? player.speed ?? 0);
@@ -293,7 +341,13 @@ export class PoliceSystem {
     // --- Police cars: chase and ram. ---
     for (const car of this.policeCars) {
       const d = dist2D(car.position, player.position);
-      const desiredHeading = Math.atan2(player.position.x - car.position.x, player.position.z - car.position.z);
+      // Round 4: the interceptor does not chase the tail — it aims at the
+      // intercept point ahead of the player and tries to cut them off.
+      // Every other car chases the player directly, as before.
+      const aim = (car === this._interceptCar && this.wanted >= 3)
+        ? (this.interceptPoint(player, 2.5) || player.position)
+        : player.position;
+      const desiredHeading = Math.atan2(aim.x - car.position.x, aim.z - car.position.z);
       let turn = desiredHeading - car.heading;
       while (turn > Math.PI) turn -= Math.PI * 2;
       while (turn < -Math.PI) turn += Math.PI * 2;
@@ -327,7 +381,12 @@ export class PoliceSystem {
       while (turn > Math.PI) turn -= Math.PI * 2;
       while (turn < -Math.PI) turn += Math.PI * 2;
       officer.heading += clamp(turn, -3.5 * step, 3.5 * step);
-      officer.speed = d > 2 ? 5.2 : 0;
+      // Round 4: officers on foot at 2+ stars are confirmed working —
+      // desiredUnits() fields (wanted - 1) * 2 of them (capped at 8) and
+      // _spawnOfficer() places them 12–30 m out. They sprint the last
+      // stretch (5.2 -> 6.0 m/s inside 12 m) but Rico still outruns them
+      // on foot (run 8.0 m/s), so an arrest stays avoidable.
+      officer.speed = d > 2 ? (d < 12 ? 6.0 : 5.2) : 0;
       if (typeof officer.update === 'function') officer.update(step, world);
       if (d < 2.2) {
         officer.arrestTimer += step;
@@ -409,6 +468,8 @@ export class PoliceSystem {
     this._sirenOn = false;
     this.sirenPhase = 0;
     this._sirenTimer = 0;
+    this._interceptCar = null;
+    this._interceptAnnounced = false;
   }
 }
 

@@ -84,7 +84,11 @@ function laneAModel(name) {
   const n = String(name || '').toLowerCase();
   if (n.includes('coupe')) return 'coupe';
   if (n.includes('pickup')) return 'pickup';
-  if (n.includes('van') || n.includes('bus')) return 'van';
+  // Round-4 models: the taxi is its own shape (checker band + roof
+  // sign) and the bus is a long 6-wheel body, not a van.
+  if (n.includes('taxi')) return 'taxi';
+  if (n.includes('bus')) return 'bus';
+  if (n.includes('van')) return 'van';
   if (n.includes('sports')) return 'sports';
   // Round-3 models: the food truck is a boxy van, the beach buggy is a
   // low fun car, the limo rides on the sedan.
@@ -130,9 +134,12 @@ const police = new PoliceSystem({
       else audio.stopSiren();
     },
     // Round-3 polish: police radio chatter when the heat rises.
-    onWantedChange: ({ wanted }) => {
+    // Round-4 polish: roadblock toast + wanted-up sting / radio static.
+    onWantedChange: ({ wanted, before }) => {
       if (wanted > 0) showMessage(police.radioLine(wanted), 5);
+      if (wanted > before) { audio.playWantedUp(); audio.playRadioBlip(); }
     },
+    onRoadblock: () => showMessage('Roadblock ahead — they are cutting you off!', 5),
   },
 });
 const missions = new MissionManager({
@@ -141,12 +148,12 @@ const missions = new MissionManager({
   parSeconds: CONFIG.missionPar, // round 3: under-par bonus times
   parBonus: CONFIG.parBonus,
   events: {
-    onMissionStart: ({ name }) => {
-      // The briefing is long; the HUD already shows the objective, so the
-      // toast stays short and never covers the middle of the screen.
-      showMessage(name);
+    onMissionStart: ({ name, introCard }) => {
+      // Round-4 polish: intro card line + mission-start sting.
+      showMessage(introCard ? `${name} — ${introCard}` : name, 6);
+      audio.playMissionStart();
     },
-    onObjective: ({ objective }) => showMessage(objective),
+    onObjective: ({ objective, flavour }) => showMessage(flavour || objective),
     onComplete: ({ name, reward }) => {
       showMissionComplete(name, reward);
     },
@@ -200,6 +207,11 @@ let impactTimer = 0; // round 3: hit-impact flash lifetime
 let lastMouseMoveAt = 0;
 let lastSkidAt = 0; // round 3: seconds (performance clock) of the last screech
 let lastStepPhase = 0; // round 3: walk-phase step index of the last footstep
+let ambientClock = 0; // round 4: absolute seconds for the ambient world updates
+let hitStopUntil = 0; // round 4: performance-clock deadline for the hit-stop freeze
+let gamesPlayed = 0; // round 4: sessions that finished a mission (save v3)
+let lastCombo = 0; // round-4b: combo count last heard (for the sting)
+let thisSessionCounted = false; // round 4: gamesPlayed increments once per session
 
 function showMessage(text, seconds) {
   messageText = text || '';
@@ -212,7 +224,7 @@ function systems() {
     traffic,
     combat,
     audio,
-    addMoney: (n) => { money += n; totalEarned += n; },
+    addMoney: (n) => { money += n; totalEarned += n; if (n > 0) audio.playCash(); },
   };
 }
 
@@ -348,6 +360,7 @@ function startPlaying() {
   if (!SHOT_MODE) {
     audio.ensureContext();
     audio.startMusic();
+    audio.startAmbient(); // round 4: city hum + surf bed
   }
   // Resume a previous session (round-2 polish): the save system was
   // writing on mission complete but never loading. v1 and v2 saves both
@@ -361,6 +374,7 @@ function startPlaying() {
       playTimeSeconds = loaded.playTimeSeconds || 0;
       timesPlayed = (loaded.timesPlayed || 0) + 1;
       totalEarned = loaded.totalEarned || 0; // round 3: save v3 field
+      gamesPlayed = loaded.gamesPlayed || 0; // round 4: save v3 field
       for (const n of loaded.completedMissions || []) missions.completed.add(n);
       if (loaded.position) {
         player.teleport(loaded.position.x, loaded.position.z, loaded.heading ?? player.heading);
@@ -415,6 +429,7 @@ function showMissionComplete(name, reward) {
   showOnly('complete');
   input.exitPointerLock();
   audio.stopSiren();
+  if (!thisSessionCounted) { thisSessionCounted = true; gamesPlayed += 1; } // round 4
   save.save({
     money,
     completedMissions: missions.getCompletedMissions(),
@@ -429,6 +444,7 @@ function showMissionComplete(name, reward) {
     playTimeSeconds,
     timesPlayed,
     totalEarned, // round 3: save v3 field
+    gamesPlayed, // round 4: save v3 field
   });
 }
 
@@ -552,6 +568,7 @@ function aimPoint() {
 
 function doPunch() {
   if (state !== 'playing' || !player.onFoot) return;
+  player.startPunchWindup?.(); // round 4: punch wind-up lean
   const targets = combat.collectTargets({ traffic, police });
   const hit = combat.punch(player, targets);
   if (hit && hit.killed) showMessage('Target down.');
@@ -627,11 +644,25 @@ canvas.addEventListener('click', () => {
 });
 document.getElementById('start-button')?.addEventListener('click', () => {
   audio.ensureContext();
+  audio.playClick(); // round-4b: the START button answers with a click
   input.requestPointerLock(canvas);
   startPlaying();
 });
 document.getElementById('resume-button')?.addEventListener('click', resumeGame);
 document.getElementById('restart-button')?.addEventListener('click', () => resetGame(1));
+
+// Round-4b: the menu shows the saved profile's progress (if any), so a
+// returning player sees what they have earned before pressing START.
+{
+  const el = document.getElementById('save-stats');
+  const summary = el ? save.getSummary() : null;
+  if (el && summary) {
+    const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+    el.textContent = 'Profile: ' + plural(summary.missionsCompleted, 'mission') + ' done'
+      + ' · $' + summary.totalEarned.toLocaleString() + ' earned'
+      + ' · ' + plural(summary.gamesPlayed, 'game') + ' finished';
+  }
+}
 document.getElementById('busted-retry-button')?.addEventListener('click', () => {
   resetGame(missions.lastFailedMission || missions.getCurrentMissionNumber() || 1);
 });
@@ -652,6 +683,11 @@ function update(dt) {
   // cycle in every state (the menu backdrop included).
   if (typeof world.updateClouds === 'function') world.updateClouds(dt);
   if (typeof world.updateTrafficLights === 'function') world.updateTrafficLights(dt);
+  // Round-4 polish: the living water and sky — shoreline foam, bobbing
+  // buoys and moored boats, cruising boats, bird flocks. Same every
+  // state, so the menu backdrop breathes too.
+  ambientClock += dt;
+  if (typeof world.updateAmbient === 'function') world.updateAmbient(ambientClock);
 
   // 1. input — mouse look while playing with pointer lock.
   if (state === 'playing') {
@@ -805,6 +841,12 @@ function update(dt) {
     speed: speedMs,
     objective: missions.getCurrentObjectiveText() || 'Explore Solmar Bay.',
     missionName: mission ? mission.name + parText : '',
+    missionProgress: missions.getMissionProgress(), // round 4
+    parRemaining: missions.getParRemaining(), // round 4
+    hitCount: combat.hitCount, // round 4
+    hitKilled: combat.lastHit?.killed ?? false, // round 4
+    combo: combat.getCombo(), // round-4b: the combo label follows this
+    policeOfficers: police.getOfficers(), // round 4
     district: world.districtAt(player.position.x, player.position.z) || '',
     timeOfDay,
     message: messageText || undefined,
@@ -830,6 +872,12 @@ function update(dt) {
     const d = police.nearestUnitDistance(player);
     audio.setSirenVolume(1 - Math.min(1, d / 120));
   }
+  // Round-4 polish: ambient bed follows Rico (surf near the beach/marina).
+  audio.setAmbient(player.position, world.districtAt(player.position.x, player.position.z) || '');
+  // Round-4b: the combo sting rises in pitch as the combo grows.
+  const comboNow = combat.getCombo();
+  if (comboNow > lastCombo && comboNow >= 2) audio.playCombo(comboNow);
+  lastCombo = comboNow;
 
   updateCamera(dt);
 }
@@ -939,6 +987,13 @@ let accumulator = 0;
 const STEP = 1 / 60;
 function frame(now) {
   requestAnimationFrame(frame);
+  // Round-4 polish: hit-stop freeze — consume the combat timer once, then
+  // hold rendering (no stepping) until the deadline passes.
+  const hs = combat.consumeHitStop?.() || 0;
+  if (hs > 0) hitStopUntil = Math.max(hitStopUntil, performance.now() + hs * 1000);
+  if (now < hitStopUntil && state === 'playing') {
+    lastNow = now; accumulator = 0; renderer.render(scene, camera); return;
+  }
   const frameDt = Math.min((now - lastNow) / 1000, 0.1);
   lastNow = now;
   accumulator += frameDt;
@@ -967,5 +1022,9 @@ window.__solmar = {
   scene,
   camera,
   beacon,
+  // Round-4 probes: the living world — bird flocks, buoys, the foam strip.
+  get birds() { return world.birds || []; },
+  get buoys() { return world.buoys || []; },
+  get water() { return world.water || null; },
   get marker() { return missions.getMarkerPosition(world); },
 };

@@ -6,8 +6,25 @@
 // reads: position, heading, speed, model, color, setDriver(driver), update().
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import { makeGlowTexture, makeCheckerTexture, makeSignTexture } from './render.js';
 
-export const VEHICLE_MODELS = ['coupe', 'sedan', 'pickup', 'van', 'sports'];
+export const VEHICLE_MODELS = ['coupe', 'sedan', 'pickup', 'van', 'sports', 'taxi', 'bus'];
+
+// Round-4: glow / sign textures are built lazily once (canvas work only
+// happens in the browser, never at module import).
+let headGlowTex = null;
+let tailGlowTex = null;
+let checkerTex = null;
+let taxiSignTex = null;
+function glowTextures() {
+  if (!headGlowTex) {
+    headGlowTex = makeGlowTexture('rgba(255,240,170,0.9)');
+    tailGlowTex = makeGlowTexture('rgba(255,60,50,0.9)');
+    checkerTex = makeCheckerTexture(8, 2);
+    taxiSignTex = makeSignTexture('TAXI', '#f7c948', '#111111');
+  }
+  return { headGlowTex, tailGlowTex, checkerTex, taxiSignTex };
+}
 
 // Model dimensions (length x width x body height) and cabin proportions.
 const MODEL_SHAPES = {
@@ -16,6 +33,10 @@ const MODEL_SHAPES = {
   pickup: { length: 5.2, width: 2.0, bodyH: 0.72, cabinL: 1.7, cabinH: 0.62, cabinZ: 0.9, wheels: 0.38 },
   van: { length: 5.0, width: 2.1, bodyH: 1.05, cabinL: 4.2, cabinH: 0.85, cabinZ: 0.1, wheels: 0.36 },
   sports: { length: 4.5, width: 2.0, bodyH: 0.52, cabinL: 1.9, cabinH: 0.42, cabinZ: -0.3, wheels: 0.35 },
+  // Round-4 models: the taxi rides on the sedan shape; the bus is long,
+  // tall and wide, with a long glass band for windows.
+  taxi: { length: 4.8, width: 1.9, bodyH: 0.68, cabinL: 2.5, cabinH: 0.58, cabinZ: -0.1, wheels: 0.35 },
+  bus: { length: 9.5, width: 2.5, bodyH: 1.5, cabinL: 8.0, cabinH: 0.9, cabinZ: 0, wheels: 0.42 },
 };
 
 function buildCarMesh(model, color) {
@@ -60,12 +81,75 @@ function buildCarMesh(model, color) {
     box(matTrim, W - 0.2, 0.07, 0.4, 0, bodyY + shape.bodyH + 0.25, -L / 2 + 0.3);
     box(matTrim, 0.08, 0.28, 0.08, -W / 2 + 0.2, bodyY + shape.bodyH + 0.12, -L / 2 + 0.3);
     box(matTrim, 0.08, 0.28, 0.08, W / 2 - 0.2, bodyY + shape.bodyH + 0.12, -L / 2 + 0.3);
+    // Round-4: side skirts + rear diffuser so the sports car reads lower.
+    box(matTrim, 0.1, 0.14, L * 0.72, -W / 2 + 0.02, bodyY - shape.bodyH / 2 + 0.1, 0);
+    box(matTrim, 0.1, 0.14, L * 0.72, W / 2 - 0.02, bodyY - shape.bodyH / 2 + 0.1, 0);
+    box(matTrim, W - 0.3, 0.16, 0.3, 0, bodyY - shape.bodyH / 2 + 0.08, -L / 2 + 0.15);
+  }
+  // Round-4: roof racks on the workhorses (pickup cabin roof, van roof
+  // centre — clear of the van's front/rear glass boxes).
+  if (model === 'pickup' || model === 'van') {
+    const rackY = model === 'pickup'
+      ? bodyY + shape.bodyH / 2 + shape.cabinH + 0.06
+      : bodyY + shape.bodyH / 2 + 0.12;
+    const rackL = model === 'pickup' ? shape.cabinL * 0.9 : 1.8;
+    const rackZ = model === 'pickup' ? shape.cabinZ : 0;
+    for (const sx of [-1, 1]) box(matTrim, 0.07, 0.07, rackL, sx * (W / 2 - 0.35), rackY, rackZ);
+    for (const cz of [rackZ - rackL / 2 + 0.2, rackZ, rackZ + rackL / 2 - 0.2]) {
+      box(matTrim, W - 0.6, 0.06, 0.08, 0, rackY, cz);
+    }
+  }
+  // Round-4: the taxi gets a checker band along both sides and a TAXI
+  // roof sign; the bus gets window dividers along its long glass band
+  // and an amber destination display on the windshield.
+  const glow = glowTextures();
+  if (model === 'taxi') {
+    const checkerMat = new THREE.MeshStandardMaterial({ map: glow.checkerTex, roughness: 0.6 });
+    for (const sx of [-1, 1]) {
+      const band = new THREE.Mesh(new THREE.PlaneGeometry(L * 0.62, 0.3), checkerMat);
+      band.position.set(sx * (W / 2 + 0.015), bodyY, 0);
+      band.rotation.y = sx * Math.PI / 2;
+      group.add(band);
+    }
+    const signMat = new THREE.MeshStandardMaterial({ map: glow.taxiSignTex, roughness: 0.6 });
+    box(signMat, 0.75, 0.24, 0.32, 0, bodyY + shape.bodyH / 2 + shape.cabinH + 0.08, shape.cabinZ);
+  }
+  if (model === 'bus') {
+    const cabY = bodyY + shape.bodyH / 2 + shape.cabinH / 2 - 0.04;
+    for (let z = -3.4; z <= 3.4; z += 1.35) {
+      box(matTrim, 0.04, shape.cabinH * 0.85, 0.1, -W / 2 - 0.005, cabY, z);
+      box(matTrim, 0.04, shape.cabinH * 0.85, 0.1, W / 2 + 0.005, cabY, z);
+    }
+    const matDest = new THREE.MeshStandardMaterial({
+      color: 0xffc861, emissive: 0xffb020, emissiveIntensity: 1.4,
+    });
+    box(matDest, 1.3, 0.32, 0.06, 0, cabY + 0.15, shape.cabinZ + shape.cabinL / 2 + 0.03);
   }
   // Headlights (front = +z) and taillights (rear = -z).
   box(matHead, 0.42, 0.16, 0.08, -W / 2 + 0.35, bodyY, L / 2 + 0.01);
   box(matHead, 0.42, 0.16, 0.08, W / 2 - 0.35, bodyY, L / 2 + 0.01);
   box(matTail, 0.42, 0.16, 0.08, -W / 2 + 0.35, bodyY, -L / 2 - 0.01);
   box(matTail, 0.42, 0.16, 0.08, W / 2 - 0.35, bodyY, -L / 2 - 0.01);
+  // Round-4: soft glow sprites at the lights so cars read at dusk and in
+  // the menu orbit shot. The tail glows flare with the brake lights
+  // (car.update sets their opacity from `braking`).
+  const glowCfg = CONFIG.round4?.vehicle || {};
+  function glowSprite(tex, x, y, z, scale, opacity) {
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity });
+    const sprite = new THREE.Sprite(mat);
+    sprite.position.set(x, y, z);
+    sprite.scale.setScalar(scale);
+    group.add(sprite);
+    return mat;
+  }
+  glowSprite(glow.headGlowTex, -W / 2 + 0.35, bodyY, L / 2 + 0.15,
+    glowCfg.headlightGlowScale ?? 1.5, glowCfg.headlightGlowOpacity ?? 0.75);
+  glowSprite(glow.headGlowTex, W / 2 - 0.35, bodyY, L / 2 + 0.15,
+    glowCfg.headlightGlowScale ?? 1.5, glowCfg.headlightGlowOpacity ?? 0.75);
+  const tailGlowL = glowSprite(glow.tailGlowTex, -W / 2 + 0.35, bodyY, -L / 2 - 0.15,
+    glowCfg.tailGlowScale ?? 1.3, glowCfg.tailGlowIdle ?? 0.45);
+  const tailGlowR = glowSprite(glow.tailGlowTex, W / 2 - 0.35, bodyY, -L / 2 - 0.15,
+    glowCfg.tailGlowScale ?? 1.3, glowCfg.tailGlowIdle ?? 0.45);
 
   // Detail pass: bumpers, grille, mirrors, door seams, license plate.
   const matPlate = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 });
@@ -89,7 +173,7 @@ function buildCarMesh(model, color) {
   // Rear license plate (small light box, just proud of the rear bumper).
   box(matPlate, 0.5, 0.14, 0.04, 0, bodyY - 0.02, -L / 2 - 0.14);
 
-  // Wheels.
+  // Wheels. The bus gets a middle axle as well (6 wheels).
   const wheels = [];
   const wheelGeo = new THREE.CylinderGeometry(shape.wheels, shape.wheels, 0.28, 14);
   wheelGeo.rotateZ(Math.PI / 2);
@@ -98,7 +182,9 @@ function buildCarMesh(model, color) {
   const wy = shape.wheels;
   const wzF = L / 2 - 0.85;
   const wzR = -L / 2 + 0.85;
-  for (const [wx, wz] of [[-W / 2, wzF], [W / 2, wzF], [-W / 2, wzR], [W / 2, wzR]]) {
+  const wheelSpots = [[-W / 2, wzF], [W / 2, wzF], [-W / 2, wzR], [W / 2, wzR]];
+  if (model === 'bus') wheelSpots.push([-W / 2, 0], [W / 2, 0]);
+  for (const [wx, wz] of wheelSpots) {
     const wheel = new THREE.Mesh(wheelGeo, matWheel);
     wheel.position.set(wx, wy, wz);
     wheel.castShadow = true;
@@ -109,7 +195,7 @@ function buildCarMesh(model, color) {
     wheels.push(wheel);
   }
 
-  return { group, wheels, shape, tailMat: matTail };
+  return { group, wheels, shape, tailMat: matTail, tailGlows: [tailGlowL, tailGlowR] };
 }
 
 // Create one car in `scene`.
@@ -118,7 +204,7 @@ function buildCarMesh(model, color) {
 export function createCar(scene, model, color, x, z, heading) {
   const name = VEHICLE_MODELS.includes(model) ? model : 'sedan';
   const tune = CONFIG.vehicleModels[name] || CONFIG.vehicleModels.sedan;
-  const { group, wheels, shape, tailMat } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
+  const { group, wheels, shape, tailMat, tailGlows } = buildCarMesh(name, color === undefined ? 0xc23a2a : color);
   group.position.set(x || 0, 0, z || 0);
   scene.add(group);
 
@@ -133,6 +219,7 @@ export function createCar(scene, model, color, x, z, heading) {
     driver: null,
     wheels,
     tailMat, // round 3: brake lights flare by setting its emissiveIntensity
+    tailGlows, // round 4: tail glow sprite materials, flared with braking
     braking: false, // round 3: true while the brakes are on
     skidding: false, // round 3: true on a hard handbrake turn at speed
     length: shape.length,
@@ -197,6 +284,12 @@ export function createCar(scene, model, color, x, z, heading) {
       // screech from the `skidding` flag).
       this.braking = brake || (throttle < 0 && this.speed > 0.5);
       if (this.tailMat) this.tailMat.emissiveIntensity = this.braking ? 2.6 : 0.7;
+      // Round-4: the tail glow sprites flare with the brake lights.
+      if (this.tailGlows) {
+        const glowCfg = CONFIG.round4?.vehicle || {};
+        const glow = this.braking ? (glowCfg.tailGlowBrake ?? 0.95) : (glowCfg.tailGlowIdle ?? 0.45);
+        for (const g of this.tailGlows) g.opacity = glow;
+      }
       this.skidding = Boolean(handbrake && steer !== 0
         && Math.abs(this.speed) > (CONFIG.drivingFeel?.skidSpeed ?? 18));
 

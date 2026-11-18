@@ -113,6 +113,36 @@ function consumePressed() {
   return out;
 }
 
+// Round 4: peek whether a key was pressed since the last consumePressed()
+// WITHOUT consuming it — for toggles and one-shot checks that share the
+// press queue with the game loop. Accepts e.code values and single
+// letters, like isDown(). anyPressed() is true when any code matches.
+function pressed(code) {
+  if (pressedKeys.has(code)) return true;
+  if (typeof code === 'string' && code.length === 1) {
+    return pressedKeys.has('Key' + code.toUpperCase());
+  }
+  return false;
+}
+
+function anyPressed(...codes) {
+  for (const code of codes) if (pressed(code)) return true;
+  return false;
+}
+
+// Round-4b: check AND consume a single pressed code — so two consumers
+// (the game loop and a menu handler) do not both act on the same press.
+// Accepts e.code values and single letters, like isDown().
+function consumePressedCode(code) {
+  const alt = typeof code === 'string' && code.length === 1 ? 'Key' + code.toUpperCase() : null;
+  if (pressedKeys.has(code) || (alt && pressedKeys.has(alt))) {
+    pressedKeys.delete(code);
+    if (alt) pressedKeys.delete(alt);
+    return true;
+  }
+  return false;
+}
+
 export { consumePressed };
 
 export const input = {
@@ -121,6 +151,9 @@ export const input = {
   exitPointerLock,
   isDown,
   isDownAny,
+  pressed,
+  anyPressed,
+  consumePressedCode,
   moveVector,
   consumeMouseDelta,
   consumePressed,

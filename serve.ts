@@ -3,6 +3,9 @@
 // `node serve.ts --port 9000 --host 127.0.0.1` changes the port/host.
 // `node serve.ts --root ../other-game` serves a different directory instead
 // of game/ (round 3: handy when comparing two builds side by side).
+// `node serve.ts --help` prints the flags and exits. Every response also
+// carries X-Content-Type-Options: nosniff (round 4), so the browser never
+// sniffs a .js module as something else.
 // HEAD requests are answered with headers only (no body). It sends the MIME
 // types a browser game needs, refuses any path outside the served root, and
 // otherwise does nothing clever: this is a development convenience, not a
@@ -11,6 +14,14 @@ import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log('usage: node serve.ts [--port N] [--host ADDR] [--root DIR]');
+  console.log('  --port N    listen port (default 8080)');
+  console.log('  --host ADDR listen address (default 127.0.0.1)');
+  console.log('  --root DIR  directory to serve (default ./game)');
+  process.exit(0);
+}
 
 const rootArgIndex = process.argv.indexOf('--root');
 const root = rootArgIndex === -1
@@ -47,7 +58,9 @@ const MIME: Record<string, string> = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-createServer((request, response) => {
+// Round-4b: if the port is taken, step to the next one (up to 10 tries)
+// instead of crashing — the test harness and a stray server can coexist.
+const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://localhost');
   let pathname: string;
   try {
@@ -75,12 +88,28 @@ createServer((request, response) => {
     'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'content-length': size,
     'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
   });
   if (request.method === 'HEAD') {
     response.end();
     return;
   }
   createReadStream(file).pipe(response);
-}).listen(port, host, () => {
-  console.log(`game/ is on http://${host}:${port}`);
 });
+let listenPort = port;
+let listenTries = 0;
+function listen() {
+  server.listen(listenPort, host, () => {
+    console.log(`game/ is on http://${host}:${listenPort}`);
+  });
+}
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE' && listenTries < 10) {
+    listenTries += 1;
+    listenPort += 1;
+    listen();
+  } else {
+    throw err;
+  }
+});
+listen();

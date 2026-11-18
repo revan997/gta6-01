@@ -68,6 +68,10 @@ export class CombatSystem {
     this.lastTracer = null; // { from, to, timer } for the last shot — see shoot()
     this.lastImpact = null; // { position, timer } for the last hit — the game loop flashes it
     this.lastHit = null; // { target, damage, killed } for the HUD / log
+    this.hitCount = 0; // increments on every landed hit — the HUD flashes a hit marker off it
+    this.combo = 0; // round-4b: consecutive hits inside the combo window (2 s)
+    this.comboTimer = 0; // seconds since the last landed hit
+    this.hitStopTimer = 0; // seconds of freeze left after a landed hit (round 4)
     this.isDown = false;
   }
 
@@ -101,6 +105,20 @@ export class CombatSystem {
     return impact;
   }
 
+  // Round-4b combo: consecutive landed hits inside a 2 s window.
+  getCombo() { return this.combo; }
+
+  // Hit-stop (round 4): a landed hit freezes the simulation for a beat
+  // (0.05 s, 0.09 s on a kill) so punches and shots feel heavy. The game
+  // loop polls getHitStop() each frame and skips stepping while it is
+  // above zero; consumeHitStop() hands the value over once.
+  getHitStop() { return this.hitStopTimer; }
+  consumeHitStop() {
+    const t = this.hitStopTimer;
+    this.hitStopTimer = 0;
+    return t;
+  }
+
   selectWeapon(name) {
     if (name === 'fists' || name === 'pistol') this.weapon = name;
     return this.weapon;
@@ -112,6 +130,10 @@ export class CombatSystem {
     this.punchCooldown = Math.max(0, this.punchCooldown - dt);
     this.shotCooldown = Math.max(0, this.shotCooldown - dt);
     this.muzzleTimer = Math.max(0, this.muzzleTimer - dt);
+    this.hitStopTimer = Math.max(0, this.hitStopTimer - dt);
+    // Round-4b: the combo window lapses 2 s after the last landed hit.
+    this.comboTimer += dt;
+    if (this.comboTimer > 2) this.combo = 0;
     if (this.muzzleTimer <= 0) this.muzzlePosition = null;
   }
 
@@ -139,7 +161,18 @@ export class CombatSystem {
   }
 
   // ---- damage to the player (armour absorbs first) ----
-
+  //
+  // Busted / wasted wiring, verified end-to-end (round 4 audit):
+  //   police catch on foot  -> PoliceSystem._bust -> events.onBusted
+  //                            -> main.js showBusted() (busted screen).
+  //   health reaches 0 here -> markWasted() on the police hooks
+  //                            -> events.onWasted -> main.js showWasted(),
+  //                            AND hooks.onPlayerDown -> showWasted().
+  //   main.js also polls combat.isPlayerDown() / player.health <= 0
+  //   every frame, so the wasted screen is reachable even if an event
+  //   callback is ever unwired. Missions fail on either flag too.
+  // No gap found in these paths; the only dead path is player.takeDamage
+  // (player.js), which nothing calls — combat is the single health owner.
   damagePlayer(amount, source = 'unknown') {
     if (this.isDown || amount <= 0) return this.health;
     let remaining = amount;
@@ -191,7 +224,7 @@ export class CombatSystem {
       }
     }
     if (!best) return null;
-    return this._applyDamage(best, WEAPONS.fists.damage, 'punch');
+    return this._applyDamage(best, WEAPONS.fists.damage, 'punch', player.position);
   }
 
   // ---- firearm ----
@@ -296,8 +329,9 @@ export class CombatSystem {
   }
 
   // ---- shared damage application ----
+  // `origin` (the attacker's position) is used for punch knockback only.
 
-  _applyDamage(target, damage, kind) {
+  _applyDamage(target, damage, kind, origin = null) {
     const result = { target, damage, killed: false, kind };
     if (typeof target.health === 'number') {
       target.health = Math.max(0, target.health - damage);
@@ -310,6 +344,24 @@ export class CombatSystem {
       target.alive = false;
       result.killed = true;
     }
+    // Round 4: punch knockback — the target staggers ~0.9 m away from the
+    // attacker, so a fistfight reads as physical, not a numbers tick.
+    // Officers and pedestrians steer by heading/speed, so a position push
+    // persists; cars are never punch targets (they are not in the list).
+    if (kind === 'punch' && target?.position && origin) {
+      const dx = target.position.x - origin.x;
+      const dz = target.position.z - origin.z;
+      const len = Math.hypot(dx, dz) || 1;
+      target.position.x += (dx / len) * 0.9;
+      target.position.z += (dz / len) * 0.9;
+    }
+    // Round 4: hit-stop + hit counter — every landed hit freezes the sim
+    // for a beat (longer on a kill) and bumps hitCount for the HUD marker.
+    this.hitCount += 1;
+    // Round-4b: every landed hit extends the combo (HUD + sting).
+    this.combo += 1;
+    this.comboTimer = 0;
+    this.hitStopTimer = Math.max(this.hitStopTimer, result.killed ? 0.09 : 0.05);
     if (result.killed) {
       // Killing is a heavier crime than merely hitting.
       this.hooks.police?.reportCrime?.('kill');
@@ -360,6 +412,12 @@ export class CombatSystem {
     this.lastHit = null;
     this.lastTracer = null;
     this.lastImpact = null;
+    this.hitCount = 0;
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.hitStopTimer = 0;
+    this.muzzleTimer = 0;
+    this.muzzlePosition = null;
   }
 }
 

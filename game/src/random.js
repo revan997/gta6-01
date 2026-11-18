@@ -56,6 +56,18 @@ export function createRng(seed) {
     return next() < p;
   }
 
+  // Round-4b: a standard-normal sample (Box-Muller), mean 0, sd 1,
+  // clamped to +-3. Traffic uses it so cruise speeds cluster naturally
+  // around the mean instead of spreading uniformly across the range.
+  function gaussian() {
+    let u = 0;
+    let v = 0;
+    while (u === 0) u = next();
+    while (v === 0) v = next();
+    const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    return Math.max(-3, Math.min(3, z));
+  }
+
   // Deterministic 2D value noise in [0, 1): smooth interpolation of a
   // hashed integer lattice, seeded by this generator's seed. Used for
   // texture speckle and ground variation — same seed, same pattern.
@@ -93,7 +105,23 @@ export function createRng(seed) {
     return out;
   }
 
-  return { next, range, int, pick, weightedPick, chance, noise2, shuffle, seed: seed >>> 0 };
+  // Round 4: `n` distinct elements from `array` (a partial Fisher-Yates
+  // over a copy), in deterministic order for this generator. Returns
+  // fewer than n only when the array is shorter.
+  function sample(array, n) {
+    if (!array || array.length === 0 || !(n > 0)) return [];
+    const out = array.slice();
+    const take = Math.min(n, out.length);
+    for (let i = 0; i < take; i++) {
+      const j = i + Math.floor(next() * (out.length - i));
+      const tmp = out[i];
+      out[i] = out[j];
+      out[j] = tmp;
+    }
+    return out.slice(0, take);
+  }
+
+  return { next, range, int, pick, weightedPick, chance, gaussian, noise2, shuffle, sample, seed: seed >>> 0 };
 }
 
 export default createRng;

@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createRng } from './random.js';
-import { makeCanvasTexture, makeGlowTexture } from './render.js';
+import { makeCanvasTexture, makeGlowTexture, makeSignTexture, makeWaterTexture } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
 export function districtAt(x, z) {
@@ -23,6 +23,9 @@ export function buildWorld(scene, seedOrRng) {
     : seedOrRng;
 
   const C = CONFIG.colors;
+  // Round-4b config — declared here (top of buildWorld) because the sky /
+  // sun-glow block below reads it before the round-4 block is defined.
+  const R4b = CONFIG.round4b;
   const half = CONFIG.halfCity;
   const roadW = CONFIG.roadWidth;
   const lines = CONFIG.roadLines;
@@ -64,6 +67,22 @@ export function buildWorld(scene, seedOrRng) {
     },
   };
   scene.add(skyMesh);
+  // Round-4b: sunset sun — a warm glow sprite + bright disc low on the
+  // horizon toward the sun light, so the dusk reads as a real sunset.
+  const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture('#ff9a3c', 0.1, 1), transparent: true, opacity: 0.85,
+    depthWrite: false, fog: false,
+  }));
+  sunGlow.scale.set(R4b.sun.glowScale, R4b.sun.glowScale, 1);
+  sunGlow.position.set(R4b.sun.x, R4b.sun.y, R4b.sun.z);
+  scene.add(sunGlow);
+  const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture('#fff3c4', 0.5, 1), transparent: true, opacity: 0.95,
+    depthWrite: false, fog: false,
+  }));
+  sunDisc.scale.set(R4b.sun.discScale, R4b.sun.discScale, 1);
+  sunDisc.position.set(R4b.sun.x, R4b.sun.y, R4b.sun.z);
+  scene.add(sunDisc);
 
   // Building facades: 6 procedural variants (base colour + window grid
   // with a few lit windows + a darker ground floor). Each building clones
@@ -99,10 +118,16 @@ export function buildWorld(scene, seedOrRng) {
       ctx.fillRect(w / 2 - 8, h - 26, 16, 26);
     });
   }
-  const facadeBaseColors = [
-    0x9aa3ab, 0x8a6f5a, 0x7a8a99, 0xb0a08a, 0x6f7f8c, 0xa89478,
-  ];
-  const facadeTextures = facadeBaseColors.map((c) => makeFacadeTexture(c, rng));
+  // Round-4: facades are tinted per district — glassy blue-greys
+  // downtown, warm ochres in Old Town, pastels on the beachfront,
+  // white/blue at the marina, rusty browns at the docks — so districts
+  // read at a glance instead of one flat grey city.
+  const R4 = CONFIG.round4;
+  const facadeByDistrict = {};
+  for (const [label, colors] of Object.entries(R4.districtFacades)) {
+    facadeByDistrict[label] = colors.map((c) => makeFacadeTexture(c, rng));
+  }
+  const facadeTextures = facadeByDistrict.Downtown || Object.values(facadeByDistrict)[0];
 
   // Asphalt with a dashed centre line and edge lines. Two orientations:
   // the X variant dashes along U (roads running east-west), the Z variant
@@ -154,19 +179,81 @@ export function buildWorld(scene, seedOrRng) {
   const zebraGeoZ = new THREE.PlaneGeometry(14, 6);
   const zebraQuad = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
 
+  // Round-4b: procedural ground + sidewalk textures — the ground plane is
+  // no longer one flat green, and sidewalks read as paving, not grey slabs.
+  function makeGroundTexture() {
+    return makeCanvasTexture(512, 512, (ctx, w, h) => {
+      ctx.fillStyle = '#8a9a6b';
+      ctx.fillRect(0, 0, w, h);
+      // Large soft mottled patches (darker / lighter grass, a few dirt blobs).
+      for (let i = 0; i < R4b.groundTex.patchCount; i++) {
+        const r = rng.range(18, 70);
+        const x = rng.range(0, w);
+        const y = rng.range(0, h);
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        const pick = rng.next();
+        const tint = pick < 0.6 ? 'rgba(60,80,40,0.16)'
+          : (pick < 0.8 ? 'rgba(170,190,120,0.14)' : 'rgba(150,120,70,0.12)');
+        g.addColorStop(0, tint);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Fine speckle so the grass is not flat at street level.
+      for (let i = 0; i < 2500; i++) {
+        const v = rng.noise2(i * 0.31, i * 0.17);
+        ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.07)';
+        ctx.fillRect(rng.range(0, w), rng.range(0, h), 2, 2);
+      }
+    });
+  }
+  function makeSidewalkTexture() {
+    return makeCanvasTexture(128, 128, (ctx, w, h) => {
+      ctx.fillStyle = '#b8b0a0';
+      ctx.fillRect(0, 0, w, h);
+      for (let i = 0; i < 600; i++) {
+        const v = rng.noise2(i * 0.23, i * 0.41);
+        ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
+        ctx.fillRect(rng.range(0, w), rng.range(0, h), 2, 2);
+      }
+      // Paving joints: a faint grid so the sidewalk reads as slabs.
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= w; x += 32) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+      for (let y = 0; y <= h; y += 32) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+    });
+  }
+  const groundTex = makeGroundTexture();
+  groundTex.wrapS = groundTex.wrapT = THREE.RepeatWrapping;
+  groundTex.repeat.set(R4b.groundTex.repeat, R4b.groundTex.repeat);
+  const sidewalkTex = makeSidewalkTexture();
+  sidewalkTex.wrapS = sidewalkTex.wrapT = THREE.RepeatWrapping;
+  sidewalkTex.repeat.set(R4b.sidewalkTex.repeat, R4b.sidewalkTex.repeat);
+
   // Shared materials / geometries (created once, reused everywhere).
-  const matGround = new THREE.MeshStandardMaterial({ color: C.ground, roughness: 1 });
+  const matGround = new THREE.MeshStandardMaterial({ color: C.ground, roughness: 1, map: groundTex });
   const matRoad = new THREE.MeshStandardMaterial({ color: C.road, roughness: 0.95 });
   const matLine = new THREE.MeshStandardMaterial({ color: C.roadLine, roughness: 0.8 });
-  const matSidewalk = new THREE.MeshStandardMaterial({ color: C.sidewalk, roughness: 1 });
+  const matSidewalk = new THREE.MeshStandardMaterial({ color: C.sidewalk, roughness: 1, map: sidewalkTex });
   const matSand = new THREE.MeshStandardMaterial({ color: C.sand, roughness: 1 });
+  // Round-4b: the sea carries the procedural water texture (tiled), so
+  // it reads as water at street level instead of a flat blue plane.
+  const waterTex = makeWaterTexture();
+  waterTex.wrapS = waterTex.wrapT = THREE.RepeatWrapping;
+  waterTex.repeat.set(14, 10);
   const matWater = new THREE.MeshStandardMaterial({
     color: C.water, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.88,
+    map: waterTex,
   });
   const matGlass = new THREE.MeshStandardMaterial({
     color: C.downtownGlass, roughness: 0.15, metalness: 0.55,
   });
   const matRoof = new THREE.MeshStandardMaterial({ color: 0x6a6a68, roughness: 1 });
+  // Round-4b: balcony slabs (light concrete) + pitched terracotta roofs.
+  const matBalcony = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 1 });
+  const matRoofPitched = new THREE.MeshStandardMaterial({ color: 0x9a5a3a, roughness: 1 });
   const matTrunk = new THREE.MeshStandardMaterial({ color: C.palmTrunk, roughness: 1 });
   const matLeaf = new THREE.MeshStandardMaterial({ color: C.palmLeaf, roughness: 0.9 });
   const matPole = new THREE.MeshStandardMaterial({ color: C.lampPole, roughness: 0.6, metalness: 0.5 });
@@ -175,6 +262,15 @@ export function buildWorld(scene, seedOrRng) {
   });
   const matBench = new THREE.MeshStandardMaterial({ color: C.bench, roughness: 1 });
   const matHydrant = new THREE.MeshStandardMaterial({ color: C.hydrant, roughness: 0.6 });
+  // Round-4 street-furniture materials (shared, created once).
+  const matBin = new THREE.MeshStandardMaterial({ color: 0x2e4a34, roughness: 0.9 });
+  const matBinDark = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 });
+  const matPlanter = new THREE.MeshStandardMaterial({ color: 0x9a9a92, roughness: 1 });
+  const matShrub = new THREE.MeshStandardMaterial({ color: 0x3f7a34, roughness: 1 });
+  const matCone = new THREE.MeshStandardMaterial({ color: 0xe67e22, roughness: 0.8 });
+  const matConeBand = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.8 });
+  const matLifeguard = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.8 });
+  const matLifeguardRed = new THREE.MeshStandardMaterial({ color: 0xc23a2a, roughness: 0.8 });
   const matCloud = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
   const matSun = new THREE.MeshBasicMaterial({ color: 0xfff6c8 });
   const matPier = new THREE.MeshStandardMaterial({ color: 0x9a7a52, roughness: 1 });
@@ -351,6 +447,11 @@ export function buildWorld(scene, seedOrRng) {
   // Round 3 tracks the tallest downtown tower for the rooftop billboard
   // and helipad placed after the loop.
   let tallestDowntown = null;
+  // Round-4b variation counts (exposed on the returned world object).
+  let r4bSetbacks = 0;
+  let r4bBalconies = 0;
+  let r4bPitched = 0;
+  let r4bParapets = 0;
   const parkGaps = [];
   const edges = [-half, ...lines, half];
   const windowMatLit = new THREE.MeshStandardMaterial({
@@ -393,7 +494,8 @@ export function buildWorld(scene, seedOrRng) {
         // Textured facade: clone one of the 6 procedural variants and
         // repeat it by the building's dimensions. The texture carries the
         // windows, so the old per-floor window-band boxes are gone.
-        const facadeTex = rng.pick(facadeTextures).clone();
+        const districtTextures = facadeByDistrict[district] || facadeTextures;
+        const facadeTex = rng.pick(districtTextures).clone();
         facadeTex.needsUpdate = true;
         facadeTex.wrapS = facadeTex.wrapT = THREE.RepeatWrapping;
         facadeTex.repeat.set(
@@ -411,14 +513,20 @@ export function buildWorld(scene, seedOrRng) {
         group.add(buildingMesh);
         // Roof cap.
         addBox(matRoof, bw * 0.92, 0.6, bd * 0.92, 0, height + 0.3, 0, group);
-        // Rooftop props: AC boxes on most roofs; tall towers get a water
-        // tower or an antenna.
-        if (rng.chance(0.6)) {
+        // Round-4 rooftop clutter: AC units on most roofs (up to two),
+        // a stair bulkhead on some low roofs, and water towers / antennas
+        // on any roof above tallMinHeight — not just the tallest tower.
+        const acCount = rng.chance(R4.rooftop.acChance) ? rng.int(1, R4.rooftop.acMax) : 0;
+        for (let a = 0; a < acCount; a++) {
           addBox(matRoof, rng.range(2, 3.5), 1.1, rng.range(2, 3),
             rng.range(-bw / 4, bw / 4), height + 1.1, rng.range(-bd / 4, bd / 4), group);
         }
-        if (height > 30) {
-          if (rng.chance(0.4)) {
+        if (height < 20 && rng.chance(R4.rooftop.bulkheadChance)) {
+          addBox(matRoof, rng.range(3, 4.5), 2.4, rng.range(3, 4),
+            rng.range(-bw / 5, bw / 5), height + 1.8, rng.range(-bd / 5, bd / 5), group);
+        }
+        if (height > R4.rooftop.tallMinHeight) {
+          if (rng.chance(R4.rooftop.towerChance)) {
             const tx = rng.range(-bw / 4, bw / 4);
             const tz = rng.range(-bd / 4, bd / 4);
             const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 8), matRoof);
@@ -429,37 +537,105 @@ export function buildWorld(scene, seedOrRng) {
             cone.position.set(tx, height + 5.1, tz);
             cone.castShadow = true;
             group.add(cone);
-          } else if (rng.chance(0.5)) {
+          } else if (rng.chance(R4.rooftop.antennaChance)) {
             addBox(matPole, 0.3, 6, 0.3,
               rng.range(-bw / 4, bw / 4), height + 3.6, rng.range(-bd / 4, bd / 4), group);
           }
         }
-        // Storefront awning + glass band on one face of low-rise buildings.
-        if (height < 20 && rng.chance(0.35)) {
-          const awningMat = new THREE.MeshStandardMaterial({
-            color: rng.pick(CONFIG.colors.awningPalette), roughness: 0.85,
-          });
-          const face = rng.int(0, 3); // 0:+z 1:-z 2:+x 3:-x
-          const aw = Math.min(bw, bd) * 0.6;
-          const awning = new THREE.Group();
-          if (face === 0) { awning.position.set(0, 3.4, bd / 2 + 0.8); }
-          else if (face === 1) { awning.position.set(0, 3.4, -bd / 2 - 0.8); awning.rotation.y = Math.PI; }
-          else if (face === 2) { awning.position.set(bw / 2 + 0.8, 3.4, 0); awning.rotation.y = Math.PI / 2; }
-          else { awning.position.set(-bw / 2 - 0.8, 3.4, 0); awning.rotation.y = -Math.PI / 2; }
-          group.add(awning);
-          const awMesh = addBox(awningMat, aw, 0.15, 1.6, 0, 0, 0, awning);
-          awMesh.rotation.x = 0.28; // outer edge dips down
-          // Glass shopfront below the awning.
-          addBox(matGlass, aw, 2.2, 0.2, 0, -1.2, -0.5, awning);
-          // Round-3 polish: a neon sign strip above the shopfront, in a
-          // random neon colour — the street glows after dark.
-          if (rng.chance(0.55)) {
-            const neonColor = rng.pick(CONFIG.neonPalette);
-            const neonMat = new THREE.MeshStandardMaterial({
-              color: neonColor, emissive: neonColor, emissiveIntensity: 1.8,
-            });
-            addBox(neonMat, aw * 0.7, 0.22, 0.12, 0, 1.1, -0.5, awning);
+        // Round-4 shopfronts: awnings on over half of low-rise buildings,
+        // plus plain glass shopfronts with a lit sign board where there
+        // is no awning — the ground floor is no longer blank concrete.
+        if (height < 20) {
+          const wantsAwning = rng.chance(R4.shopfront.awningChance);
+          const wantsGlass = !wantsAwning && height < 14 && rng.chance(R4.shopfront.glassChance);
+          if (wantsAwning || wantsGlass) {
+            const face = rng.int(0, 3); // 0:+z 1:-z 2:+x 3:-x
+            const aw = Math.min(bw, bd) * 0.6;
+            const shop = new THREE.Group();
+            if (face === 0) { shop.position.set(0, 3.4, bd / 2 + 0.8); }
+            else if (face === 1) { shop.position.set(0, 3.4, -bd / 2 - 0.8); shop.rotation.y = Math.PI; }
+            else if (face === 2) { shop.position.set(bw / 2 + 0.8, 3.4, 0); shop.rotation.y = Math.PI / 2; }
+            else { shop.position.set(-bw / 2 - 0.8, 3.4, 0); shop.rotation.y = -Math.PI / 2; }
+            group.add(shop);
+            if (wantsAwning) {
+              const awningMat = new THREE.MeshStandardMaterial({
+                color: rng.pick(CONFIG.colors.awningPalette), roughness: 0.85,
+              });
+              const awMesh = addBox(awningMat, aw, 0.15, 1.6, 0, 0, 0, shop);
+              awMesh.rotation.x = 0.28; // outer edge dips down
+              // Glass shopfront below the awning.
+              addBox(matGlass, aw, 2.2, 0.2, 0, -1.2, -0.5, shop);
+              // Neon sign strip above the shopfront — the street glows.
+              if (rng.chance(R4.shopfront.neonChance)) {
+                const neonColor = rng.pick(CONFIG.neonPalette);
+                const neonMat = new THREE.MeshStandardMaterial({
+                  color: neonColor, emissive: neonColor, emissiveIntensity: 1.8,
+                });
+                addBox(neonMat, aw * 0.7, 0.22, 0.12, 0, 1.1, -0.5, shop);
+              }
+            } else {
+              // Plain glass shopfront + a lit colour sign board, no awning.
+              addBox(matGlass, aw, 2.2, 0.2, 0, -1.2, -0.5, shop);
+              const signColor = rng.pick(CONFIG.neonPalette);
+              const signMat = new THREE.MeshStandardMaterial({
+                color: signColor, emissive: signColor, emissiveIntensity: 0.9,
+              });
+              addBox(signMat, aw * 0.8, 0.5, 0.12, 0, 0.6, -0.5, shop);
+            }
           }
+        }
+        // Round-4b (coordinator): geometry-level variation — the audit's
+        // remaining weakness is flat single-box buildings. Stepped towers
+        // on tall downtown blocks, balconies on mid-rise fronts, pyramid
+        // roofs on low buildings, and a parapet rim on mid/high roofs.
+        let hasPitchedRoof = false;
+        if (height >= R4b.setbacks.minHeight && rng.chance(R4b.setbacks.chance)) {
+          const fw = bw * rng.range(R4b.setbacks.widthFracMin, R4b.setbacks.widthFracMax);
+          const fd = bd * rng.range(R4b.setbacks.widthFracMin, R4b.setbacks.widthFracMax);
+          const fh = height * rng.range(R4b.setbacks.heightFracMin, R4b.setbacks.heightFracMax);
+          const tier = new THREE.Mesh(boxGeo, [
+            facadeMat, facadeMat, matRoof, matRoof, facadeMat, facadeMat,
+          ]);
+          tier.scale.set(fw, fh, fd);
+          tier.position.set(0, height + fh / 2, 0);
+          tier.castShadow = true;
+          tier.receiveShadow = true;
+          group.add(tier);
+          addBox(matRoof, fw * 0.92, 0.6, fd * 0.92, 0, height + fh + 0.3, 0, group);
+          r4bSetbacks += 1;
+        }
+        if (height >= R4b.balconies.minHeight && height <= R4b.balconies.maxHeight
+          && !isDowntown && rng.chance(R4b.balconies.chance)) {
+          const bCount = rng.int(R4b.balconies.perBuildingMin, R4b.balconies.perBuildingMax);
+          r4bBalconies += bCount;
+          for (let bi = 0; bi < bCount; bi++) {
+            const floorY = 6 + bi * 3.2 + rng.range(0, 1.5);
+            if (floorY > height - 4) break;
+            const bx = rng.range(-bw / 2 + 3, bw / 2 - 3);
+            // Slab + railing on the +z (south) face.
+            addBox(matBalcony, 3.2, 0.18, 1.3, bx, floorY, bd / 2 + 0.65, group);
+            addBox(matPole, 3.2, 0.9, 0.08, bx, floorY + 0.55, bd / 2 + 1.25, group);
+          }
+        }
+        if (height <= R4b.pitchedRoof.maxHeight && !isDowntown && rng.chance(R4b.pitchedRoof.chance)) {
+          hasPitchedRoof = true;
+          const ph = height * rng.range(R4b.pitchedRoof.heightFracMin, R4b.pitchedRoof.heightFracMax);
+          const pyramid = new THREE.Mesh(
+            new THREE.ConeGeometry(Math.max(bw, bd) * 0.62, ph, 4), matRoofPitched);
+          pyramid.rotation.y = Math.PI / 4;
+          pyramid.position.set(0, height + 0.6 + ph / 2, 0);
+          pyramid.castShadow = true;
+          group.add(pyramid);
+          r4bPitched += 1;
+        }
+        if (!hasPitchedRoof && height >= R4b.parapet.minHeight && rng.chance(R4b.parapet.chance)) {
+          const pt = R4b.parapet.thickness;
+          const ph2 = R4b.parapet.height;
+          addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, bd * 0.46 - pt / 2, group);
+          addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, -bd * 0.46 + pt / 2, group);
+          addBox(matRoof, pt, ph2, bd * 0.92, bw * 0.46 - pt / 2, height + 0.6 + ph2 / 2, 0, group);
+          addBox(matRoof, pt, ph2, bd * 0.92, -bw * 0.46 + pt / 2, height + 0.6 + ph2 / 2, 0, group);
+          r4bParapets += 1;
         }
         buildings.push({
           minX: px - bw / 2, maxX: px + bw / 2,
@@ -565,11 +741,11 @@ export function buildWorld(scene, seedOrRng) {
       g.add(leaf);
     }
   }
-  function addBench(x, z, rotY) {
+  function addBench(x, z, rotY, parent) {
     const g = new THREE.Group();
     g.position.set(x, 0, z);
     g.rotation.y = rotY || 0;
-    scene.add(g);
+    (parent || scene).add(g);
     addBox(matBench, 2.2, 0.18, 0.6, 0, 0.55, 0, g);
     addBox(matBench, 2.2, 0.7, 0.14, 0, 0.85, -0.28, g);
     addBox(matPole, 0.14, 0.55, 0.14, -0.9, 0.28, 0, g);
@@ -597,6 +773,142 @@ export function buildWorld(scene, seedOrRng) {
     canopy.scale.y = 0.85;
     canopy.castShadow = true;
     g.add(canopy);
+  }
+
+  // ---- Round-4 street furniture ----
+  // Street-name sign textures are cached per name (8 names, 1 canvas each).
+  const signTexCache = new Map();
+  function streetSignTex(name) {
+    if (!signTexCache.has(name)) signTexCache.set(name, makeSignTexture(name, '#1d5c2e', '#ffffff'));
+    return signTexCache.get(name);
+  }
+  const busSignTex = makeSignTexture('BUS', '#1d5c2e', '#ffffff');
+  function addBusStop(x, z, rotY) {
+    // Glass shelter + bench + BUS sign pole, open side facing the road.
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY || 0;
+    scene.add(g);
+    addBox(matPole, 0.14, 2.6, 0.14, -1.4, 1.3, 0, g);
+    addBox(matPole, 0.14, 2.6, 0.14, 1.4, 1.3, 0, g);
+    addBox(matRoof, 3.4, 0.12, 1.4, 0, 2.65, 0, g);
+    addBox(matGlass, 3.0, 1.8, 0.08, 0, 1.4, -0.6, g);
+    addBench(0, 0.35, 0, g);
+    addBox(matPole, 0.12, 3.0, 0.12, 2.1, 1.5, 0, g);
+    const sign = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.9, 0.45),
+      new THREE.MeshBasicMaterial({ map: busSignTex }),
+    );
+    sign.position.set(2.1, 3.05, 0);
+    sign.rotation.y = Math.PI / 2;
+    g.add(sign);
+  }
+  function addStreetSign(x, z, avenueName, streetName) {
+    // One pole on the sidewalk corner, two crossed blades naming the
+    // avenue (east-west road) and the street (north-south road).
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    scene.add(g);
+    addBox(matPole, 0.12, 3.0, 0.12, 0, 1.5, 0, g);
+    const bladeGeo = new THREE.PlaneGeometry(2.4, 0.6);
+    const bladeA = new THREE.Mesh(bladeGeo,
+      new THREE.MeshBasicMaterial({ map: streetSignTex(avenueName), side: THREE.DoubleSide }));
+    bladeA.position.set(0, 2.85, 0);
+    g.add(bladeA);
+    const bladeB = new THREE.Mesh(bladeGeo,
+      new THREE.MeshBasicMaterial({ map: streetSignTex(streetName), side: THREE.DoubleSide }));
+    bladeB.position.set(0, 2.2, 0);
+    bladeB.rotation.y = Math.PI / 2;
+    g.add(bladeB);
+  }
+  function addTrashBin(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    scene.add(g);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.4, 1.0, 10), matBin);
+    body.position.y = 0.5;
+    body.castShadow = true;
+    g.add(body);
+    const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.12, 10), matBinDark);
+    lid.position.y = 1.05;
+    g.add(lid);
+  }
+  function addPlanter(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    scene.add(g);
+    addBox(matPlanter, 1.3, 0.55, 1.3, 0, 0.28, 0, g);
+    const shrub = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), matShrub);
+    shrub.position.y = 0.85;
+    shrub.scale.y = 0.8;
+    shrub.castShadow = true;
+    g.add(shrub);
+  }
+  function addCone(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    scene.add(g);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.7, 10), matCone);
+    cone.position.y = 0.35;
+    cone.castShadow = true;
+    g.add(cone);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.24, 0.14, 10), matConeBand);
+    band.position.y = 0.42;
+    g.add(band);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 0.55), matCone);
+    base.position.y = 0.03;
+    g.add(base);
+  }
+  function addLifeguardTower(x, z) {
+    // Tall white tower on the sand: four legs, cabin, red roof, flag.
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    scene.add(g);
+    for (const [lx, lz] of [[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]]) {
+      addBox(matLifeguard, 0.18, 3.6, 0.18, lx, 1.8, lz, g);
+    }
+    addBox(matLifeguard, 2.4, 1.7, 2.4, 0, 4.4, 0, g);
+    addBox(matGlass, 2.0, 0.9, 0.1, 0, 4.5, 1.21, g);
+    addBox(matLifeguardRed, 2.8, 0.18, 2.8, 0, 5.35, 0, g);
+    addBox(matPole, 0.08, 1.6, 0.08, 1.1, 6.1, -1.1, g);
+    addBox(matLifeguardRed, 0.7, 0.45, 0.04, 1.45, 6.5, -1.1, g);
+  }
+  const containerMats = {};
+  function addContainer(x, z, color, rotY, stackY) {
+    const mat = containerMats[color] || (containerMats[color] = new THREE.MeshStandardMaterial({
+      color, roughness: 0.85, metalness: 0.15,
+    }));
+    const g = new THREE.Group();
+    g.position.set(x, stackY || 0, z);
+    g.rotation.y = rotY || 0;
+    scene.add(g);
+    addBox(mat, 6, 2.6, 2.4, 0, 1.3, 0, g);
+    addBox(matBinDark, 6.05, 0.18, 2.45, 0, 2.55, 0, g);
+    return g;
+  }
+  function addCrane(x, z, rotY) {
+    // Yellow dock crane silhouette: tower, jib over the water, hook cable.
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rotY || 0;
+    scene.add(g);
+    const matSteel = new THREE.MeshStandardMaterial({ color: 0xd8a020, roughness: 0.7, metalness: 0.3 });
+    addBox(matSteel, 5, 1.2, 5, 0, 0.6, 0, g);
+    addBox(matSteel, 1.6, 34, 1.6, 0, 17, 0, g);
+    addBox(matSteel, 1.2, 1.2, 22, 0, 33, 8, g);
+    addBox(matSteel, 1.2, 1.2, 7, 0, 33, -4.5, g);
+    addBox(matSteel, 2.2, 2.2, 2.2, 0, 31.5, -6, g);
+    addBox(matPole, 0.08, 12, 0.08, 0, 27, 16, g);
+    addBox(matSteel, 0.9, 0.9, 0.9, 0, 20.5, 16, g);
+  }
+  function addPierLamp(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.12, z);
+    scene.add(g);
+    addBox(matPole, 0.14, 2.2, 0.14, 0, 1.1, 0, g);
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), matLamp);
+    lamp.position.y = 2.3;
+    g.add(lamp);
   }
 
   for (const line of lines) {
@@ -657,8 +969,16 @@ export function buildWorld(scene, seedOrRng) {
     );
     sail.position.set(0, 2.6, 0.4);
     g.add(sail);
+    return g; // round 4: the caller stores it so updateWater can bob it
   }
-  for (const bx of [211, 253, 295]) addBoat(bx, -240 + rng.range(-8, 8));
+  // Round-4: the moored boats bob and rock gently (updateWater).
+  const mooredBoats = [];
+  for (const bx of [211, 253, 295]) {
+    const boat = addBoat(bx, -240 + rng.range(-8, 8));
+    mooredBoats.push({
+      group: boat, phase: rng.range(0, Math.PI * 2), baseY: 0.15, baseRotY: boat.rotation.y,
+    });
+  }
   // Parks (round-2 polish): the blocks the rng left as gaps get grass
   // patches, a round tree and sometimes a bench.
   for (const gap of parkGaps) {
@@ -675,6 +995,215 @@ export function buildWorld(scene, seedOrRng) {
   // A few palms scattered in plazas / downtown corners.
   for (let i = 0; i < 24; i++) {
     addPalm(rng.range(-280, 280), rng.range(-280, 260), rng.range(0.8, 1.2));
+  }
+
+  // ---- Round-4: street furniture, beach + docks dressing ----
+  // Bus stops mid-block on the sidewalk (offset 8.5 m = on the sidewalk,
+  // clear of building footprints which start 9 m from the centreline),
+  // open side facing the road.
+  const busStops = [
+    { x: -31.5, z: -80, rotY: -Math.PI / 2 },
+    { x: 48.5, z: 80, rotY: -Math.PI / 2 },
+    { x: -80, z: 48.5, rotY: Math.PI },
+    { x: 80, z: -31.5, rotY: Math.PI },
+  ];
+  for (const stop of busStops.slice(0, R4.streetProps.busStopCount)) {
+    addBusStop(stop.x, stop.z, stop.rotY);
+  }
+  // Street-name posts on the downtown intersection corners (the corner
+  // opposite the traffic light), naming the avenue and the street.
+  const avenueNames = {
+    '-120': 'PALM AVE', '-40': 'MARINA BLVD', 40: 'SUNSET AVE', 120: 'BEACHFRONT AVE',
+  };
+  const streetNames = {
+    '-120': 'OLD TOWN RD', '-40': 'HARBOUR ST', 40: 'BAY ST', 120: 'PALMS WAY',
+  };
+  for (const ix of [-120, -40, 40, 120]) {
+    for (const iz of [-120, -40, 40]) {
+      addStreetSign(ix - 8.5, iz - 8.5, avenueNames[iz], streetNames[ix]);
+    }
+  }
+  // Trash bins + planters along the sidewalks (offset 8.5 m, on the walk).
+  for (let i = 0; i < R4.streetProps.trashBinCount; i++) {
+    const line = rng.pick(lines);
+    const side = rng.next() < 0.5 ? 1 : -1;
+    if (i % 2 === 0) addTrashBin(line + side * 8.5, rng.range(-280, 260));
+    else addTrashBin(rng.range(-280, 260), line + side * 8.5);
+  }
+  for (let i = 0; i < R4.streetProps.planterCount; i++) {
+    const line = rng.pick([-120, -40, 40, 120]);
+    const side = rng.next() < 0.5 ? 1 : -1;
+    if (i % 2 === 0) addPlanter(line + side * 8.5, rng.range(-200, 200));
+    else addPlanter(rng.range(-200, 200), line + side * 8.5);
+  }
+  // Traffic cones in two clusters by the docks (roadworks by the yard).
+  for (const [cx, cz] of [[-230, 240], [-170, 255]]) {
+    for (let i = 0; i < 5; i++) {
+      addCone(cx + i * 2.2, cz + (i % 2 === 0 ? 0 : 1.4));
+    }
+  }
+  // Beach: lifeguard tower on the sand, facing the sea.
+  addLifeguardTower(R4.beach.lifeguardX, R4.beach.lifeguardZ);
+  // Marina: lamp posts along each pier so the basin glows at dusk.
+  for (const px of [190, 232, 274]) {
+    for (const pz of [-290, -265, -240, -215, -190]) addPierLamp(px + 4.5, pz);
+  }
+  // Docks: a container yard on the sand at the south-west corner, with
+  // two yellow crane silhouettes reaching over the water.
+  const containerStacks = [
+    [-290, 284], [-278, 290], [-260, 283], [-240, 290], [-220, 284], [-200, 291], [-185, 285],
+  ];
+  for (const [cx, cz] of containerStacks) {
+    const levels = rng.int(1, 3);
+    for (let level = 0; level < levels; level++) {
+      addContainer(cx, cz, rng.pick(R4.docks.containerPalette), rng.range(-0.05, 0.05), level * 2.6);
+    }
+  }
+  for (const [cx, cz] of [[-295, 292], [-175, 292]].slice(0, R4.docks.craneCount)) {
+    addCrane(cx, cz, 0);
+  }
+
+  // ---- Round-4: water & sky life ----
+  // Foam strip along the shoreline, pulsing gently (updateWater).
+  const foamMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false,
+  });
+  const foam = new THREE.Mesh(new THREE.PlaneGeometry(half * 2 + 80, 3.5), foamMat);
+  foam.rotation.x = -Math.PI / 2;
+  foam.position.set(0, 0.08, CONFIG.seaStartZ + 1.5);
+  scene.add(foam);
+  // Buoys bobbing in the open sea and in the marina basin.
+  const buoys = [];
+  const matBuoy = new THREE.MeshStandardMaterial({ color: 0xe67e22, roughness: 0.7 });
+  const matBuoyTop = new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.7 });
+  function addBuoy(x, z) {
+    const g = new THREE.Group();
+    g.position.set(x, 0.1, z);
+    scene.add(g);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), matBuoy);
+    ball.position.y = 0.25;
+    ball.castShadow = true;
+    g.add(ball);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.8, 8), matBuoyTop);
+    tip.position.y = 0.95;
+    g.add(tip);
+    buoys.push({ group: g, phase: rng.range(0, Math.PI * 2), baseY: 0.1 });
+  }
+  for (let i = 0; i < R4.water.buoySeaCount; i++) {
+    addBuoy(rng.range(-300, 300), rng.range(315, 430));
+  }
+  for (const [bx, bz] of [[208, -290], [250, -210], [292, -290], [310, -210]]
+    .slice(0, R4.water.buoyMarinaCount)) {
+    addBuoy(bx, bz);
+  }
+  // Cruising motorboats in the open sea, wrapping at the horizon.
+  const cruisingBoats = [];
+  function addCruisingBoat(x0, z, speed) {
+    const g = new THREE.Group();
+    g.position.set(x0, 0.15, z);
+    scene.add(g);
+    const hull = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 1.0, 6),
+      new THREE.MeshStandardMaterial({ color: rng.pick(CONFIG.boatPalette), roughness: 0.6 }),
+    );
+    hull.position.y = 0.35;
+    hull.castShadow = true;
+    g.add(hull);
+    const cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 0.9, 2.4),
+      new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.7 }),
+    );
+    cabin.position.set(0, 1.2, -0.4);
+    g.add(cabin);
+    cruisingBoats.push({ group: g, x0, z, speed });
+  }
+  for (const [x0, z, speed] of [[-200, 360, 3.2], [120, 420, -2.6]]
+    .slice(0, R4.water.cruiseBoatCount)) {
+    addCruisingBoat(x0, z, speed);
+  }
+  // Birds: three small flocks of dark V shapes drifting over the sea
+  // and the beach, wings flapping. Pure functions of absolute time `t`
+  // so the motion is deterministic for a given clock value.
+  const birds = [];
+  const matBird = new THREE.MeshBasicMaterial({ color: 0x2a2a2e, side: THREE.DoubleSide });
+  const wrapX = (x) => {
+    const span = 720;
+    return (((x + 360) % span) + span) % span - 360;
+  };
+  function addBirdFlock(cx, cz, y, speed, phase) {
+    const offsets = [[0, 0], [-2.4, 2.0], [-2.4, -2.0], [-4.8, 4.0]];
+    for (let i = 0; i < R4.birds.perFlock; i++) {
+      const g = new THREE.Group();
+      scene.add(g);
+      const wingGeoL = new THREE.PlaneGeometry(1.1, 0.32);
+      wingGeoL.rotateX(-Math.PI / 2);
+      wingGeoL.translate(-0.55, 0, 0);
+      const wingGeoR = new THREE.PlaneGeometry(1.1, 0.32);
+      wingGeoR.rotateX(-Math.PI / 2);
+      wingGeoR.translate(0.55, 0, 0);
+      const wl = new THREE.Mesh(wingGeoL, matBird);
+      const wr = new THREE.Mesh(wingGeoR, matBird);
+      g.add(wl, wr);
+      const dirSign = speed >= 0 ? 1 : -1;
+      birds.push({
+        group: g, wl, wr,
+        flock: { cx, cz, y, speed, phase },
+        ox: offsets[i][0] * dirSign, oz: offsets[i][1],
+        flapPhase: rng.range(0, Math.PI * 2),
+      });
+    }
+  }
+  for (const [cx, cz, y, speed, phase] of [
+    [-200, 360, 48, 2.2, 0], [100, 420, 60, -1.8, 1.5], [0, 300, 38, 2.8, 3.0],
+  ].slice(0, R4.birds.flocks)) {
+    addBirdFlock(cx, cz, y, speed, phase);
+  }
+
+  // Ambient updates (called every frame from main.js with the absolute
+  // ambient clock in seconds). updateAmbient runs all three.
+  function updateWater(t) {
+    const w = R4.water;
+    foamMat.opacity = w.foamOpacityMin
+      + (w.foamOpacityMax - w.foamOpacityMin) * (0.5 + 0.5 * Math.sin(t * w.foamPulseSpeed));
+    matWater.opacity = w.waterOpacityBase + w.waterOpacityAmp * Math.sin(t * 0.5);
+    for (const b of mooredBoats) {
+      b.group.position.y = b.baseY + w.mooredBobAmp * Math.sin(t * 0.9 + b.phase);
+      b.group.rotation.z = w.mooredRockAmp * Math.sin(t * 0.6 + b.phase);
+      b.group.rotation.x = w.mooredRockAmp * 0.7 * Math.sin(t * 0.73 + b.phase * 1.3);
+    }
+    for (const c of cruisingBoats) {
+      c.group.position.set(
+        wrapX(c.x0 + c.speed * t),
+        0.15 + w.mooredBobAmp * Math.sin(t * 0.9 + c.x0),
+        c.z,
+      );
+      c.group.rotation.y = c.speed > 0 ? Math.PI / 2 : -Math.PI / 2;
+    }
+  }
+  function updateBuoys(t) {
+    for (const b of buoys) {
+      b.group.position.y = b.baseY + R4.water.buoyBobAmp * Math.sin(t * R4.water.buoyBobSpeed + b.phase);
+      b.group.rotation.x = 0.12 * Math.sin(t * 0.8 + b.phase);
+      b.group.rotation.z = 0.12 * Math.cos(t * 0.7 + b.phase);
+    }
+  }
+  function updateBirds(t) {
+    for (const b of birds) {
+      const f = b.flock;
+      const fx = wrapX(f.cx + f.speed * t);
+      const fz = f.cz + 8 * Math.sin(t * 0.11 + f.phase);
+      const fy = f.y + 2 * Math.sin(t * 0.23 + f.phase + b.flapPhase);
+      b.group.position.set(fx + b.ox, fy, fz + b.oz);
+      b.group.rotation.y = f.speed > 0 ? Math.PI / 2 : -Math.PI / 2;
+      const flap = 0.25 + 0.45 * Math.sin(t * 7 + b.flapPhase * 3);
+      b.wl.rotation.z = -flap;
+      b.wr.rotation.z = flap;
+    }
+  }
+  function updateAmbient(t) {
+    updateWater(t);
+    updateBuoys(t);
+    updateBirds(t);
   }
 
   // ---- Sky: sun disc + clouds ----
@@ -758,6 +1287,23 @@ export function buildWorld(scene, seedOrRng) {
     clouds, // round 3: [{ group, speed }] — drifted by updateClouds(dt)
     updateClouds,
     updateTrafficLights,
+    // Round 4: living water & sky — foam strip, bobbing buoys and boats,
+    // cruising boats, bird flocks. main.js calls updateAmbient(t) every
+    // frame with the absolute ambient clock (seconds).
+    birds, // [{ group, wl, wr, flock, ox, oz, flapPhase }] — 12 birds
+    buoys, // [{ group, phase, baseY }] — sea + marina
+    birdCount: birds.length,
+    buoyCount: buoys.length,
+    water: foam, // the shoreline foam strip mesh
+    mooredBoats, // [{ group, phase, baseY, baseRotY }] — 3 marina boats
+    cruisingBoats, // [{ group, x0, z, speed }] — 2 open-sea boats
+    updateWater,
+    updateBuoys,
+    updateBirds,
+    updateAmbient,
+    // Round-4b: geometry variation counts (setbacks / balconies / pitched
+    // roofs / parapets) — the test harness reads these to prove the pass.
+    round4b: { setbacks: r4bSetbacks, balconies: r4bBalconies, pitchedRoofs: r4bPitched, parapets: r4bParapets },
     districts: CONFIG.districts,
     citySize: CONFIG.citySize,
     halfCity: half,

@@ -65,6 +65,11 @@ const CAR_MODELS = [
 
 const PED_SHIRTS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
 
+// Zebra-crossing centres (must match the crossings world.js paints at
+// downtown intersections). Pedestrians cross here in round 4.
+const ZEBRA_X = [-120, -40, 40, 120];
+const ZEBRA_Z = [-120, -40, 40];
+
 // A traffic car is a plain data object shaped like the Lane A car contract:
 // { position, heading, speed, model, colour, driver, update(dt, world) }.
 // If the world supplies a car factory (world.createCar / options.createCar)
@@ -112,6 +117,11 @@ function makePedestrian(spec, rng) {
     paused: false,
     pauseTimer: 0,
     alive: true,
+    // Round-4 zebra crossing state: `cross` is null while walking the
+    // sidewalk, { from, to, p } while crossing the road; `wantCross` is
+    // set while waiting at the curb and consumed when the wait ends.
+    cross: null,
+    wantCross: false,
     update(dt) {
       if (!this.alive) return;
       if (this.paused) {
@@ -138,6 +148,23 @@ export class TrafficManager {
     this.pedestrians = [];
     this._spawnCooldown = 0;
     this._parkedSpawned = false; // parked cars are placed once, on first update()
+    this._time = 0; // round 4: accumulated seconds, drives the speed wobble
+  }
+
+  // True when (x, z) is at a zebra crossing (downtown intersections).
+  // A pedestrian walks on the sidewalk, ~8.5 m off the centreline, so
+  // "at the crossing" means: on one approach road (within 12 m of its
+  // centreline) AND within 5 m of the intersection along that road.
+  // A plain 2D box around the centre never fires — the sidewalk offset
+  // alone is already 8.5 m.
+  _nearZebra(x, z) {
+    for (const ix of ZEBRA_X) {
+      for (const iz of ZEBRA_Z) {
+        if (Math.abs(x - ix) < 12 && Math.abs(z - iz) < 5) return true;
+        if (Math.abs(z - iz) < 12 && Math.abs(x - ix) < 5) return true;
+      }
+    }
+    return false;
   }
 
   // ---- world queries (duck-typed, with safe fallbacks) ----
@@ -264,13 +291,19 @@ export class TrafficManager {
       car = makeTrafficCar({
         position, heading, model: spec.model, colour: spec.colour,
         roadIndex: pick.roadIndex, roadT: pick.roadT, roadDirection: direction,
-        targetSpeed: this.rng.range(8, 14),
+        // Round-4b: cruise speeds cluster around 11 m/s (bell curve)
+        // instead of spreading uniformly — traffic feels less robotic.
+        targetSpeed: Math.max(6, Math.min(16, 11 + (this.rng.gaussian ? this.rng.gaussian() : 0) * 2)),
       }, this.rng);
     }
     // Real 3D cars (Lane A factory) also need a cruise speed: the road
     // follower below steers them by position, and uses targetSpeed as the
     // speed it reports. The stand-in sets this itself.
-    if (car.targetSpeed === undefined) car.targetSpeed = this.rng.range(8, 14);
+    if (car.targetSpeed === undefined) car.targetSpeed = Math.max(6, Math.min(16, 11 + (this.rng.gaussian ? this.rng.gaussian() : 0) * 2));
+    // Round-4: each car cruises a little differently — a baseline speed
+    // and a phase for the gentle speed breathing applied in update().
+    car.baseTargetSpeed = car.targetSpeed;
+    car.speedPhase = this.rng.range(0, Math.PI * 2);
     car.roadIndex = pick.roadIndex;
     car.roadT = pick.roadT;
     car.roadDirection = direction;
@@ -308,16 +341,23 @@ export class TrafficManager {
         z: pick.position.z - Math.sin(baseHeading) * edgeOffset,
       };
       const spec = this.rng.pick(CAR_MODELS);
+      // Round-4: parked cars get a wider colour palette (not just the
+      // traffic-model colours) and a slight parking angle, so the kerb
+      // reads as a lived-in street instead of a repeating row.
+      const parkedColour = this.rng.pick(
+        CONFIG.round4?.traffic?.parkedPalette || [spec.colour],
+      );
       let car;
       if (this.createCar) {
         car = this.createCar({
-          position, heading, model: spec.model, colour: spec.colour,
+          position, heading: heading + this.rng.range(-0.06, 0.06),
+          model: spec.model, colour: parkedColour,
           driver: 'parked', roadIndex: pick.roadIndex, roadT: pick.roadT,
           roadDirection: direction,
         });
       } else {
         car = makeTrafficCar({
-          position, heading, model: spec.model, colour: spec.colour,
+          position, heading, model: spec.model, colour: parkedColour,
           driver: 'parked', roadIndex: pick.roadIndex, roadT: pick.roadT,
           roadDirection: direction, targetSpeed: 0,
         }, this.rng);
@@ -359,6 +399,7 @@ export class TrafficManager {
   update(dt, world, player) {
     if (!dt || dt <= 0) return;
     const step = Math.min(dt, 0.05); // clamp huge frame gaps
+    this._time = (this._time || 0) + step; // round 4: speed-wobble clock
     const px = player?.position?.x ?? 0;
     const pz = player?.position?.z ?? 0;
     const playerPos = { x: px, z: pz };
@@ -381,6 +422,13 @@ export class TrafficManager {
     const roads = this._roads(world);
     for (const car of this.cars) {
       if (car.driver && car.driver !== 'ai') continue; // player-driven now
+      // Round-4: cruise speed breathes gently around the car's own
+      // baseline, so traffic does not move in lockstep.
+      if (car.baseTargetSpeed !== undefined) {
+        const wobble = CONFIG.round4?.traffic?.speedWobble ?? 0.08;
+        car.targetSpeed = car.baseTargetSpeed
+          * (1 + wobble * Math.sin(this._time * 0.6 + (car.speedPhase || 0)));
+      }
       // Advance along the road polyline so cars follow bends.
       const road = roads[car.roadIndex];
       if (road) {
@@ -449,7 +497,9 @@ export class TrafficManager {
       }
     }
 
-    // --- Pedestrians: stroll along the sidewalk, pause sometimes. ---
+    // --- Pedestrians: stroll along the sidewalk, pause sometimes, and
+    // cross at zebra crossings (round 4): wait at the curb, then walk
+    // across to the far sidewalk and carry on on the other side. ---
     for (const ped of this.pedestrians) {
       if (!ped.alive) continue;
       if (!ped.paused && this.rng.next() < step * 0.02) {
@@ -457,7 +507,37 @@ export class TrafficManager {
         ped.pauseTimer = this.rng.range(1, 4);
       }
       const road = roads[ped.roadIndex];
-      if (road) {
+      if (ped.cross) {
+        // Mid-crossing: walk straight across the road at fixed roadT.
+        if (!road) {
+          ped.cross = null;
+        } else {
+          const width = (road.width || 14) + 3;
+          ped.cross.p += step * (ped.speed || 1.2) / width;
+          const onRoad = this._pointOnRoad(world, road, ped.roadT);
+          const baseHeading = this._roadHeading(road, ped.roadT);
+          const s = clamp(ped.cross.p, 0, 1);
+          const off = ped.cross.from + (ped.cross.to - ped.cross.from) * s;
+          ped.position.x = onRoad.x + Math.cos(baseHeading) * off;
+          ped.position.z = onRoad.z - Math.sin(baseHeading) * off;
+          const dirSign = ped.cross.to > ped.cross.from ? 1 : -1;
+          ped.heading = Math.atan2(Math.cos(baseHeading) * dirSign, -Math.sin(baseHeading) * dirSign);
+          if (ped.cross.p >= 1) {
+            ped.side = -(ped.side || 1);
+            ped.cross = null;
+          }
+        }
+      } else if (ped.paused) {
+        // Standing still — a random pause, or waiting at the curb. The
+        // curb wait is consumed by the branch below once ped.update
+        // clears `paused`, so the pedestrian steps out only after the
+        // wait actually ends.
+      } else if (ped.wantCross) {
+        // The curb wait just ended: step out onto the zebra crossing.
+        const halfW = (road?.width || 14) / 2 + 1.5;
+        ped.cross = { from: halfW * (ped.side || 1), to: -halfW * (ped.side || 1), p: 0 };
+        ped.wantCross = false;
+      } else if (road) {
         const approxLen = this._roadLength(road);
         ped.roadT = (ped.roadT ?? 0.5) + ((ped.speed || 1.2) * step * (ped.roadDirection || 1)) / Math.max(approxLen, 1);
         if (ped.roadT > 1 || ped.roadT < 0) {
@@ -471,6 +551,13 @@ export class TrafficManager {
           ped.position.x = onRoad.x + Math.cos(baseHeading) * sidewalk;
           ped.position.z = onRoad.z - Math.sin(baseHeading) * sidewalk;
           ped.heading = baseHeading + ((ped.roadDirection || 1) > 0 ? 0 : Math.PI);
+        }
+        // Zebra decision: near a crossing, sometimes wait at the curb.
+        if (!ped.cross && this._nearZebra(ped.position.x, ped.position.z)
+          && this.rng.next() < step * (CONFIG.round4?.traffic?.pedCrossChance ?? 0.15)) {
+          ped.paused = true;
+          ped.pauseTimer = this.rng.range(0.6, 1.8);
+          ped.wantCross = true;
         }
       }
       if (typeof ped.update === 'function') ped.update(step, world);
@@ -540,6 +627,7 @@ export class TrafficManager {
     this.pedestrians = [];
     this._spawnCooldown = 0;
     this._parkedSpawned = false;
+    this._time = 0;
   }
 }
 

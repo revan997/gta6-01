@@ -8,8 +8,10 @@
 export const SAVE_KEY = 'solmar-bay-save-v1';
 export const SAVE_VERSION = 3;
 // Version 1 and 2 saves are still readable: they migrate with the v2
-// fields (playTimeSeconds, timesPlayed) and the v3 field (totalEarned)
-// defaulting to 0.
+// fields (playTimeSeconds, timesPlayed) and the v3 fields (totalEarned,
+// bestTimes, missionsCompletedCount, gamesPlayed) defaulting to 0 / {}.
+// MissionsCompletedCount is recomputed from the completed list when it is
+// missing, so even a v1 save reports the right count on load.
 export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3];
 
 function safeParse(text) {
@@ -57,18 +59,28 @@ export class SaveSystem {
   // fields are persisted; anything else is ignored.
   //   { money, completedMissions, currentMission, position: {x,y,z},
   //     heading, wanted, health, armour, ammo, timeOfDay,
-  //     playTimeSeconds, timesPlayed, totalEarned }
+  //     playTimeSeconds, timesPlayed, totalEarned,
+  //     bestTimes, gamesPlayed }
+  // Round 4: bestTimes ({ missionNumber: seconds }) comes from
+  // missions.getBestTimes(); missionsCompletedCount is derived from the
+  // completed list; gamesPlayed counts sessions that finished at least
+  // one mission (the game loop increments it — see main.js).
   save(state = {}) {
     const store = this._store();
     if (!store) return false;
     const pos = state.position || state.player?.position || null;
+    const completedList = Array.isArray(state.completedMissions)
+      ? [...state.completedMissions]
+      : (state.missions?.getCompletedMissions?.() || []);
+    const bestTimes = isPlainObject(state.bestTimes)
+      ? { ...state.bestTimes }
+      : (state.missions?.getBestTimes?.() || {});
     const data = {
       version: SAVE_VERSION,
       savedAt: new Date().toISOString(),
       money: Math.round(state.money ?? state.player?.money ?? 0),
-      completedMissions: Array.isArray(state.completedMissions)
-        ? [...state.completedMissions]
-        : (state.missions?.getCompletedMissions?.() || []),
+      completedMissions: completedList,
+      missionsCompletedCount: completedList.length,
       currentMission: state.currentMission ?? state.missions?.getCurrentMissionNumber?.() ?? null,
       position: pos ? { x: pos.x || 0, y: pos.y || 0, z: pos.z || 0 } : null,
       heading: state.heading ?? state.player?.heading ?? 0,
@@ -79,8 +91,11 @@ export class SaveSystem {
       timeOfDay: state.timeOfDay ?? null,
       playTimeSeconds: Math.max(0, Math.round(state.playTimeSeconds ?? state.player?.playTimeSeconds ?? 0)),
       timesPlayed: Math.max(0, Math.round(state.timesPlayed ?? 0)),
+      gamesPlayed: Math.max(0, Math.round(state.gamesPlayed ?? 0)),
       // Round 3: lifetime cash earned across all missions on this profile.
       totalEarned: Math.max(0, Math.round(state.totalEarned ?? 0)),
+      // Round 4: best clear time per mission (seconds, one decimal).
+      bestTimes,
     };
     try {
       store.setItem(this.key, JSON.stringify(data));
@@ -110,6 +125,11 @@ export class SaveSystem {
       savedAt: data.savedAt || null,
       money: typeof data.money === 'number' ? data.money : 0,
       completedMissions: Array.isArray(data.completedMissions) ? data.completedMissions : [],
+      // Round 4: derived on save, but older saves predate it — recompute
+      // from the completed list when the stored count is missing.
+      missionsCompletedCount: typeof data.missionsCompletedCount === 'number'
+        ? Math.max(0, data.missionsCompletedCount)
+        : (Array.isArray(data.completedMissions) ? data.completedMissions.length : 0),
       currentMission: typeof data.currentMission === 'number' ? data.currentMission : null,
       position: isPlainObject(data.position)
         ? { x: data.position.x || 0, y: data.position.y || 0, z: data.position.z || 0 }
@@ -122,7 +142,24 @@ export class SaveSystem {
       timeOfDay: typeof data.timeOfDay === 'number' ? data.timeOfDay : null,
       playTimeSeconds: typeof data.playTimeSeconds === 'number' ? Math.max(0, data.playTimeSeconds) : 0,
       timesPlayed: typeof data.timesPlayed === 'number' ? Math.max(0, data.timesPlayed) : 0,
+      gamesPlayed: typeof data.gamesPlayed === 'number' ? Math.max(0, data.gamesPlayed) : 0,
       totalEarned: typeof data.totalEarned === 'number' ? Math.max(0, data.totalEarned) : 0,
+      // Round 4: best times are new in v3 — v1/v2 saves simply have none.
+      bestTimes: isPlainObject(data.bestTimes) ? { ...data.bestTimes } : {},
+    };
+  }
+
+  // Round-4b: one-object profile summary for the menu stats line.
+  // Returns null when there is no valid save.
+  getSummary() {
+    const data = this.load();
+    if (!data) return null;
+    return {
+      money: data.money,
+      missionsCompleted: data.missionsCompletedCount,
+      gamesPlayed: data.gamesPlayed,
+      totalEarned: data.totalEarned,
+      bestTimesCount: Object.keys(data.bestTimes || {}).length,
     };
   }
 
@@ -158,6 +195,7 @@ export class SaveSystem {
         completed: saveData.completedMissions,
         currentMission: saveData.currentMission,
         lastReward: 0,
+        bestTimes: saveData.bestTimes || {},
       });
       if (toStart && systems.missions.startMission) {
         systems.missions.startMission(toStart);

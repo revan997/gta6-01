@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Solmar Bay — Rico Vega</title>
+<meta name="description" content="Solmar Bay — an original open-world crime game. Drive it, walk it, outrun the law across a coastal city at sunset. Five story missions, police pursuit, and a living bay.">
+<meta name="theme-color" content="#0a141c">
 <link rel="icon" type="image/x-icon" href="./favicon.ico">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -13,6 +15,10 @@
   /* Round-2 polish: a soft vignette over the 3D view (below the HUD). */
   #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 2;
     background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.28) 100%); }
+  /* Round-4 polish: a faint warm wash from the top of the frame
+     (golden-hour tint) over the 3D view, below the HUD. */
+  #top-glow { position: fixed; inset: 0; pointer-events: none; z-index: 2;
+    background: linear-gradient(180deg, rgba(255,196,110,0.10) 0%, rgba(255,196,110,0.03) 22%, transparent 45%); }
   .hidden { display: none !important; }
 
   /* ---- HUD ---- */
@@ -71,6 +77,8 @@
   .overlay h2 { font-size: 40px; letter-spacing: 3px; }
   .overlay .subtitle { font-size: 17px; margin-top: 10px; opacity: 0.9; max-width: 560px; line-height: 1.6; }
   .overlay .keys { font-size: 13px; margin-top: 18px; line-height: 1.9; opacity: 0.85; }
+  /* Round-4b: the saved profile's progress line under the START button. */
+  #save-stats { font-size: 12px; margin-top: 14px; opacity: 0.75; letter-spacing: 1px; }
   .overlay button { pointer-events: auto; margin-top: 26px; padding: 14px 42px; font-size: 18px;
     font-weight: bold; letter-spacing: 2px; color: #0a141c; background: #ffd94a; border: none;
     border-radius: 6px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.45);
@@ -88,6 +96,7 @@
 <body>
 <canvas id="game-canvas"></canvas>
 <div id="vignette"></div>
+<div id="top-glow"></div>
 
 <!-- HUD -->
 <div id="hud">
@@ -116,6 +125,7 @@
   <p class="keys">WASD — move / drive &nbsp;&middot;&nbsp; SHIFT — run &nbsp;&middot;&nbsp; SPACE — jump / handbrake<br>
     E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; C — camera &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
   <button id="start-button" type="button">START</button>
+  <p id="save-stats"></p>
 </div>
 
 <!-- Pause -->

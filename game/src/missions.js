@@ -76,6 +76,13 @@ const MISSION_DEFS = [
     // Ends with one star of police heat.
     onComplete: (ctx) => { ctx.police?.addWanted?.(1); },
     failText: 'The package was lost.',
+    // Round 4: intro card + per-objective flavour toasts, shown by the
+    // game loop from the onMissionStart / onObjective payloads.
+    introCard: "Mama Lou's first test. Don't scratch the paint — or her patience.",
+    objectiveFlavour: [
+      "Dante: 'Marina, berth 12. Grab it and don't look back.'",
+      "Dante: 'North Beach, by the palms. Quick feet, Rico.'",
+    ],
   },
   {
     number: 2,
@@ -88,6 +95,10 @@ const MISSION_DEFS = [
       { id: 'escape', text: 'Lose the police, then reach the Hideout', location: 'hideout', radius: 10, needsClear: true },
     ],
     failText: 'Busted — the cops took you in.',
+    introCard: 'Two stars and a whole city watching. Lose them, Rico. Lose them all.',
+    objectiveFlavour: [
+      "Dante: 'Break line of sight — alleys, not avenues. Then vanish.'",
+    ],
   },
   {
     number: 3,
@@ -100,6 +111,11 @@ const MISSION_DEFS = [
       { id: 'deliver', text: 'Deliver the Palm Coupe to the Docks', location: 'docks', radius: 8, needsCar: 'Palm Coupe' },
     ],
     failText: 'The Palm Coupe was wrecked or lost.',
+    introCard: 'Pearl white, one owner, one debt. Mama Lou collects what she is owed.',
+    objectiveFlavour: [
+      "Priya: 'Pearl white, Car Lot, back row. Quiet hands, Rico.'",
+      "Priya: 'Docks, pier 3. And Rico — not one scratch.'",
+    ],
   },
   {
     number: 4,
@@ -112,6 +128,11 @@ const MISSION_DEFS = [
       { id: 'report', text: 'The courier stopped at the Lookout — report back to Mama Lou', location: 'mamaLou', radius: 8 },
     ],
     failText: 'Spotted — the courier burned the route.',
+    introCard: 'One courier. One route. One mistake and the whole thing is blown.',
+    objectiveFlavour: [
+      "Mama Lou: 'Stay back. Stay patient. A shadow does not hurry.'",
+      "Mama Lou: 'The Lookout, was it? Good. Now come home and tell me everything.'",
+    ],
   },
   {
     number: 5,
@@ -125,6 +146,11 @@ const MISSION_DEFS = [
     ],
     startWantedOnGrab: 4,
     failText: 'The heist failed — busted or wasted at the Harbour.',
+    introCard: 'Midnight. Four stars. One boat full of money. This is the big one, Rico.',
+    objectiveFlavour: [
+      "Dante: 'Vault boat lands at midnight. Grab and run — do NOT stop to count.'",
+      "Priya: 'Whole city on you now. Hideout. GO.'",
+    ],
   },
 ];
 
@@ -143,6 +169,8 @@ export class MissionManager {
     this.lastReward = 0;
     this.lastCompletedMission = null;
     this.lastFailedMission = null;
+    // Round 4: best clear time per mission (seconds), persisted by save v3.
+    this.bestTimes = { ...(options.bestTimes || {}) };
   }
 
   _emit(name, payload) {
@@ -202,7 +230,14 @@ export class MissionManager {
     this.lastReward = 0;
     this.lastFailedMission = null;
     if (def.startWanted && systems.police) systems.police.addWanted?.(def.startWanted);
-    this._emit('onMissionStart', { number: def.number, name: def.name, briefing: def.briefing });
+    // Round 4: the intro card rides the start payload, and the first
+    // objective's flavour toast rides with it, so the game loop can show
+    // both without a new event type.
+    this._emit('onMissionStart', {
+      number: def.number, name: def.name, briefing: def.briefing,
+      introCard: def.introCard || '',
+      flavour: (def.objectiveFlavour || [])[0] || '',
+    });
     return { number: def.number, name: def.name, briefing: def.briefing, reward: def.reward };
   }
 
@@ -232,6 +267,23 @@ export class MissionManager {
     const def = this.getMissionDef(this.current.number);
     const total = def ? def.objectives.length : 0;
     return (this.current.objectiveIndex + 1) + '/' + total + ' · ' + text;
+  }
+
+  // Round 4: flavour accessors — the intro card line for a mission and
+  // the toast line for one of its objectives ('' when there is none).
+  getIntroCard(number) {
+    const def = this.getMissionDef(number);
+    return def?.introCard || '';
+  }
+  getObjectiveFlavour(number, objectiveIndex) {
+    const def = this.getMissionDef(number);
+    return def?.objectiveFlavour?.[objectiveIndex] || '';
+  }
+  // Round 4: best clear times, { missionNumber: seconds } (a copy).
+  getBestTimes() { return { ...this.bestTimes }; }
+  getBestTime(number) {
+    const t = this.bestTimes[number];
+    return typeof t === 'number' ? t : null;
   }
 
   // Progress accessor for the HUD: { number, objectiveIndex, objectiveCount }
@@ -264,6 +316,20 @@ export class MissionManager {
   getCompletedMissions() { return [...this.completed].sort((a, b) => a - b); }
   hasCompleted(number) { return this.completed.has(number); }
 
+  // Round-4b: one-object summary for the HUD / menu stats line.
+  getSummary() {
+    const prog = this.getMissionProgress();
+    return {
+      number: prog.number,
+      name: this.current ? (this.getMissionDef(this.current.number)?.name ?? null) : null,
+      objectiveIndex: prog.objectiveIndex,
+      objectiveCount: prog.objectiveCount,
+      parRemaining: this.getParRemaining(),
+      bestTime: prog.number ? this.getBestTime(prog.number) : null,
+      completedCount: this.completed.size,
+    };
+  }
+
   // Round-3 polish: seconds left on the current mission's par time, or
   // null when no mission is active or it has no par. The HUD shows it.
   getParRemaining() {
@@ -284,7 +350,10 @@ export class MissionManager {
       this._complete(world, systems);
     } else {
       const next = def.objectives[this.current.objectiveIndex];
-      this._emit('onObjective', { number: def.number, objective: next.text });
+      this._emit('onObjective', {
+        number: def.number, objective: next.text,
+        flavour: this.getObjectiveFlavour(def.number, this.current.objectiveIndex),
+      });
       // Entering the tail objective spawns the courier near the hotel.
       if (next.tail) this._startTail(world);
     }
@@ -305,6 +374,11 @@ export class MissionManager {
     this.completed.add(def.number);
     this.lastReward = def.reward;
     this.lastCompletedMission = def.number;
+    // Round 4: best clear time — a faster run overwrites the old best.
+    const elapsed = this.current.elapsed;
+    const prevBest = this.bestTimes[def.number];
+    const isBest = typeof prevBest !== 'number' || elapsed < prevBest;
+    if (isBest) this.bestTimes[def.number] = Math.round(elapsed * 10) / 10;
     if (typeof systems.addMoney === 'function') systems.addMoney(def.reward);
     // Round-3 polish: finish under par and the bonus lands with the reward.
     const par = this.parSeconds[def.number];
@@ -318,7 +392,7 @@ export class MissionManager {
     if (typeof def.onComplete === 'function') {
       def.onComplete({ police: systems.police, traffic: systems.traffic, world });
     }
-    this._emit('onComplete', { number: def.number, name: def.name, reward: this.lastReward, parBonus });
+    this._emit('onComplete', { number: def.number, name: def.name, reward: this.lastReward, parBonus, bestTime: this.bestTimes[def.number], isBestTime: isBest });
     if (systems.audio?.playMissionComplete) systems.audio.playMissionComplete();
     this.current = null;
   }
@@ -429,12 +503,16 @@ export class MissionManager {
       completed: [...this.completed],
       currentMission: this.current ? this.current.number : null,
       lastReward: this.lastReward,
+      bestTimes: { ...this.bestTimes },
     };
   }
 
   fromSaveData(data = {}) {
     this.completed = new Set(data.completed || []);
     this.lastReward = data.lastReward || 0;
+    // Round 4: best times restore migrate-safe — old saves simply have
+    // none, and the field defaults to an empty map.
+    this.bestTimes = { ...(data.bestTimes || {}) };
     this.current = null;
     return data.currentMission || null; // caller re-starts it via startMission
   }
@@ -445,6 +523,7 @@ export class MissionManager {
     this.lastReward = 0;
     this.lastCompletedMission = null;
     this.lastFailedMission = null;
+    this.bestTimes = {};
   }
 }
 

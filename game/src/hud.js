@@ -58,6 +58,13 @@ export class HUD {
     this._messageTimer = 0;
     this._lastWanted = 0; // round 3: flash the stars when the heat rises
     this._wantedFlashTimer = 0;
+    this._lastMoney = null; // round 4: cash-earn popups fire on an increase
+    this._lastHitCount = 0; // round 4: hit-marker flash fires on a change
+    this._comboEl = null; // round-4b: combo label, built lazily
+    this._lastCombo = 0; // round-4b: combo count last shown
+    this._progressEls = null; // round 4: mission progress bar, built lazily
+    this._cashLayer = null; // round 4: floating "+$N" layer, built lazily
+    this._hitMarkerEl = null; // round 4: centre hit-marker X, built lazily
   }
 
   _el(name) {
@@ -80,6 +87,104 @@ export class HUD {
     this._setText('message', this._lastMessage);
   }
 
+  // ---- round 4: elements the HUD builds itself (index.html has no slots
+  // for them, so they are created lazily and styled inline) ----
+
+  // Thin mission-progress bar under the objective line, with an "x/y" label.
+  _ensureProgressBar() {
+    if (this._progressEls || !this.doc) return this._progressEls;
+    const objective = this._el('objective');
+    const parent = objective?.parentNode || this.doc.body;
+    if (!parent || typeof this.doc.createElement !== 'function') return null;
+    const wrap = this.doc.createElement('div');
+    wrap.style.cssText = 'margin-top:6px;max-width:340px;pointer-events:none;';
+    const label = this.doc.createElement('div');
+    label.style.cssText = 'font-size:11px;letter-spacing:2px;color:#ffd94a;text-shadow:0 2px 5px rgba(0,0,0,0.85);';
+    const track = this.doc.createElement('div');
+    track.style.cssText = 'height:5px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.45);margin-top:2px;';
+    const fill = this.doc.createElement('div');
+    fill.style.cssText = 'height:100%;width:0%;background:#ffd94a;';
+    track.appendChild(fill);
+    wrap.appendChild(label);
+    wrap.appendChild(track);
+    parent.appendChild(wrap);
+    this._progressEls = { wrap, label, fill };
+    return this._progressEls;
+  }
+
+  // Layer that holds floating "+$N" cash popups near the money readout.
+  _ensureCashLayer() {
+    if (this._cashLayer || !this.doc) return this._cashLayer;
+    const money = this._el('money');
+    const parent = money?.parentNode || this.doc.body;
+    if (!parent || typeof this.doc.createElement !== 'function') return null;
+    const layer = this.doc.createElement('div');
+    layer.style.cssText = 'position:absolute;right:16px;top:132px;text-align:right;pointer-events:none;';
+    parent.appendChild(layer);
+    this._cashLayer = layer;
+    return layer;
+  }
+
+  // A floating "+$N" that rises and fades over ~1.4 s.
+  showCashEarned(amount) {
+    const layer = this._ensureCashLayer();
+    if (!layer || !amount) return;
+    const el = this.doc.createElement('div');
+    el.textContent = '+$' + Math.round(amount).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    el.style.cssText = 'font-size:22px;font-weight:bold;color:#7be495;text-shadow:0 2px 6px rgba(0,0,0,0.9);'
+      + 'transition:transform 1.4s ease-out,opacity 1.4s ease-out;transform:translateY(0);opacity:1;';
+    layer.appendChild(el);
+    setTimeout(() => { el.style.transform = 'translateY(-34px)'; el.style.opacity = '0'; }, 30);
+    setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 1500);
+  }
+
+  // Centre hit-marker X (white on a hit, red on a kill), fading in 0.25 s.
+  flashHitMarker(killed) {
+    if (!this.doc || typeof this.doc.createElement !== 'function') return;
+    if (!this._hitMarkerEl) {
+      const parent = this.doc.body;
+      if (!parent) return;
+      const el = this.doc.createElement('div');
+      el.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);'
+        + 'font-size:30px;font-weight:bold;pointer-events:none;z-index:6;opacity:0;'
+        + 'text-shadow:0 0 6px rgba(0,0,0,0.9);transition:opacity 0.25s ease-out;';
+      el.textContent = '✕';
+      parent.appendChild(el);
+      this._hitMarkerEl = el;
+    }
+    const el = this._hitMarkerEl;
+    el.style.color = killed ? '#ff5a5a' : '#ffffff';
+    el.style.opacity = '1';
+    setTimeout(() => { el.style.opacity = '0'; }, 60);
+  }
+
+  // Round-4b: a "COMBO xN" label under the district line, shown while
+  // the combo is 2 or more and hidden the moment it lapses. Built lazily
+  // like the hit marker, so index.html needs no new slot.
+  showCombo(combo) {
+    if (!this.doc || typeof this.doc.createElement !== 'function') return;
+    if (!this._comboEl) {
+      const district = this._el('district');
+      const parent = district?.parentNode || this.doc.body;
+      if (!parent) return;
+      const el = this.doc.createElement('div');
+      el.id = 'hud-combo';
+      el.style.cssText = 'position:absolute;top:64px;left:50%;transform:translateX(-50%);'
+        + 'font-size:18px;font-weight:bold;letter-spacing:2px;color:#ffd94a;'
+        + 'text-shadow:0 2px 6px rgba(0,0,0,0.9);pointer-events:none;display:none;';
+      parent.appendChild(el);
+      this._comboEl = el;
+    }
+    const el = this._comboEl;
+    if (combo >= 2) {
+      el.textContent = 'COMBO x' + combo;
+      el.style.display = '';
+      el.style.fontSize = (16 + Math.min(combo, 8) * 1.5).toFixed(0) + 'px';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
   // update(state) — the single HUD entry point, called once per frame.
   update(state = {}) {
     if (!state) return;
@@ -98,6 +203,11 @@ export class HUD {
       if (this._wantedFlashTimer > 0) {
         this._wantedFlashTimer -= dt;
         if (starsEl.classList) starsEl.classList.toggle('flash', this._wantedFlashTimer > 0);
+        // Round 4: the rising-heat flash also glows red while it lasts,
+        // so the new star reads even before the animation registers.
+        starsEl.style.textShadow = this._wantedFlashTimer > 0
+          ? '0 0 14px rgba(255,59,48,0.95), 0 2px 6px rgba(0,0,0,0.7)'
+          : '0 2px 6px rgba(0,0,0,0.7)';
       }
     }
     this._lastWanted = wanted;
@@ -121,7 +231,26 @@ export class HUD {
     }
 
     // --- Money, speed, ammo. ---
+    // Round 4: a cash increase (mission reward, par bonus, pickup) pops a
+    // floating "+$N" — no new call site needed, the HUD watches the delta.
+    if (typeof state.money === 'number') {
+      if (this._lastMoney !== null && state.money > this._lastMoney) {
+        this.showCashEarned(state.money - this._lastMoney);
+      }
+      this._lastMoney = state.money;
+    }
     this._setText('money', formatMoney(state.money));
+    // Round 4: a landed hit (combat.hitCount, passed in state) flashes
+    // the centre hit marker — white on a hit, red on a kill.
+    if (typeof state.hitCount === 'number' && state.hitCount !== this._lastHitCount) {
+      this.flashHitMarker(Boolean(state.hitKilled));
+      this._lastHitCount = state.hitCount;
+    }
+    // Round-4b: the combo label follows state.combo (combat.getCombo()).
+    if (typeof state.combo === 'number' && state.combo !== this._lastCombo) {
+      this.showCombo(state.combo);
+      this._lastCombo = state.combo;
+    }
     const kmh = Math.round(Math.abs(state.speed ?? 0) * 3.6);
     this._setText('speed', String(kmh) + ' km/h');
     // Round 3: the speedo warms up with speed — white, then gold, then red.
@@ -134,6 +263,38 @@ export class HUD {
     // --- Mission name + objective. ---
     this._setText('missionName', state.missionName || '');
     this._setText('objective', state.objective || '');
+    // Round 4: par countdown styling — the mission name turns gold under
+    // 60 s and red under 30 s, so the par pressure reads at a glance.
+    // state.parRemaining is seconds (main.js passes missions.getParRemaining()).
+    const missionNameEl = this._el('missionName');
+    if (missionNameEl) {
+      const parLeft = typeof state.parRemaining === 'number' ? state.parRemaining : null;
+      if (parLeft !== null && parLeft <= 30) missionNameEl.style.color = '#ff6b5e';
+      else if (parLeft !== null && parLeft <= 60) missionNameEl.style.color = '#ffd94a';
+      else missionNameEl.style.color = '';
+    }
+    // Round 4: mission progress — "objective x/y" plus a thin bar under
+    // the objective line. state.missionProgress comes from
+    // missions.getMissionProgress(); the "1/2 · text" objective prefix is
+    // the fallback when the caller does not pass it.
+    {
+      let prog = state.missionProgress || null;
+      if (!prog && typeof state.objective === 'string') {
+        const m = state.objective.match(/^(\d+)\/(\d+)\s*·/);
+        if (m) prog = { objectiveIndex: Number(m[1]) - 1, objectiveCount: Number(m[2]) };
+      }
+      const els = this._ensureProgressBar();
+      if (els) {
+        if (prog && prog.objectiveCount) {
+          const done = Math.min(prog.objectiveIndex + 1, prog.objectiveCount);
+          els.label.textContent = 'OBJECTIVE ' + done + ' / ' + prog.objectiveCount;
+          els.fill.style.width = ((done / prog.objectiveCount) * 100).toFixed(1) + '%';
+          els.wrap.style.display = '';
+        } else {
+          els.wrap.style.display = 'none';
+        }
+      }
+    }
 
     // --- Clock (in-game time of day). ---
     this._setText('clock', formatClock(state.timeOfDay));
@@ -219,11 +380,13 @@ export class HUD {
       ctx.stroke();
     }
 
-    // Mission marker: yellow diamond with a pulsing ring.
+    // Mission marker: yellow diamond with a pulsing ring. Round 4: the
+    // ring now breathes wider (6–12 px) so the objective reads from
+    // across the map at a glance.
     const marker = state.marker || null;
     if (marker) {
       const [mx, my] = toMap(marker.x, marker.z);
-      const pulse = 6 + 2 * Math.sin((state.timeOfDay ?? 0) * 40 + Date.now() / 300);
+      const pulse = 8 + 4 * Math.sin((state.timeOfDay ?? 0) * 40 + Date.now() / 300);
       ctx.strokeStyle = '#f1c40f';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -261,13 +424,24 @@ export class HUD {
       ctx.fill();
     }
 
-    // Police blips: red/blue flashing dots.
+    // Police blips, round 4: cars and foot officers now read differently.
+    // Cars are the flashing red/blue ringed dots; officers are small
+    // solid blue squares. state.policeOfficers (from police.getOfficers())
+    // is preferred; when only the flat state.police list is passed, units
+    // with kind 'police-officer' are drawn as squares.
     const flashingBlue = Math.floor(Date.now() / 400) % 2 === 0;
-    ctx.fillStyle = flashingBlue ? '#3498db' : '#e74c3c';
-    for (const unit of state.police || []) {
+    const policeUnits = state.police || [];
+    const officerSet = new Set(state.policeOfficers || policeUnits.filter((u) => u?.kind === 'police-officer'));
+    for (const unit of policeUnits) {
       if (!unit?.position) continue;
       const [mx, my] = toMap(unit.position.x, unit.position.z);
       if (mx < 0 || mx > size || my < 0 || my > size) continue;
+      if (officerSet.has(unit)) {
+        ctx.fillStyle = '#5dade2';
+        ctx.fillRect(mx - 2.5, my - 2.5, 5, 5);
+        continue;
+      }
+      ctx.fillStyle = flashingBlue ? '#3498db' : '#e74c3c';
       ctx.beginPath();
       ctx.arc(mx, my, 3.5, 0, Math.PI * 2);
       ctx.fill();
@@ -286,7 +460,9 @@ export class HUD {
       // Canvas y is down and the world heading is measured from +z, so the
       // arrow is rotated by (PI - heading) to point the right way.
       ctx.rotate(Math.PI - heading);
-      ctx.fillStyle = '#ffffff';
+      // Round 4: the arrow turns gold while the heat is on, so the player
+      // can tell at a glance that the cops are after them.
+      ctx.fillStyle = (state.wanted ?? 0) > 0 ? '#ffd94a' : '#ffffff';
       ctx.strokeStyle = '#111111';
       ctx.lineWidth = 1;
       ctx.beginPath();
