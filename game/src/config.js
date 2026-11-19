@@ -586,10 +586,13 @@ export const CONFIG = {
       // untouched (round-6 harness pins sun.y <= 160).
     },
     windows: {
-      // More lit panes at dusk: same instance counts (lit vs dark just
-      // moves between InstancedMeshes), so 0 draw calls / 0 tris.
-      geometryLitRatios: [0.1, 0.3, 0.5, 0.7, 0.85], // was [0.05, 0.2, 0.4, 0.6, 0.75]
-      paintedLitRatios: [0.28, 0.48, 0.68, 0.88], // was [0.22, 0.42, 0.62, 0.85]
+      // Round 15: more lit panes at dusk again (was [0.1, 0.3, 0.5, 0.7,
+      // 0.85] / [0.28, 0.48, 0.68, 0.88]) — the flat facades in the
+      // combat + sunset shots read as dark grids, so more windows glow
+      // warm. Same instance counts (lit vs dark just moves between
+      // InstancedMeshes), so 0 draw calls / 0 tris.
+      geometryLitRatios: [0.25, 0.45, 0.65, 0.8, 0.9],
+      paintedLitRatios: [0.4, 0.6, 0.75, 0.9],
     },
     roofs: {
       // Per-building roof tone (render.js roofTintFor): grey (round-4b),

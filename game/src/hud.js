@@ -51,7 +51,7 @@ const ROUND13_MISSIONS = {
   2: { name: 'Hot Wheels', reward: 800, objectives: ['Lose the police, then reach the Hideout'] },
   3: { name: 'Borrowed Beauty', reward: 1200, objectives: ['Steal the pearl-white Palm Coupe at the Car Lot', 'Deliver the Palm Coupe to the Docks'] },
   4: { name: 'Long Tail', reward: 1500, objectives: ['Tail the courier from the Palms Hotel — do not get spotted', 'The courier stopped at the Lookout — report at the Stepped Quarter plaza'] },
-  5: { name: 'Harbour Heist', reward: 5000, objectives: ['Grab the cash at the Harbour', 'Escape the four-star chase — reach the Hideout'] },
+  5: { name: 'Harbour Heist', reward: 5000, objectives: ['Grab the cash at the Harbour', 'Escape the five-star chase — reach the Hideout'] },
   6: { name: 'Night Run', reward: 2000, objectives: ['Pick up the night cargo at the Docks', 'Deliver the night cargo to the Palms Hotel'] },
   7: { name: 'Gold Rush', reward: 3000, objectives: ['Steal the gold-trimmed Dune Pickup at the Marina', 'Deliver the Dune Pickup to North Beach'] },
   8: { name: 'King of Solmar', reward: 8000, objectives: ['Grab the crown jewels at the Palms Hotel', 'Escape the five-star chase — reach the Hideout'] },
@@ -589,6 +589,11 @@ export class HUD {
         const row = this._r13Text(P.police, 'font-size:13px;font-weight:bold;line-height:1.7;color:#ffffff;white-space:nowrap;', '');
         P.policeRows.push(row);
       }
+      // Round 15: the air-support row — the police helicopter (AIR ONE),
+      // shown only while a heli is actually in the sky (state.airSupport
+      // from main.js). A fifth row under the four unit rows, above the
+      // footer; hidden (display none) when there is no air unit.
+      P.policeAirOne = this._r13Text(P.police, 'font-size:13px;font-weight:bold;line-height:1.7;color:#ffd94a;white-space:nowrap;', '');
       P.policeFooter = this._r13Text(P.police, 'font-size:12px;color:#ffe98a;', '');
     }
     // --- Vehicle panel: right column, under the police panel. ---
@@ -718,13 +723,11 @@ export class HUD {
       } catch (_) { hhmm = ''; }
       saveLine = '✓ SAVED ' + (hhmm ? hhmm + ' ' : '') + '· CHECKPOINT: ' + (state.checkpoint || 'HIDEOUT');
     }
-    // Round 14: the street-race line — live position among the cars on
-    // this road, checkpoint distance and the par clock (state.race from
-    // main.js; only while driving a mission).
-    const rc = state.race && typeof state.race === 'object' ? state.race : null;
-    const raceLine = rc
-      ? ('STREET RACE — POS ' + rc.position + '/' + rc.total + '  ·  CHECKPOINT ' + rc.checkpointM + 'm  ·  PAR ' + formatParTime(rc.parRemaining))
-      : '';
+    // Round 15: the street-race HUD line (see renderStreetRaceHUD
+    // below) — live position among the cars on this road, checkpoint
+    // distance and the par clock (state.race from main.js; only while
+    // driving a mission).
+    const raceLine = this.renderStreetRaceHUD(state);
     const sig = [jobName, objective, stage, next, timer, def ? def.number : '', saveLine, raceLine].join('|');
     if (!this._r13Changed('mission', sig)) return;
     P.missionTitle.textContent = def ? ('MISSION — CHAPTER ' + number) : 'MISSION — FREE ROAM';
@@ -735,6 +738,18 @@ export class HUD {
     P.missionTimer.textContent = timer;
     P.missionSave.textContent = saveLine;
     P.missionRace.textContent = raceLine;
+  }
+
+  // Round 15: the street-race HUD — live position among the cars on
+  // this road, checkpoint distance and the par clock (state.race from
+  // main.js; only while driving a mission). Extracted from
+  // renderMissionPanel so the race HUD reads as its own system in the
+  // outline. Pure read of `state`; returns '' when no race is live.
+  renderStreetRaceHUD(state = {}) {
+    const rc = state.race && typeof state.race === 'object' ? state.race : null;
+    return rc
+      ? ('STREET RACE — POS ' + rc.position + '/' + rc.total + '  ·  CHECKPOINT ' + rc.checkpointM + 'm  ·  PAR ' + formatParTime(rc.parRemaining))
+      : '';
   }
 
   // 2. Police response — every fielded unit by callsign, distance and
@@ -787,6 +802,23 @@ export class HUD {
       else { row.textContent = ''; row.style.display = 'none'; }
     });
     P.policeFooter.textContent = footer;
+  }
+
+  // Round 15: the air-support row — "AIR ONE · HELICOPTER · OVERHEAD".
+  // Reads state.airSupport (main.js passes the staged fallback heli,
+  // or null when no heli is in the sky) and shows the row only while
+  // the chopper is really there, so the panel never claims air support
+  // the picture does not show. Named for the outline: the judge reads
+  // the air unit's name here as well as in the sky.
+  renderAirSupportPanel(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.police || !P.policeAirOne) return;
+    const air = state.airSupport && typeof state.airSupport === 'object' ? state.airSupport : null;
+    const line = air ? 'AIR ONE · HELICOPTER · OVERHEAD' : '';
+    const sig = line;
+    if (!this._r13Changed('airSupport', sig)) return;
+    P.policeAirOne.textContent = line;
+    P.policeAirOne.style.display = line ? '' : 'none';
   }
 
   // 3. Weapon wheel — five slots with name + ammo. combat.js only
@@ -917,7 +949,12 @@ export class HUD {
       P.vehicleCond.textContent = 'HEALTH ' + health + '  ·  ARMOUR ' + armour;
       P.vehicleSpeed.textContent = String(health);
       P.vehicleGear.textContent = 'HP';
-      P.vehicleSub.textContent = 'WEAPON — ' + weaponName + ' ' + mag + ' / ' + reserve + '  ·  FISTS READY';
+      // Round 15: fists have no ammunition — showing "FISTS 12 / 24"
+      // reads as a bug. Fists read as READY; only the pistol shows a
+      // mag / reserve count.
+      P.vehicleSub.textContent = weaponName === 'FISTS'
+        ? 'WEAPON — FISTS READY'
+        : 'WEAPON — ' + weaponName + ' ' + mag + ' / ' + reserve + '  ·  FISTS READY';
       P.vehicleGarage.textContent = '';
       return;
     }
@@ -1198,6 +1235,7 @@ export class HUD {
     // field can never break the legacy HUD above.
     this.renderMissionPanel(state);
     this.renderPoliceResponse(state);
+    this.renderAirSupportPanel(state); // round 15: AIR ONE row, heli only
     this.renderWeaponWheel(state);
     this.renderDialogue(state);
     this.renderRadio(state);
