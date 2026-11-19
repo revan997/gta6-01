@@ -220,6 +220,18 @@ export class HUD {
     this._chaseToastTimer = null;
     this._r13 = null; // round 13: the eight dense-HUD panels, built lazily
     this._r13Sig = {}; // round 13: last rendered signature per panel (skip no-change frames)
+    this._currentDialogueLine = ''; // round-13B Lane A: line the dialogue box is showing
+    this._controlsHintHidden = false; // round-13B Lane A: hint hidden once in shot mode
+    // Round-13B Lane A: staged screenshot mode (?shot=...) hides the
+    // controls-hint line — it clutters the frame. Normal gameplay
+    // (no ?shot=) keeps the hint. Detected once here; the first
+    // update() frame applies it too, in case the DOM was not ready yet.
+    this._shotMode = false;
+    try {
+      const win = this.doc?.defaultView || (typeof window !== 'undefined' ? window : null);
+      this._shotMode = new URLSearchParams(win?.location?.search || '').has('shot');
+    } catch (_) { this._shotMode = false; }
+    if (this._shotMode) this._hideControlsHint();
   }
 
   _el(name) {
@@ -237,9 +249,41 @@ export class HUD {
   }
 
   showMessage(text, seconds = 4) {
+    // Round-13B Lane A: a direct toast of the dialogue line (main.js
+    // setShotDialogue toasts it for 30 s) is the same echo the
+    // dialogue box already shows — swallow it once update() has
+    // resolved the current line. Before the first update() the line
+    // is unknown, so the toast may land briefly; the update() echo
+    // branch clears it on the first frame.
+    if (text && this._currentDialogueLine && this._messageCoreLine(text) === this._currentDialogueLine) {
+      this._lastMessage = text || '';
+      this._messageTimer = 0;
+      this._setText('message', '');
+      return;
+    }
     this._lastMessage = text || '';
     this._messageTimer = seconds;
     this._setText('message', this._lastMessage);
+  }
+
+  // Round-13B Lane A: hide #controls-hint in staged screenshot mode.
+  // Idempotent; no-ops in normal gameplay or when the element is absent.
+  _hideControlsHint() {
+    if (!this._shotMode || this._controlsHintHidden || !this.doc) return;
+    const el = (typeof this.doc.getElementById === 'function') ? this.doc.getElementById('controls-hint') : null;
+    if (!el) return;
+    el.style.display = 'none';
+    this._controlsHintHidden = true;
+  }
+
+  // Round-13B Lane A: the bare line inside a "Speaker: 'line'" message
+  // (the form main.js builds for shotDialogue), or the message itself.
+  // Greedy to the LAST quote so a line containing an apostrophe
+  // ("don't look back") still extracts whole.
+  _messageCoreLine(text) {
+    if (typeof text !== 'string') return '';
+    const m = text.match(/^([A-Za-z][A-Za-z ]+):\s*'([\s\S]*)'$/);
+    return m ? m[2] : text;
   }
 
   // ---- round 4: elements the HUD builds itself (index.html has no slots
@@ -696,9 +740,12 @@ export class HUD {
   // the mission/objective table (missions.js objectiveFlavour verbatim);
   // a live state.message starting with "Name: '...'" is parsed as a
   // third source; free roam falls back to the standing Rico line.
-  renderDialogue(state = {}) {
-    const P = this._ensureRound13Panels();
-    if (!P || !P.dialogue) return;
+  // Round-13B Lane A: the dialogue entry the box shows, resolved the
+  // same way renderDialogue does — explicit state.dialogue first,
+  // then the mission/objective table, then a "Name: 'line'" message,
+  // then the free-roam fallback. Pure read of `state`; shared by
+  // renderDialogue and the message-line echo check in update().
+  _resolveDialogueEntry(state = {}) {
     let entry = null;
     if (state.dialogue && typeof state.dialogue === 'object') {
       entry = { speaker: state.dialogue.speaker || 'Rico Vega', role: state.dialogue.role || '', line: state.dialogue.line || '' };
@@ -714,6 +761,13 @@ export class HUD {
       if (m) entry = { speaker: m[1], role: '', line: m[2] };
     }
     if (!entry || !entry.line) entry = ROUND13_FREE_ROAM_DIALOGUE;
+    return entry;
+  }
+
+  renderDialogue(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.dialogue) return;
+    const entry = this._resolveDialogueEntry(state);
     const sig = [entry.speaker, entry.role, entry.line].join('|');
     if (!this._r13Changed('dialogue', sig)) return;
     P.dialoguePortrait.textContent = (entry.speaker || 'R').trim().charAt(0).toUpperCase();
@@ -836,6 +890,9 @@ export class HUD {
   update(state = {}) {
     if (!state) return;
     const dt = state.dt ?? 1 / 60;
+    // Round-13B Lane A: apply the shot-mode controls-hint hide on the
+    // first frame too (covers a HUD built before the DOM was ready).
+    this._hideControlsHint();
 
     // --- Wanted stars: filled ★ up to the level, empty ☆ after. ---
     const wanted = clamp(Math.round(state.wanted ?? 0), 0, 5);
@@ -950,7 +1007,22 @@ export class HUD {
     this._setText('clock', formatClock(state.timeOfDay));
 
     // --- Message line: a fresh message overrides, then it fades out. ---
-    if (state.message && state.message !== this._lastMessage) {
+    // Round-13B Lane A: when the message IS the dialogue line — the
+    // staged shots pass the same shotDialogue text as both `message`
+    // and `dialogue`, and main.js also toasts it via showMessage() —
+    // the dialogue box already shows it, so the big centre message
+    // line would print the same sentence twice. Swallow the echo
+    // (keep _lastMessage in sync so the 4 s re-fire loop cannot
+    // resurrect it); any other message still shows normally.
+    const dialogueEntry = this._resolveDialogueEntry(state);
+    this._currentDialogueLine = dialogueEntry ? dialogueEntry.line : '';
+    const isDialogueEcho = Boolean(state.message && this._currentDialogueLine
+      && this._messageCoreLine(state.message) === this._currentDialogueLine);
+    if (isDialogueEcho) {
+      this._lastMessage = state.message;
+      this._messageTimer = 0;
+      this._setText('message', '');
+    } else if (state.message && state.message !== this._lastMessage) {
       this.showMessage(state.message, state.messageSeconds ?? 4);
     } else if (this._messageTimer > 0) {
       this._messageTimer -= dt;

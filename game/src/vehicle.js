@@ -1,4 +1,7 @@
 // Cars — Solmar Bay traffic (Lane A).
+// Round-13B: the sunset coupe parks at (200,-142) (was 204,-134 —
+// main.js stageSunset) so the closer camera keeps it in frame; the coupe
+// model itself is unchanged.
 // Five original box-built models (coupe, sedan, pickup, van, sports), each a
 // distinct shape with wheels, windows and lights. Arcade driving: accelerate,
 // brake, reverse, speed-scaled steering, handbrake slide, and simple

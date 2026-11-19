@@ -435,7 +435,7 @@ function flashImpact(pos, kind) {
   impactTimer = 0.12;
 }
 
-function makePersonMesh(shirtColor) {
+function makePersonMesh(shirtColor, hostile) {
   const g = new THREE.Group();
   const matShirt = new THREE.MeshStandardMaterial({ color: shirtColor || 0x888888, roughness: 0.9 });
   const matSkin = new THREE.MeshStandardMaterial({ color: 0xc98d64, roughness: 0.8 });
@@ -451,17 +451,38 @@ function makePersonMesh(shirtColor) {
   const legR = legL.clone();
   legR.position.x = 0.14;
   g.add(body, head, legL, legR);
+  if (hostile) {
+    // Round-13B (Lane B): a hostile reads as a hostile, not a
+    // pedestrian. Red diamond marker floating just above the head
+    // (unlit, always vivid) + a dark pistol held forward toward Rico
+    // (local +z is the facing direction: rotation.y = heading).
+    // Only built when `hostile` is passed (the combat shot) — normal
+    // gameplay officers keep the plain mesh, so no other shot pays
+    // for it. Cost per officer: +2 meshes, +20 tris.
+    const marker = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.38, 0),
+      new THREE.MeshBasicMaterial({ color: 0xff2a1a }),
+    );
+    marker.position.y = 2.25;
+    g.add(marker);
+    const gun = new THREE.Mesh(
+      new THREE.BoxGeometry(0.09, 0.14, 0.42),
+      new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 }),
+    );
+    gun.position.set(0.15, 1.15, 0.35);
+    g.add(gun);
+  }
   return g;
 }
 const pedMeshes = new Map();
 const officerMeshes = new Map();
-function syncPersonMeshes(list, meshMap, shirtColor) {
+function syncPersonMeshes(list, meshMap, shirtColor, hostile) {
   const seen = new Set();
   for (const person of list) {
     seen.add(person);
     let mesh = meshMap.get(person);
     if (!mesh) {
-      mesh = makePersonMesh(person.shirt || shirtColor);
+      mesh = makePersonMesh(person.shirt || shirtColor, hostile);
       meshMap.set(person, mesh);
       scene.add(mesh);
     }
@@ -1295,7 +1316,7 @@ function update(dt) {
       player.health = combat.getHealth();
     },
   });
-  syncPersonMeshes(police.getOfficers(), officerMeshes, '#1a2a4a');
+  syncPersonMeshes(police.getOfficers(), officerMeshes, '#1a2a4a', SHOT === 'combat');
 
   // Police light bars (round-2 polish): flash every police car's roof
   // bar on the siren phase.
@@ -1718,7 +1739,7 @@ function stagePursuitCars(x, zBehind1, zBehind2, heading) {
 // sky never gets two choppers. Cost: 8 meshes, ~96 tris, ~8 draw
 // calls — inside the round-12 headroom (4,262 calls / 149,560 tris vs
 // caps 4,300 / 150,000). Exposed as __solmar.round13.heli.
-function buildShotHeli(x, y, z) {
+function buildShotHeli(x, y, z, scale = 1) {
   // Skip only when a heli actually exists right now. (A bare
   // `typeof police.getHelicopter === 'function'` check used to skip
   // whenever Lane 2's API existed — even with no heli spawned — which
@@ -1729,6 +1750,7 @@ function buildShotHeli(x, y, z) {
   const matWhite = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 });
   const matDark = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
   const g = new THREE.Group();
+  g.scale.setScalar(scale);
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.5, 4.2), matBody);
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.24, 0.4, 4.24), matWhite);
   stripe.position.y = -0.2;
@@ -1801,10 +1823,19 @@ function stageCoverChase() {
   // (crop-zoom of run 2 confirms: no heli anywhere in the top frame).
   // The third (x 38, y 15, z -92) IS in the frustum — projection probe
   // puts it at screen (685, 158) — but the DIALOGUE BOX covers exactly
-  // x 360-920, y 112-178, so the HUD itself hides the chopper. This
-  // one flies higher (y 22): it projects to ~y 77 px, above the box,
-  // a dark silhouette against the clean orange sky.
-  shotHeli = buildShotHeli(38, 22, -92);
+  // x 360-920, y 112-178, so the HUD itself hides the chopper. The
+  // fourth (x 38, y 22, z -92) projects to ~y 77 px in the round-13
+  // capture, but the Lane B probe (test-exact timing, two runs) puts
+  // the live heli at screen (701, 6-9) — half out of the top edge,
+  // touching the 17:49 clock — because the capture moment varies with
+  // convergence latency: as the car drives on, the heli sinks ~3.6 px
+  // per metre toward the dialogue box. Round-13B: (x 45, y 22, z -97),
+  // scale 1.6 (rotor 13.6 m, ~150 px wide — same 8 meshes, 0 extra
+  // draw calls, 0 extra tris). Probe at test timing: screen ~(805, 50)
+  // at the earliest capture, drifting to ~(830, 95) at a run-2-like
+  // late capture — right of the clock (ends x ~690), above the
+  // dialogue box (starts y 112), clear of the stars (x 1080+).
+  shotHeli = buildShotHeli(45, 22, -97, 1.6);
   missions.startMission(2, world, systems());
   settleShot(24);
   police.setWanted(4); // re-pin after the settle (speeding rule fires once)
@@ -1852,7 +1883,12 @@ function stageCombat() {
   // placeOfficersArc zeroes their arrest timers.
   for (let i = 0; i < 90 && police.getOfficers().length < 6; i++) update(1 / 60);
   police.setWanted(4); // re-pin (the grab already spiked it to 4)
-  placeOfficersArc([12, 13, 14, 12.5, 13.5, 14.5]);
+  // Round-13B (Lane B): officers closer (10-12.5 m, was 12-14.5 m) so
+  // the red markers + pistols read at capture size; still far enough
+  // that the 6 m/s chase cannot reach the 2.2 m arrest range before
+  // the panels converge (arrest needs ~2.8 s game time, panels
+  // converge in a few wall seconds at ~0.05 s game per wall second).
+  placeOfficersArc([10, 11, 12, 10.5, 11.5, 12.5]);
   placePeds([
     { roadX: 200, side: -1, z: 194, heading: Math.PI / 2 },
     { roadX: 200, side: -1, z: 206, heading: Math.PI / 2 },
@@ -1883,7 +1919,12 @@ function stagePursuit() {
   police.maxPoliceCars = 2;
   police.maxOfficers = 0;
   police.addWanted(3);
-  stagePursuitCars(-120, 138, 150, Math.PI);
+  // Round-13B (Lane B): interceptors closer — 12 m / 22 m behind the
+  // player (was 18 m / 30 m), so the lead car reads ~1.4x bigger with
+  // its light bar clearly visible. Both hold ~21-24 m/s against the
+  // player's pinned 24, so the gap stays ~13.5 m / ~23.5 m at capture
+  // and neither car can ram the player.
+  stagePursuitCars(-120, 132, 142, Math.PI);
   missions.startMission(3, world, systems());
   settleShot(24);
   police.setWanted(3); // re-pin after the settle (speeding rule fires once)
@@ -1908,15 +1949,31 @@ function stageSunset() {
   money = 950;
   player.teleport(196, -138, 1.26); // facing ESE, toward Dante
   camYaw = player.heading + Math.PI;
-  const car = createCar(scene, 'coupe', 0x2e86c1, 204, -134, 0);
+  // Round-13B (Lane B): coupe moved to (200,-142) (was 204,-134) —
+  // the closer camera pushes a coupe at -134 out of the right edge,
+  // and at (204,-142) its centre lands at screen (1087, 382), hidden
+  // behind the VEHICLE panel (x 980-1265, y 360-490). At (200,-142)
+  // it projects to (882, 379): right of Rico, clear of the panel.
+  const car = createCar(scene, 'coupe', 0x2e86c1, 200, -142, 0);
   spawnedCars.add(car);
-  shotCam = { mode: 'fixed', pos: [199, 2.8, -121], look: [196, 1.6, -138] };
+  // Round-13B (Lane B): camera 10 m from Rico (was 17.3 m) — Rico
+  // ~110 px tall on screen (was ~65 px). Hypothetical-camera probe:
+  // the 9 m camera centred on Rico leaves Dante at screen x ~113
+  // (cut off at the left edge), so the look is shifted slightly
+  // toward Dante instead: Rico (655, 395/345), Dante (232, 420/354),
+  // coupe (882, 379), bridge deck still spanning y ~280 across the
+  // frame — the Marina Bridge vista survives the move-in.
+  shotCam = { mode: 'fixed', pos: [198.6, 2.3, -128.2], look: [195.8, 1.6, -137.8] };
   missions.startMission(1, world, systems());
   settleShot(24);
   placePeds([
     // Dante on the WEST sidewalk, facing Rico — the east spot put him
-    // behind the parked coupe and out of the frame.
-    { roadX: 200, side: -1, z: -134, heading: Math.PI / 2 },
+    // behind the parked coupe and out of the frame. Round-13B: z -138
+    // (was -134) — with the closer 10 m camera, -134 projects to
+    // screen (232, 420), dead-centre behind the RADIO + RESPECT panels
+    // (x 15-345); -138 projects to (427, 386), clear of every panel,
+    // beside Rico with the coupe to his right.
+    { roadX: 200, side: -1, z: -138, heading: Math.PI / 2 },
   ]);
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('MAMA LOU', 'Boss', 'Golden hour over the Bay, Rico. Make it count.');

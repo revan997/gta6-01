@@ -1,4 +1,8 @@
 // Solmar Bay — Missions (Lane B)
+// Round-13B: the combat shot runs mission 5 (Harbour Heist); its objective
+// advances to 1 during the settle, so the dialogue panel's mission-table
+// fallback reads Priya's 'Whole city on you now' line until the first
+// rendered frame swaps in the staged Dante line (see round13b-test.mjs).
 // Five-mission story chain for Rico Vega, driver for fixer Mama Lou,
 // with crew members Dante and Priya. Each mission has a briefing, a
 // sequence of objectives with map markers, success and failure conditions,

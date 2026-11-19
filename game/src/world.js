@@ -1,4 +1,6 @@
 // Solmar Bay — procedural city builder (Lane A).
+// Round-13B: the sunset camera move-in keeps the Marina Bridge deck
+// spanning the frame (bridge at z=-240); the city itself is unchanged.
 // Builds the whole 3D city into the scene from a seeded generator and returns
 // the world description object: the single source of truth for roads,
 // building collisions and spawn points. Traffic and police ask this object;

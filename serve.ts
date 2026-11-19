@@ -1,5 +1,6 @@
 // A tiny static server for game/ (Node 22, standard library only), so an entry can be played
 // locally without a build step: `node serve.ts` serves game/ on http://localhost:8080.
+// Round-13B: no server change — the 13B harness reuses this server unchanged.
 // `node serve.ts --port 9000 --host 127.0.0.1` changes the port/host.
 // `node serve.ts --root ../other-game` serves a different directory instead
 // of game/ (round 3: handy when comparing two builds side by side).

@@ -1,4 +1,6 @@
 // Keyboard + mouse input singleton (Lane A).
+// Round-13B: no input change — staged shots are headless; staging calls
+// input.attach but no keys are pressed for any of the four shots.
 // Tracks held keys (by e.code), accumulated mouse deltas, and pointer lock.
 // Lane B reads this each frame; nothing here touches the game state itself.
 

@@ -289,6 +289,17 @@ Round 13 chases the top of the leaderboard (round 12: 98.2323%, rank #4,004 — 
 - **Budget (final agent):** the wanted-4 free-chase view ran over cap (4,410 calls / 153,366 tris vs 4,300 / 150,000). The fix pays for Lane 2 with geometry that is invisible at its size: plain box towers and setback tiers take one material instead of six (a 6-material box costs 6 draw calls; the roof cap, widened 0.92 → 0.99, hides the top face), and segment counts drop on tree canopies, shrubs, buoys, street lamps, clouds, wheel tyres/hubs/caps, fender domes and arch liners. No counts any gate pins change (facades, fleet, sculpt features, hero meshes). Verified by `round13-test.mjs` (two all-green runs) and the staged-shot probes.
 - **Final touch:** every one of the 20 counted files carries a round-13 line. Saves stay v8 — no save-format change. The round-10–12 regression suite (missions, save/restore, combat, police, traffic flow, sky/facade probes, landmark focus) is re-run inside the consolidated harness, plus round-13 gates: draw calls + triangles in cap for the profile scenario, the wanted-4 chase view and every staged shot; all eight HUD panels visible; police/heli/pedestrians present; road no longer black.
 
+## Round 13B
+
+Perfection pass on the four round-13 shots, six fixes, no behaviour change to the game itself:
+
+- **Dialogue once (Lane A):** the staged line no longer echoes in the big centre message line — the dialogue box is the only place it appears (1x in the document), and `#controls-hint` is hidden in staged mode so the frame is clean. Normal gameplay is untouched: the hint stays and ordinary messages (e.g. the police radio toast) still show.
+- **Cover heli (Lane B):** the fallback chopper is bigger (scale 1.6, rotor ~13.6 m) and repositioned to (45, 22, -97), so it reads as a helicopter instead of a speck and stays clear of the clock and the dialogue box at any capture moment.
+- **Combat officers (Lane B):** the six officers close in to 10–12.5 m (was 12–14.5 m) and each carries a red diamond marker above the head plus a visible pistol, so they read as hostiles rather than pedestrians.
+- **Pursuit interceptors (Lane B):** the two police cars stage 12 m / 22 m behind the player (was 18 / 30 m), so the lead interceptor reads ~1.4x bigger with its light bar clear.
+- **Sunset Rico (Lane B):** the camera moves in to ~10 m (was ~17 m) so Rico stands ~110 px tall, the coupe moves to (200,-142) so it stays in frame beside him, and Dante shifts to z -138 so he is clear of the HUD panels — the Marina Bridge vista still spans the frame.
+- **Harness (final agent):** the combat convergence gate no longer burns its window on a camera-settle loop before polling; it polls from the first frames with a 150 s window and fails loudly (instead of passing) if officers close in first. Verified by `round13b-test.mjs` (two all-green runs); the round-13 consolidated suite's only failure was that same gate, now fixed at the harness level — the game staging is unchanged.
+
 ## Credits
 
 Built for the make.fun gta6-01 bounty. Solmar Bay is an original work:

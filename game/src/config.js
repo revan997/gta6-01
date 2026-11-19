@@ -1,4 +1,6 @@
 // Solmar Bay — central tuning constants (Lane A).
+// Round-13B: no tuning change — the 13B fixes are staging/HUD only
+// (heli scale, officer arc, camera positions in main.js; dialogue echo in hud.js).
 // Single source of truth for sizes, colours, speeds, camera and wanted rules.
 // All values are plain data; no code in this file reads input or the network.
 

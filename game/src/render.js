@@ -1,5 +1,7 @@
 // Renderer, camera and lighting (Lane A; round-2 polish: canvas-texture
 // helper, tighter player-following shadows, stronger sun contrast).
+// Round-13B: no renderer change — the round-13 caps (≤4,300 draw calls,
+// ≤150,000 triangles) still bound every staged shot.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 

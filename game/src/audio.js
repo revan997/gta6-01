@@ -1,4 +1,6 @@
 // Solmar Bay — Audio (Lane B)
+// Round-13B: no audio change — the staged shots reuse the shot-mode
+// silence (no pre-gesture audio) and the radio panel stays HUD-only.
 // All sound is synthesised with the Web Audio API only. No audio files,
 // no network, no external URLs. Engine hum whose pitch follows speed,
 // police siren loop, gunshot, punch, pickup blip, mission-complete jingle

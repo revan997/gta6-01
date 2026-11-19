@@ -1,4 +1,7 @@
 // Solmar Bay — PoliceSystem (Lane B)
+// Round-13B: pursuit interceptors stage 12 m / 22 m behind the player
+// (was 18 / 30 m — main.js stagePursuitCars) so the lead car reads ~1.4x
+// bigger with its light bar clear; spawn/chase logic is unchanged.
 // Wanted system (0–5 stars) and police AI: patrol cars and foot officers
 // spawn in proportion to the wanted level, chase the player, try to ram the
 // player's car or arrest the player on foot, and give up after the player

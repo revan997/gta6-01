@@ -1,4 +1,6 @@
 // Rico Vega — on-foot player (Lane A).
+// Round-13B: the sunset shot frames Rico at ~10 m (main.js shotCam), about
+// 110 px tall on screen (was ~65 px at 17 m); the player mesh is unchanged.
 // Stylised low-poly human built from boxes. Walks, runs, jumps, collides
 // against building boxes and stays inside the city. Also owns the
 // enter/exit-car handoff: the player object is the contract Lane B reads
