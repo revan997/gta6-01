@@ -116,7 +116,7 @@ export const CONFIG = {
     screechCooldown: 0.9, // seconds between skid sounds
   },
   // Mission par times (seconds): finish under par for a $100 bonus.
-  missionPar: { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300 },
+  missionPar: { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300, 6: 270, 7: 300, 8: 360 },
   parBonus: 100,
 
   // ---- Round-4 polish (Lane W): richer city, living water & sky ----

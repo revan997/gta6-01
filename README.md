@@ -7,7 +7,7 @@
 Rico Vega is home. Solmar Bay is a coastal city caught between golden hour
 and blue hour: downtown towers step up into the dusk, the old town glows
 neon, the marina rocks its boats, and the beach hums with surf. Mama Lou
-has five jobs for Rico. The Solmar Bay police have other plans. This repo
+has eight jobs for Rico. The Solmar Bay police have other plans. This repo
 is our entry for the [make.fun gta6-01](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 bounty ("Make GTA 6") — a full crime sandbox that plays entirely offline
 in a browser tab. The city, the traffic, the people, the radio chatter
@@ -22,7 +22,7 @@ node serve.ts
 ```
 
 Open the page and press **START**. You are Rico, standing downtown with
-$250 and five jobs waiting. No account, no install, no network.
+$250 and eight jobs waiting. No account, no install, no network.
 `?seed=<number>` rebuilds the same city from a different seed, and
 `?shot=start|play|end` stages the legacy entry screenshots; round 13
 adds `?shot=cover-chase|combat|pursuit|sunset` — four staged gameplay
@@ -93,7 +93,7 @@ and it is the busted screen, run out of health and it is wasted.
 
 ## The story
 
-Five jobs from fixer Mama Lou, with Dante riding shotgun and Priya
+Eight jobs from fixer Mama Lou, with Dante riding shotgun and Priya
 running the plans:
 
 1. **First Run** — $500. A package, a marina, a beach. Keep it clean.
@@ -101,6 +101,9 @@ running the plans:
 3. **Borrowed Beauty** — $1,200. Lift a pearl-white Palm Coupe. No scratches.
 4. **Long Tail** — $1,500. Follow a courier from the Palms Hotel. Do not be seen.
 5. **Harbour Heist** — $5,000. A vault boat at midnight, four stars, one way out.
+6. **Night Run** — $2,000. A quiet pickup at the Docks, a drop at the Palms Hotel. No lights, no noise.
+7. **Gold Rush** — $3,000. Lift a Dune Pickup from the Marina, run it to North Beach. The beach is watching.
+8. **King of Solmar** — $8,000. The crown jewels at the Palms Hotel, five stars on the way out, and one road home to the Hideout.
 
 Each job has its own intro card and crew chatter, a par time to beat,
 and a best time that is saved to your profile.

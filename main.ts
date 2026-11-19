@@ -6,6 +6,8 @@
 // deterministic over the copied tree.
 // Round-13B: no packager change — the submission still copies game/ +
 // screenshots/ and builds dossier.json deterministically.
+// Round 14: no packager change — the submission still copies game/ +
+// screenshots/ and builds dossier.json deterministically.
 //
 // Validation: before anything is copied (or any previous output cleared),
 // the inputs are checked — game/ and game/index.html must exist, the

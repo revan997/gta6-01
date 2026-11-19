@@ -1,6 +1,8 @@
 // Solmar Bay — SaveSystem (Lane B)
 // Round-13B: no save-format change — staged shots never write a save;
 // saves stay v8.
+// Round 14: staged shots now call saveProgress (main.js) so the HUD
+// save line reads a real save; the format is unchanged (v8).
 // Saving to the browser's localStorage: the player's money, completed
 // missions, current mission, position and wanted level; load it back; and
 // report whether a save exists. No network, no other storage.

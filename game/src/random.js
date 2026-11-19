@@ -1,5 +1,7 @@
 // Deterministic seeded random generator (Lane A).
 // Round-13B: no RNG change — all four staged shots still use seed=1.
+// Round 14: no RNG change — the eight-mission chain and the staged
+// shots still use seed=1.
 // All randomness in Lane A files comes from this factory, never from the
 // built-in unseeded random function, so a given seed reproduces the same city.
 // Round-11 final (re-touch): the same seed reproduces the same fleet — the consolidated run's fleet probe (19 cars, 8 models, pickup/bus/coupe guaranteed) is deterministic because the deck order is.

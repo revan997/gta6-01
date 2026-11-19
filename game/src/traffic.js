@@ -2,6 +2,8 @@
 // Round-13B: the combat shot thins the ambient fleet (maxCars 10,
 // maxPedestrians 8 — main.js stageCombat) to hold the triangle budget
 // with six officers on screen; the spawn logic is unchanged.
+// Round 14: the pursuit shot's race rivals and roadblock cars are
+// staged cars (main.js), not traffic — the spawn logic is unchanged.
 // Spawns and updates AI traffic cars and pedestrians on the road network
 // described by the world object. All randomness comes from the seeded
 // generator passed in (an object with next()/range()/pick(), or a factory

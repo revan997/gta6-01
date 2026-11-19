@@ -633,6 +633,11 @@ export class PoliceSystem {
     for (const car of this.policeCars) {
       // Round-5 dusk: boost the light-bar glow once the bar is attached.
       this._boostLightBar(car);
+      // Round-14: a staged car holds its mark for the screenshot
+      // (roadblock pair, patrol car, sunset patrol) — it keeps its
+      // flashing light bar and halo, but never chases, rams or busts.
+      // Staging sets car.staged = true; normal gameplay never does.
+      if (car.staged) { car.speed = 0; continue; }
       const d = dist2D(car.position, player.position);
       // Round 4: the interceptor does not chase the tail — it aims at the
       // intercept point ahead of the player and tries to cut them off.
@@ -668,6 +673,10 @@ export class PoliceSystem {
     // --- Foot officers: chase on foot and arrest at close range. ---
     for (const officer of this.officers) {
       if (!officer.alive) continue;
+      // Round-14: a staged officer holds its mark for the screenshot
+      // (combat arc) — it never closes in or starts an arrest timer.
+      // Staging sets officer.staged = true; normal gameplay never does.
+      if (officer.staged) { officer.speed = 0; continue; }
       const d = dist2D(officer.position, player.position);
       if (playerInCar) {
         // Officers cannot catch a car: hold position near where they are.

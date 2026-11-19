@@ -149,6 +149,7 @@ export function buildWorld(scene, seedOrRng) {
 
   const roads = [];
   const buildings = []; // collision boxes: { minX, maxX, minZ, maxZ, height, district }
+  const marinaSigns = []; // Round 14: placed neon sign positions { text, x, y, z } — returned below for the probe.
 
   // ---- Procedural textures (round-2 polish) ----
   // Sky dome: a big gradient sphere (BackSide, fog-free) so the horizon
@@ -1613,6 +1614,47 @@ export function buildWorld(scene, seedOrRng) {
     makeInstanced(geoWinAwnings, matBalcony, false);
   }
 
+  // ---- Round 14: marina neon signs — the sunset shot's flat brown
+  // west wall (the left third of the frame) gets two lit signs. The
+  // buildings are procedural, so each sign's x is DERIVED from the
+  // building collision boxes: the east face (maxX) closest to the
+  // marina road (x 200) in the sign's z band, plus 0.15 m proud so
+  // the plane never z-fights the facade. Facing east (rotation.y =
+  // PI/2, toward the road and the sunset camera). 2 planes + 2 glow
+  // sprites, 4 draw calls, ~4 tris. If no wall exists in a band the
+  // sign is skipped, never crashed. Placed positions are collected
+  // in marinaSigns (returned below) so the probe can verify them.
+  {
+    const marinaSignDefs = [
+      { text: 'MARINA', y: 7, z: -148, bg: '#0e4d6b', fg: '#7fe7ff', glow: '#35c4ff' },
+      { text: 'PIER 12', y: 5, z: -165, bg: '#5c1d2e', fg: '#ffd166', glow: '#ff9f43' },
+    ];
+    for (const s of marinaSignDefs) {
+      let faceX = null;
+      for (const b of buildings) {
+        if (b.maxX < 180 || b.maxX > 199) continue;
+        if (b.minZ > s.z + 6 || b.maxZ < s.z - 6) continue;
+        if ((b.height || 0) < s.y + 1) continue;
+        if (faceX === null || b.maxX > faceX) faceX = b.maxX;
+      }
+      if (faceX === null) continue;
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(8.8, 2.2),
+        new THREE.MeshBasicMaterial({ map: makeSignTexture(s.text, s.bg, s.fg), transparent: true }),
+      );
+      sign.position.set(faceX + 0.15, s.y, s.z);
+      sign.rotation.y = Math.PI / 2;
+      scene.add(sign);
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: makeGlowTexture(s.glow), transparent: true, depthWrite: false, opacity: 0.5,
+      }));
+      glow.scale.set(11, 3.5, 1);
+      glow.position.set(faceX + 0.3, s.y, s.z);
+      scene.add(glow);
+      marinaSigns.push({ text: s.text, x: +(faceX + 0.15).toFixed(1), y: s.y, z: s.z });
+    }
+  }
+
   // ---- Round-6 landmarks: Solmar Spire + Marina Bridge ----
   // Two signature landmarks so the skyline is not uniform boxes.
   // Deterministic (no rng consumed) so the seeded layout of everything
@@ -2933,6 +2975,7 @@ export function buildWorld(scene, seedOrRng) {
     buoyCount: buoys.length,
     water: foam, // the shoreline foam strip mesh
     mooredBoats, // [{ group, phase, baseY, baseRotY }] — 3 marina boats
+    marinaSigns, // Round 14: placed neon sign positions { text, x, y, z }
     cruisingBoats, // [{ group, x0, z, speed }] — 2 open-sea boats
     updateWater,
     updateBuoys,

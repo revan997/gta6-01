@@ -1,14 +1,13 @@
 // Solmar Bay — Missions (Lane B)
-// Round-13B: the combat shot runs mission 5 (Harbour Heist); its objective
-// advances to 1 during the settle, so the dialogue panel's mission-table
-// fallback reads Priya's 'Whole city on you now' line until the first
-// rendered frame swaps in the staged Dante line (see round13b-test.mjs).
-// Five-mission story chain for Rico Vega, driver for fixer Mama Lou,
-// with crew members Dante and Priya. Each mission has a briefing, a
-// sequence of objectives with map markers, success and failure conditions,
-// and a cash reward. All randomness comes from the seeded generator passed
-// in (an object with next()/range()/pick(), or a factory taking a seed).
-// Never uses Math.random.
+// Round-14: eight-mission story chain for Rico Vega, driver for fixer
+// Mama Lou, with crew members Dante and Priya. Missions 6-8 extend the
+// chain past the Harbour Heist (same mechanics only — position,
+// needsCar, needsClear, startWantedOnGrab — so every new job is
+// playable on the systems that already exist). Each mission has a
+// briefing, a sequence of objectives with map markers, success and
+// failure conditions, and a cash reward. All randomness comes from the
+// seeded generator passed in (an object with next()/range()/pick(), or
+// a factory taking a seed). Never uses Math.random.
 //
 // Mission flow (update(dt, world, player, systems)):
 //   systems may carry { police, traffic, combat, audio, addMoney } — the
@@ -162,6 +161,58 @@ const MISSION_DEFS = [
       "Priya: 'Whole city on you now. Hideout. GO.'",
     ],
   },
+  {
+    number: 6,
+    id: 'night-run',
+    name: 'Night Run',
+    briefing: "Mama Lou: 'The Docks after dark, Rico. A night cargo comes off the freighter — no manifest, no questions. Pick it up and run it to the Palms Hotel before the sun comes up. Quiet streets, quick feet.'",
+    reward: 2000,
+    objectives: [
+      { id: 'pickup', text: 'Pick up the night cargo at the Docks', location: 'docks', radius: 8 },
+      { id: 'deliver', text: 'Deliver the night cargo to the Palms Hotel', location: 'palmsHotel', radius: 8 },
+    ],
+    failText: 'The night cargo was lost.',
+    introCard: 'After dark. No manifest, no questions. Run it quiet.',
+    objectiveFlavour: [
+      "Priya: 'Docks, pier 3, after midnight. The crate is unmarked — keep it that way.'",
+      "Dante: 'Palms Hotel, service entrance. Do not park under the lights.'",
+    ],
+  },
+  {
+    number: 7,
+    id: 'gold-rush',
+    name: 'Gold Rush',
+    briefing: "Dante: 'A Dune Pickup with gold trim, parked at the Marina — the owner's other debt to Mama Lou. Same play as the Coupe, Rico: quiet hands, no scratches, bring it to North Beach.'",
+    reward: 3000,
+    objectives: [
+      { id: 'steal', text: 'Steal the gold-trimmed Dune Pickup at the Marina', location: 'marina', radius: 8, needsCar: 'Dune Pickup' },
+      { id: 'deliver', text: 'Deliver the Dune Pickup to North Beach', location: 'northBeach', radius: 8, needsCar: 'Dune Pickup' },
+    ],
+    failText: 'The Dune Pickup was wrecked or lost.',
+    introCard: 'Gold trim, one owner, one debt. Mama Lou collects what she is owed.',
+    objectiveFlavour: [
+      "Dante: 'Marina, east row. Gold trim, you cannot miss it.'",
+      "Priya: 'North Beach, by the palms. And Rico — not one scratch.'",
+    ],
+  },
+  {
+    number: 8,
+    id: 'king-of-solmar',
+    name: 'King of Solmar',
+    briefing: "Mama Lou: 'The crown jewels, Rico — the Palms Hotel vault, tonight. Grab them and the whole city comes down on you. Five stars. Lose them, reach the Hideout, and the Bay is yours. This is the last job. Make it count.'",
+    reward: 8000,
+    objectives: [
+      { id: 'grab', text: 'Grab the crown jewels at the Palms Hotel', location: 'palmsHotel', radius: 8 },
+      { id: 'escape', text: 'Escape the five-star chase — reach the Hideout', location: 'hideout', radius: 10, needsClear: true },
+    ],
+    startWantedOnGrab: 5,
+    failText: 'The crown job failed — busted or wasted at the Palms.',
+    introCard: 'Five stars. One vault. The Bay is yours if you make it out.',
+    objectiveFlavour: [
+      "Mama Lou: 'The vault opens at midnight. Take everything. Leave nothing.'",
+      "Dante: 'Five stars and the whole city. Hideout, Rico — GO GO GO.'",
+    ],
+  },
 ];
 
 export class MissionManager {
@@ -172,7 +223,7 @@ export class MissionManager {
     // Round-3 polish: par times (seconds per mission) and the under-par
     // bonus. main.js passes CONFIG.missionPar / CONFIG.parBonus; the
     // defaults keep the chain playable standalone.
-    this.parSeconds = options.parSeconds || { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300 };
+    this.parSeconds = options.parSeconds || { 1: 150, 2: 180, 3: 210, 4: 240, 5: 300, 6: 270, 7: 300, 8: 360 };
     this.parBonus = options.parBonus ?? 100;
     this.completed = new Set(options.completed || []);
     this.current = null; // active mission runtime state
@@ -235,7 +286,7 @@ export class MissionManager {
     return this.current ? this.current.number : null;
   }
 
-  // Start mission `number` (1–5). Returns the briefing, or null if the
+  // Start mission `number` (1–8). Returns the briefing, or null if the
   // number is invalid or a mission is already running.
   startMission(number, world, systems = {}) {
     const def = this.getMissionDef(number);

@@ -2,6 +2,8 @@
 // helper, tighter player-following shadows, stronger sun contrast).
 // Round-13B: no renderer change — the round-13 caps (≤4,300 draw calls,
 // ≤150,000 triangles) still bound every staged shot.
+// Round 14: makeGlowTexture is now also used by main.js (exhaust smoke)
+// and the marina neon glow sprites come from world.js; caps unchanged.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 

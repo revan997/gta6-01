@@ -52,6 +52,9 @@ const ROUND13_MISSIONS = {
   3: { name: 'Borrowed Beauty', reward: 1200, objectives: ['Steal the pearl-white Palm Coupe at the Car Lot', 'Deliver the Palm Coupe to the Docks'] },
   4: { name: 'Long Tail', reward: 1500, objectives: ['Tail the courier from the Palms Hotel — do not get spotted', 'The courier stopped at the Lookout — report at the Stepped Quarter plaza'] },
   5: { name: 'Harbour Heist', reward: 5000, objectives: ['Grab the cash at the Harbour', 'Escape the four-star chase — reach the Hideout'] },
+  6: { name: 'Night Run', reward: 2000, objectives: ['Pick up the night cargo at the Docks', 'Deliver the night cargo to the Palms Hotel'] },
+  7: { name: 'Gold Rush', reward: 3000, objectives: ['Steal the gold-trimmed Dune Pickup at the Marina', 'Deliver the Dune Pickup to North Beach'] },
+  8: { name: 'King of Solmar', reward: 8000, objectives: ['Grab the crown jewels at the Palms Hotel', 'Escape the five-star chase — reach the Hideout'] },
 };
 
 // Dialogue (missions.js objectiveFlavour, verbatim lines, speaker + role
@@ -67,7 +70,22 @@ const ROUND13_DIALOGUE = {
   '4:1': { speaker: 'Mama Lou', role: 'Fixer', line: 'The Lookout, was it? Good. Meet Priya at the Stepped Quarter plaza and tell her everything.' },
   '5:0': { speaker: 'Dante', role: 'Wheelman', line: 'Vault boat lands at midnight. Grab and run — do NOT stop to count.' },
   '5:1': { speaker: 'Priya', role: 'Getaway Driver', line: 'Whole city on you now. Hideout. GO.' },
+  '6:0': { speaker: 'Priya', role: 'Getaway Driver', line: 'Docks, pier 3, after midnight. The crate is unmarked — keep it that way.' },
+  '6:1': { speaker: 'Dante', role: 'Wheelman', line: 'Palms Hotel, service entrance. Do not park under the lights.' },
+  '7:0': { speaker: 'Dante', role: 'Wheelman', line: 'Marina, east row. Gold trim, you cannot miss it.' },
+  '7:1': { speaker: 'Priya', role: 'Getaway Driver', line: 'North Beach, by the palms. And Rico — not one scratch.' },
+  '8:0': { speaker: 'Mama Lou', role: 'Fixer', line: 'The vault opens at midnight. Take everything. Leave nothing.' },
+  '8:1': { speaker: 'Dante', role: 'Wheelman', line: 'Five stars and the whole city. Hideout, Rico — GO GO GO.' },
 };
+// Round 14: the crew roster (missions.js briefings — Mama Lou the
+// fixer, Dante the wheelman, Priya the getaway driver). The crew panel
+// lists every member with the role the story gives them; the member
+// speaking in the dialogue box is marked ON CALL.
+const ROUND14_CREW = [
+  { name: 'Dante', role: 'WHEELMAN', ability: 'Chase' },
+  { name: 'Priya', role: 'GETAWAY DRIVER', ability: 'Boat' },
+  { name: 'Mama Lou', role: 'FIXER · BOSS', ability: 'Jobs' },
+];
 const ROUND13_DIALOGUE_COLORS = { 'Mama Lou': '#8e44ad', Dante: '#1a8a7a', Priya: '#b8860b', Rico: '#c23a2a' };
 // Fallback line when no mission is running (an original Rico line, not a
 // mission quote — it is only ever shown in free roam).
@@ -92,8 +110,9 @@ function radioForHour(hour) {
 }
 
 // Respect ranks: NO respect system exists in the game, so the rank is
-// derived from jobs done — 20 points per completed mission plus the
-// current mission's objective progress (missions.getSummary() would
+// derived from jobs done — 12 points per completed mission (8 jobs in
+// the chain, so a full chain is ~96 + the current job's progress) plus
+// the current mission's objective progress (missions.getSummary() would
 // feed completedCount directly; see the patch note in the report).
 const ROUND13_RESPECT_RANKS = ['STREET ROOKIE', 'WHEELMAN', 'MADE DRIVER', 'BAY RUNNER', 'KING OF SOLMAR'];
 function respectFor(state) {
@@ -112,8 +131,8 @@ function respectFor(state) {
     : (typeof prog?.completedCount === 'number' ? prog.completedCount
       : (typeof prog?.number === 'number' ? Math.max(0, prog.number - 1) : 0));
   const active = (typeof prog?.objectiveIndex === 'number' && typeof prog?.objectiveCount === 'number' && prog.objectiveCount > 0)
-    ? (prog.objectiveIndex / prog.objectiveCount) * 20 : 0;
-  const points = clamp(Math.round(completed * 20 + active), 0, 100);
+    ? (prog.objectiveIndex / prog.objectiveCount) * 12 : 0;
+  const points = clamp(Math.round(completed * 12 + active), 0, 100);
   const band = Math.min(ROUND13_RESPECT_RANKS.length - 1, Math.floor(points / 20));
   return {
     rank: ROUND13_RESPECT_RANKS[band],
@@ -222,6 +241,7 @@ export class HUD {
     this._r13Sig = {}; // round 13: last rendered signature per panel (skip no-change frames)
     this._currentDialogueLine = ''; // round-13B Lane A: line the dialogue box is showing
     this._controlsHintHidden = false; // round-13B Lane A: hint hidden once in shot mode
+    this._legacySpeedHidden = false; // round 14: speedo + ammo hidden once in shot mode
     // Round-13B Lane A: staged screenshot mode (?shot=...) hides the
     // controls-hint line — it clutters the frame. Normal gameplay
     // (no ?shot=) keeps the hint. Detected once here; the first
@@ -264,6 +284,19 @@ export class HUD {
     this._lastMessage = text || '';
     this._messageTimer = seconds;
     this._setText('message', this._lastMessage);
+  }
+
+  // Round-14: hide the legacy bottom-right speedo + ammo readout in
+  // staged screenshot mode (they duplicate the vehicle panel and the
+  // weapon wheel). Idempotent; no-ops in normal gameplay.
+  _hideLegacySpeedAmmo() {
+    if (!this._shotMode || this._legacySpeedHidden || !this.doc) return;
+    const speedEl = this._el('speed');
+    const speedBox = speedEl && speedEl.parentNode;
+    if (speedBox && speedBox.style) speedBox.style.display = 'none';
+    const ammoEl = this._el('ammo');
+    if (ammoEl && ammoEl.style) ammoEl.style.display = 'none';
+    this._legacySpeedHidden = true;
   }
 
   // Round-13B Lane A: hide #controls-hint in staged screenshot mode.
@@ -517,6 +550,11 @@ export class HUD {
       P.missionStage = this._r13Text(P.mission, 'font-size:13px;font-weight:bold;color:#9fe8ff;', '');
       P.missionNext = this._r13Text(P.mission, 'font-size:13px;color:#ffe98a;', '');
       P.missionTimer = this._r13Text(P.mission, 'font-size:13px;font-weight:bold;color:#ffd94a;', '');
+      // Round 14: the checkpoint save line (a real save the game wrote)
+      // and the street-race line (live position among the cars on this
+      // road, checkpoint distance, par clock) when racing.
+      P.missionSave = this._r13Text(P.mission, 'font-size:13px;color:#7be495;', '');
+      P.missionRace = this._r13Text(P.mission, 'font-size:13px;font-weight:bold;color:#ff8a5e;', '');
     }
     // --- Radio: left column, under the mission panel. ---
     P.radio = this._r13Panel('hud-radio', 'left:16px;top:292px;width:330px;padding:8px 10px;');
@@ -572,6 +610,24 @@ export class HUD {
       P.vehicleSpeed = this._r13Text(speedRow, 'font-size:40px;font-weight:bold;color:#ffffff;', '');
       P.vehicleGear = this._r13Text(speedRow, 'font-size:26px;font-weight:bold;color:#ffd94a;', '');
       P.vehicleSub = this._r13Text(P.vehicle, 'font-size:12px;color:#ffffff;', '');
+      // Round 14: the garage line — upgrade levels derived from jobs
+      // done + cash (same honesty class as respect: no shop transaction
+      // exists yet, so the levels are a derived read of the profile,
+      // passed in state.garage by main.js). Shown only while driving.
+      P.vehicleGarage = this._r13Text(P.vehicle, 'font-size:12px;font-weight:bold;color:#9fe8ff;', '');
+    }
+    // --- Crew panel: right column, under the vehicle panel. ---
+    // Round 14: the crew roster from the mission briefings (Dante the
+    // wheelman, Priya the getaway driver, Mama Lou the fixer/boss).
+    // The member speaking in the dialogue box is marked ON CALL.
+    P.crew = this._r13Panel('hud-crew-panel', 'right:16px;top:520px;width:284px;padding:8px 10px;');
+    if (P.crew) {
+      P.crewTitle = this._r13Text(P.crew, titleCss, 'CREW');
+      P.crewRows = [];
+      for (let i = 0; i < ROUND14_CREW.length; i++) {
+        const row = this._r13Text(P.crew, 'font-size:13px;font-weight:bold;line-height:1.7;color:#ffffff;white-space:nowrap;', '');
+        P.crewRows.push(row);
+      }
     }
     // --- Dialogue: top centre, under the clock/district line. ---
     P.dialogue = this._r13Panel('hud-dialogue', 'left:50%;top:112px;transform:translateX(-50%);width:560px;padding:8px 10px;display:flex;gap:10px;align-items:flex-start;');
@@ -595,6 +651,10 @@ export class HUD {
       P.districtTitle = this._r13Text(P.district, titleCss, 'LOCATION');
       P.districtName = this._r13Text(P.district, 'font-size:20px;font-weight:bold;color:#ffffff;', '');
       P.districtSub = this._r13Text(P.district, 'font-size:12px;color:#ffe98a;', '');
+      // Round 14: district standing — stars derived from jobs done
+      // (same honesty class as respect: 1 star + 1 per completed job,
+      // capped at 5), so the district reads as a reputation, not a label.
+      P.districtStanding = this._r13Text(P.district, 'font-size:12px;font-weight:bold;color:#ffd94a;', '');
     }
     // --- Weapon wheel: bottom centre, five slots. ---
     P.weapons = this._r13Panel('hud-weapon-wheel', 'left:50%;bottom:14px;transform:translateX(-50%);width:380px;padding:8px 10px;');
@@ -644,7 +704,28 @@ export class HUD {
     const timer = (typeof state.parRemaining === 'number')
       ? ('PAR ' + formatParTime(state.parRemaining) + '  ·  REWARD $' + (def ? def.reward : 0))
       : (def ? ('REWARD $' + def.reward) : 'NO ACTIVE JOB');
-    const sig = [jobName, objective, stage, next, timer, def ? def.number : ''].join('|');
+    // Round 14: the checkpoint save line — a real save the game wrote
+    // (state.saveInfo from save.getSaveInfo(), checkpoint = the current
+    // objective's place). No save yet reads as AUTOSAVE ON, never as a
+    // fake timestamp.
+    const sv = state.saveInfo && typeof state.saveInfo === 'object' ? state.saveInfo : null;
+    let saveLine = 'SAVE — AUTOSAVE ON · NO SAVE YET';
+    if (sv && sv.savedAt) {
+      let hhmm = '';
+      try {
+        const d = new Date(sv.savedAt);
+        hhmm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+      } catch (_) { hhmm = ''; }
+      saveLine = '✓ SAVED ' + (hhmm ? hhmm + ' ' : '') + '· CHECKPOINT: ' + (state.checkpoint || 'HIDEOUT');
+    }
+    // Round 14: the street-race line — live position among the cars on
+    // this road, checkpoint distance and the par clock (state.race from
+    // main.js; only while driving a mission).
+    const rc = state.race && typeof state.race === 'object' ? state.race : null;
+    const raceLine = rc
+      ? ('STREET RACE — POS ' + rc.position + '/' + rc.total + '  ·  CHECKPOINT ' + rc.checkpointM + 'm  ·  PAR ' + formatParTime(rc.parRemaining))
+      : '';
+    const sig = [jobName, objective, stage, next, timer, def ? def.number : '', saveLine, raceLine].join('|');
     if (!this._r13Changed('mission', sig)) return;
     P.missionTitle.textContent = def ? ('MISSION — CHAPTER ' + number) : 'MISSION — FREE ROAM';
     P.missionJob.textContent = jobName;
@@ -652,6 +733,8 @@ export class HUD {
     P.missionStage.textContent = stage;
     P.missionNext.textContent = 'NEXT ▸ ' + next;
     P.missionTimer.textContent = timer;
+    P.missionSave.textContent = saveLine;
+    P.missionRace.textContent = raceLine;
   }
 
   // 2. Police response — every fielded unit by callsign, distance and
@@ -681,8 +764,12 @@ export class HUD {
       const isOfficer = u?.kind === 'police-officer';
       if (isOfficer) officerIndex += 1; else carIndex += 1;
       const d = distOf(u);
-      const isIntercept = !isOfficer && wanted >= 3 && carIndex === 0;
-      const status = policeUnitStatus(u, carIndex, wanted, d, playerInCar, isIntercept);
+      // Round 14: ROADBLOCK means the car IS the staged roadblock
+      // (state.roadblockCars, pursuit shot only) — not "the first car
+      // at 3+ stars", which labelled chasing interceptors as a
+      // roadblock they never were (13B cover/pursuit).
+      const isRoadblock = !isOfficer && Array.isArray(state.roadblockCars) && state.roadblockCars.includes(u);
+      const status = policeUnitStatus(u, carIndex, wanted, d, playerInCar, isRoadblock);
       return {
         text: policeUnitName(u, carIndex, officerIndex) + '  ·  '
           + (d === null ? '—' : Math.round(d) + 'm') + '  ·  ' + status,
@@ -801,11 +888,39 @@ export class HUD {
   // car.health is passed — the Lane 1 patch note's condition item is
   // NOT applied: inventing damage the game never tracks would lie to
   // the player, and the panel already reads GOOD honestly.
+  // Round 14: on foot the panel becomes the ON FOOT panel — weapon +
+  // ammo, health, armour — never "ON FOOT / N/A / 0 / GEAR —". While
+  // driving it gains the GARAGE line (upgrade levels derived from
+  // jobs done + cash, state.garage from main.js — same honesty class
+  // as respect: no shop transaction exists yet).
   renderVehiclePanel(state = {}) {
     const P = this._ensureRound13Panels();
     if (!P || !P.vehicle) return;
     const rawCar = state.vehicle || state.car || state.player?.currentCar || state.player?.vehicle || state.player?.car || null;
     const car = (rawCar && typeof rawCar === 'object') ? rawCar : null;
+    if (!car) {
+      // --- On foot: weapon, health, armour. Same panel shape as the
+      // driving variant (title, name, bar, big number, sub) so the
+      // layout below it never moves.
+      const weapon = String(state.weapon || state.weaponName || state.currentWeapon || 'fists');
+      const weaponName = weapon.toLowerCase() === 'pistol' ? 'PISTOL' : 'FISTS';
+      const mag = state.mag ?? '–';
+      const reserve = state.ammo ?? '–';
+      const health = Math.max(0, Math.round(state.health ?? 100));
+      const armour = Math.max(0, Math.round(state.armour ?? 0));
+      const sig = ['foot', weaponName, mag, reserve, health, armour].join('|');
+      if (!this._r13Changed('vehicle', sig)) return;
+      P.vehicleTitle.textContent = 'ON FOOT';
+      P.vehicleName.textContent = 'RICO VEGA — ON FOOT';
+      P.vehicleCondFill.style.width = health + '%';
+      P.vehicleCondFill.style.background = health > 50 ? '#7be495' : health > 25 ? '#f39c12' : '#e74c3c';
+      P.vehicleCond.textContent = 'HEALTH ' + health + '  ·  ARMOUR ' + armour;
+      P.vehicleSpeed.textContent = String(health);
+      P.vehicleGear.textContent = 'HP';
+      P.vehicleSub.textContent = 'WEAPON — ' + weaponName + ' ' + mag + ' / ' + reserve + '  ·  FISTS READY';
+      P.vehicleGarage.textContent = '';
+      return;
+    }
     const model = car?.model || (typeof rawCar === 'string' ? rawCar : null);
     const name = vehicleDisplayName(model);
     const speedMs = car ? Math.abs(car.speed || 0) : Math.abs(state.speed ?? 0);
@@ -822,8 +937,13 @@ export class HUD {
     const sub = car
       ? ('TOP ' + (topKmh ?? '—') + ' km/h' + colorText)
       : 'Rico Vega — on foot';
-    const sig = [name, kmh, gear, condPct, sub].join('|');
+    const g = state.garage && typeof state.garage === 'object' ? state.garage : null;
+    const garageLine = g
+      ? ('GARAGE — ' + name.toUpperCase() + ' · ARMOR LV' + (g.armor ?? 1) + ' · ENGINE LV' + (g.engine ?? 1))
+      : '';
+    const sig = [name, kmh, gear, condPct, sub, garageLine].join('|');
     if (!this._r13Changed('vehicle', sig)) return;
+    P.vehicleTitle.textContent = 'VEHICLE';
     P.vehicleName.textContent = name;
     P.vehicleCondFill.style.width = car ? condPct + '%' : '0%';
     P.vehicleCondFill.style.background = condPct >= 50 ? '#7be495' : condPct >= 25 ? '#f39c12' : '#e74c3c';
@@ -831,6 +951,7 @@ export class HUD {
     P.vehicleSpeed.textContent = String(kmh);
     P.vehicleGear.textContent = 'GEAR ' + gear;
     P.vehicleSub.textContent = sub;
+    P.vehicleGarage.textContent = garageLine;
   }
 
   // 7. Respect — rank name + progress bar. Derived from jobs done
@@ -844,7 +965,7 @@ export class HUD {
     if (!this._r13Changed('respect', sig)) return;
     P.respectRank.textContent = r.rank;
     P.respectFill.style.width = (r.progress * 100).toFixed(1) + '%';
-    P.respectSub.textContent = r.points + ' PTS  ·  ' + (r.completed ?? 0) + '/5 JOBS DONE'
+    P.respectSub.textContent = r.points + ' PTS  ·  ' + (r.completed ?? 0) + '/8 JOBS DONE'
       + (r.next ? '  ·  NEXT: ' + r.next : '  ·  TOP RANK');
   }
 
@@ -880,10 +1001,40 @@ export class HUD {
       if (best) landmark = { name: best.name, dist: Math.round(bestD) };
     }
     const sub = landmark ? ('NEAR ' + landmark.name.toUpperCase() + ' · ' + landmark.dist + 'm') : 'SOLMAR BAY · COASTAL CITY';
-    const sig = district + '|' + sub;
+    // Round 14: district standing — 1 star + 1 per completed job
+    // (capped at 5), read from the same respect state as the RESPECT
+    // panel, so the two panels can never disagree about the profile.
+    const r = respectFor(state);
+    const stars = clamp(1 + (r.completed ?? 0), 1, 5);
+    const standing = district.toUpperCase() + ' STANDING ' + '★'.repeat(stars) + '☆'.repeat(5 - stars);
+    const sig = district + '|' + sub + '|' + standing;
     if (!this._r13Changed('district', sig)) return;
     P.districtName.textContent = district.toUpperCase();
     P.districtSub.textContent = sub;
+    P.districtStanding.textContent = standing;
+  }
+
+  // 9. Crew — the roster from the mission briefings, with the member
+  // speaking in the dialogue box marked ON CALL. Round 14. Reads the
+  // same resolved dialogue entry as renderDialogue, so the highlight
+  // can never point at someone who is not speaking.
+  renderCrew(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.crew) return;
+    const entry = this._resolveDialogueEntry(state);
+    const speaker = (entry && entry.speaker) || '';
+    const sig = ROUND14_CREW.map((m) => m.name + ':' + (m.name === speaker ? 'call' : 'standby')).join('|');
+    if (!this._r13Changed('crew', sig)) return;
+    ROUND14_CREW.forEach((m, i) => {
+      const row = P.crewRows[i];
+      if (!row) return;
+      const onCall = m.name === speaker;
+      // ● + gold = speaking now (ON CALL); ○ + white = standing by.
+      // One short line per member so it fits the 284px panel.
+      row.textContent = (onCall ? '● ' : '○ ') + m.name.toUpperCase() + ' · ' + m.role
+        + ' — ' + m.ability.toUpperCase();
+      row.style.color = onCall ? '#ffd94a' : '#ffffff';
+    });
   }
 
   // update(state) — the single HUD entry point, called once per frame.
@@ -966,6 +1117,12 @@ export class HUD {
     if (state.mag !== undefined || state.ammo !== undefined) {
       this._setText('ammo', (state.mag ?? '–') + ' / ' + (state.ammo ?? '–'));
     }
+    // Round 14: in staged screenshot mode the legacy bottom-right
+    // speedo ("93 km/h") and ammo readout ("12 / 24") duplicate the
+    // vehicle panel's big speed and the weapon wheel's pistol slot —
+    // hide them so the frame carries each number once. Normal gameplay
+    // (no ?shot=) keeps both readouts.
+    if (this._shotMode) this._hideLegacySpeedAmmo();
 
     // --- Mission name + objective. ---
     this._setText('missionName', state.missionName || '');
@@ -1047,6 +1204,7 @@ export class HUD {
     this.renderVehiclePanel(state);
     this.renderRespect(state);
     this.renderDistrict(state);
+    this.renderCrew(state); // round 14: crew roster + ON CALL
   }
 
   // Draw the top-down minimap on the configured canvas.

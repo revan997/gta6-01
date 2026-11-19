@@ -15,7 +15,7 @@ import { createRng, clamp01, lerp, smoothstep } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
 import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
-import { createRenderContext, boostCarPaintForCar, framingDistanceForHeight } from './render.js';
+import { createRenderContext, boostCarPaintForCar, framingDistanceForHeight, makeGlowTexture } from './render.js';
 import { input } from './input.js';
 import { TrafficManager } from './traffic.js';
 import { PoliceSystem } from './police.js';
@@ -311,6 +311,14 @@ let shotDialogue = null;
 let shotRadio = null;
 let shotSunOffset = null;
 let shotHeli = null;
+// Round 14 staging state (only ever set by stage*()): the pursuit
+// roadblock pair + race rivals (repositioned every frame relative to
+// the player car), and the combat shot's frozen muzzle flash + aim
+// target (re-asserted every frame while the shot is staged).
+let shotRoadblock = [];
+let shotRivals = [];
+let combatFlash = null;
+let combatAimOfficer = null;
 let landmarkFocus = null; // round 6: { x, y, z, name, until } — the L key points the camera at a landmark for a few seconds
 let focusSeq = 0; // round-11: increments on every L press, so the probe can tell a fresh look from a stale one
 // Round-11 (Lane A): occlusion-safe focus view — the solved clear
@@ -489,6 +497,18 @@ function syncPersonMeshes(list, meshMap, shirtColor, hostile) {
     mesh.position.set(person.position.x, person.position.y || 0, person.position.z);
     mesh.rotation.y = person.heading || 0;
     mesh.visible = person.alive !== false;
+    // Round 14: a fallen officer lies on the ground (the combat shot's
+    // downed officer). The mesh is a Y-up humanoid, so rotating about
+    // X by ~-90° puts it flat; the red hostile marker hides (a downed
+    // officer is not a target) while the pistol stays visible as a
+    // dropped gun. Live officers keep rotation.x = 0.
+    if (person.fallen) {
+      mesh.rotation.x = -Math.PI / 2 * 0.92;
+      mesh.traverse((o) => { if (o.geometry?.type === 'OctahedronGeometry') o.visible = false; });
+    } else {
+      mesh.rotation.x = 0;
+      mesh.traverse((o) => { if (o.geometry?.type === 'OctahedronGeometry') o.visible = true; });
+    }
   }
   for (const [person, mesh] of [...meshMap.entries()]) {
     if (!seen.has(person)) {
@@ -574,7 +594,7 @@ function startPlaying() {
   if (!missions.current && !missions.getCurrentMissionNumber()) {
     // Resume at the next uncompleted mission, not always mission 1.
     const done = missions.getCompletedMissions();
-    const next = done.length ? Math.min(5, Math.max(...done) + 1) : 1;
+    const next = done.length ? Math.min(8, Math.max(...done) + 1) : 1;
     missions.startMission(next, world, systems());
   }
 }
@@ -1224,7 +1244,7 @@ document.getElementById('mission-continue-button')?.addEventListener('click', ()
   const next = (missions.lastCompletedMission || 1) + 1;
   state = 'playing';
   showOnly(null);
-  if (next <= 5) missions.startMission(next, world, systems());
+  if (next <= 8) missions.startMission(next, world, systems());
 });
 
 // ---- the frame update, in the specified order ------------------------------
@@ -1281,6 +1301,14 @@ function update(dt) {
     // headless shot, so drag would otherwise bleed it to a crawl).
     if (shotHoldSpeed > 0) player.currentCar.speed = shotHoldSpeed;
     player.currentCar.update(dt, world, undefined, input);
+    // Round 14: Rico's position IS the car's while driving. Without
+    // this, player.position stays at the enterCar point and every
+    // distance the HUD reports (police panel, district, minimap) is
+    // measured from where the car WAS, not where it is — the 13B
+    // pursuit panel's "2m · ROADBLOCK" for a car 13 m away, and the
+    // police themselves chasing the stale point instead of the car.
+    player.position.set(player.currentCar.position.x, player.currentCar.position.y || 0, player.currentCar.position.z);
+    player.heading = player.currentCar.heading;
   }
 
   // Round-3 polish: a tyre screech on a hard handbrake skid (throttled),
@@ -1330,14 +1358,60 @@ function update(dt) {
   // the capture — the chopper stays in the cover frame.
   if (shotHeli) {
     shotHeli.t += dt;
-    const a = shotHeli.angle + Math.sin(shotHeli.t * 0.1) * 0.15;
-    shotHeli.group.position.set(
-      shotHeli.x + Math.cos(a) * 4,
-      shotHeli.y + Math.sin(shotHeli.t * 0.5) * 1.2,
-      shotHeli.z + Math.sin(a) * 4,
-    );
-    shotHeli.group.rotation.y = a + Math.PI / 2;
+    // Round 14: the cover heli TRACKS the player car (followOffset, set
+    // by stageCoverChase) instead of drifting from a fixed point — the
+    // car drives on during the HUD convergence wait, so a fixed heli
+    // sinks toward the dialogue box and out of the frame; a tracked
+    // heli holds its screen position at any capture moment.
+    if (shotHeli.followOffset && SHOT === 'cover-chase' && player.currentCar) {
+      const c = player.currentCar.position;
+      shotHeli.group.position.set(
+        c.x + shotHeli.followOffset.x,
+        c.y + shotHeli.followOffset.y + Math.sin(shotHeli.t * 0.5) * 0.8,
+        c.z + shotHeli.followOffset.z,
+      );
+      shotHeli.group.rotation.y = Math.atan2(c.x - shotHeli.group.position.x, c.z - shotHeli.group.position.z);
+    } else {
+      const a = shotHeli.angle + Math.sin(shotHeli.t * 0.1) * 0.15;
+      shotHeli.group.position.set(
+        shotHeli.x + Math.cos(a) * 4,
+        shotHeli.y + Math.sin(shotHeli.t * 0.5) * 1.2,
+        shotHeli.z + Math.sin(a) * 4,
+      );
+      shotHeli.group.rotation.y = a + Math.PI / 2;
+    }
     shotHeli.rotor.rotation.y += dt * 22;
+  }
+
+  // Round 14 (pursuit shot): the roadblock pair and the race rivals are
+  // staged cars, not traffic — they hold their marks relative to the
+  // player car every frame, so the frame reads ROADBLOCK + RACE at any
+  // capture moment. The front camera looks back down the road, so
+  // world-ahead of the player (z behind the camera's look direction)
+  // is where the roadblock sits in the picture. Headings are set
+  // directly on the group (staged cars skip car.update, which would
+  // steer them away); the light-bar flash for the roadblock cars runs
+  // in the loop above (they are in police.policeCars).
+  if (SHOT === 'pursuit' && player.currentCar) {
+    const pc = player.currentCar;
+    const hx = Math.sin(pc.heading || 0);
+    const hz = Math.cos(pc.heading || 0);
+    for (let i = 0; i < shotRoadblock.length; i++) {
+      const rb = shotRoadblock[i];
+      // NEGATIVE along: the front camera looks BACK down the road, so
+      // the picture's "ahead" is behind the car's direction of travel.
+      const ahead = -(30 + i * 6);
+      const lateral = i === 0 ? -3 : 3;
+      rb.position.set(pc.position.x + hx * ahead + Math.cos(pc.heading || 0) * lateral, 0, pc.position.z + hz * ahead - Math.sin(pc.heading || 0) * lateral);
+      rb.group.rotation.y = pc.heading + (i === 0 ? Math.PI / 2 : -Math.PI / 2);
+    }
+    for (let i = 0; i < shotRivals.length; i++) {
+      const rv = shotRivals[i];
+      const lateral = i === 0 ? -4.5 : 4.5;
+      const along = i === 0 ? -3 : 2;
+      rv.position.set(pc.position.x + hx * along + Math.cos(pc.heading || 0) * lateral, 0, pc.position.z + hz * along - Math.sin(pc.heading || 0) * lateral);
+      rv.group.rotation.y = pc.heading;
+    }
   }
 
   // 5. missions.
@@ -1392,6 +1466,27 @@ function update(dt) {
     impactMesh.scale.setScalar(Math.max(0.3, 1.8 * (impactTimer / 0.12)));
     if (impactTimer <= 0) impactMesh.visible = false;
   }
+  // Round 14 (combat shot): the staged muzzle flash is FROZEN — the
+  // one real shot's flash lasts 0.06 s of game time, far shorter than
+  // the HUD convergence wait, so re-assert the muzzle sphere, the
+  // tracer line and the impact flash every frame with the staged
+  // endpoints (computed once in stageCombat). Zero new meshes: the
+  // three singletons already exist. Runs after the timer blocks above
+  // so it wins over the hide-on-expiry.
+  if (SHOT === 'combat' && combatFlash) {
+    muzzle.position.set(combatFlash.muzzle.x, combatFlash.muzzle.y, combatFlash.muzzle.z);
+    muzzle.visible = true;
+    muzzle.scale.setScalar(1.2);
+    const pos = tracerGeo.attributes.position;
+    pos.setXYZ(0, combatFlash.muzzle.x, combatFlash.muzzle.y, combatFlash.muzzle.z);
+    pos.setXYZ(1, combatFlash.target.x, combatFlash.target.y, combatFlash.target.z);
+    pos.needsUpdate = true;
+    tracerLine.visible = true;
+    tracerMat.opacity = 0.9;
+    impactMesh.position.set(combatFlash.target.x, combatFlash.target.y, combatFlash.target.z);
+    impactMesh.visible = true;
+    impactMesh.scale.setScalar(1.4);
+  }
 
   // Busted / wasted can be raised by police or combat during the update.
   if (police.isBusted()) { showBusted(); return; }
@@ -1399,8 +1494,29 @@ function update(dt) {
   if (state !== 'playing') return; // a mission-complete event changed state
 
   // 7. HUD.
+  // Round 14: the crosshair belongs on the aim point, not on Rico's
+  // head. Sunset hides it entirely (a story moment, not combat);
+  // combat pins it to the aimed officer's chest (projected through the
+  // live camera; hidden if the officer leaves the frame); everywhere
+  // else the legacy rule stands (visible only on foot).
   const crosshair = document.getElementById('crosshair');
-  if (crosshair) crosshair.classList.toggle('hidden', !player.onFoot);
+  if (crosshair) {
+    if (SHOT === 'sunset') {
+      crosshair.classList.add('hidden');
+    } else if (SHOT === 'combat' && combatAimOfficer) {
+      const p = projectToScreen(combatAimOfficer.position.x, 1.35, combatAimOfficer.position.z);
+      if (p && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1) {
+        crosshair.classList.remove('hidden');
+        crosshair.style.left = `${(p.x * 100).toFixed(1)}%`;
+        crosshair.style.top = `${(p.y * 100).toFixed(1)}%`;
+        crosshair.style.transform = 'translate(-50%, -50%)';
+      } else {
+        crosshair.classList.add('hidden');
+      }
+    } else {
+      crosshair.classList.toggle('hidden', !player.onFoot);
+    }
+  }
   const car = player.currentCar;
   const speedMs = car ? Math.abs(car.speed || 0) : Math.abs(player.speed || 0);
   const marker = missions.getMarkerPosition(world);
@@ -1465,6 +1581,20 @@ function update(dt) {
     ...(SHOT_MODE && shotDialogue ? { dialogue: shotDialogue } : {}),
     player,
     world,
+    // Round 14: garage levels + race chip + save/checkpoint for the
+    // new HUD panels (hud.js reads these every frame; the values are
+    // derived from the live profile, so they agree with the respect
+    // panel and the mission panel by construction).
+    garage: garageState(),
+    race: raceState(),
+    saveInfo: save.getSaveInfo(),
+    checkpoint: checkpointName(),
+    // Round 14: the staged roadblock cars (pursuit shot only) — the
+    // police panel labels exactly these ROADBLOCK. Without this, the
+    // panel called the first car ROADBLOCK in every shot (the 13B
+    // cover/pursuit contradiction: a chasing interceptor labelled as
+    // a roadblock it never was).
+    roadblockCars: shotRoadblock,
   });
 
   // 8. audio.
@@ -1487,6 +1617,16 @@ function update(dt) {
   lastCombo = comboNow;
 
   updateCamera(dt);
+}
+
+// Round 14: project a world point to normalised screen coordinates
+// (0..1) through the live camera — for the combat crosshair (pinned to
+// the aimed officer's chest) and for the probe's screen measurements.
+// Returns null when the point is behind the camera.
+function projectToScreen(x, y, z) {
+  const v = new THREE.Vector3(x, y, z).project(camera);
+  if (v.z > 1) return null;
+  return { x: (v.x + 1) / 2, y: (1 - v.y) / 2 };
 }
 
 // ---- shot staging (deterministic, before the first frame) ------------------
@@ -1602,14 +1742,15 @@ function stageEnd() {
 
 function respectState() {
   // Rank from live money; points/completed from jobs done (Lane 1's
-  // scale: 20 points per completed mission + up to 20 for the current
-  // mission's objective progress). `next` names the following rank so
-  // the panel never falls back to "TOP RANK" mid-climb.
+  // scale: 12 points per completed mission — 8 jobs in the chain, so
+  // a full chain is ~96 + the current job's progress — plus up to 12
+  // for the current mission's objective progress). `next` names the
+  // following rank so the panel never falls back to "TOP RANK" mid-climb.
   const completed = missions.getCompletedMissions().length;
   const prog = missions.getMissionProgress() || {};
   const active = (typeof prog.objectiveIndex === 'number' && typeof prog.objectiveCount === 'number' && prog.objectiveCount > 0)
-    ? Math.round((prog.objectiveIndex / prog.objectiveCount) * 20) : 0;
-  const points = Math.max(0, Math.min(100, completed * 20 + active));
+    ? Math.round((prog.objectiveIndex / prog.objectiveCount) * 12) : 0;
+  const points = Math.max(0, Math.min(100, completed * 12 + active));
   const score = money + completed * 500;
   const ranks = ['ROOKIE', 'HUSTLER', 'MADE', 'KINGPIN'];
   const band = score < 1000 ? 0 : score < 3000 ? 1 : score < 8000 ? 2 : 3;
@@ -1622,6 +1763,72 @@ function respectState() {
     completed,
     next: band < ranks.length - 1 ? ranks[band + 1] : null,
   };
+}
+
+// Round 14: the garage — upgrade levels for the driven car, derived
+// from the same profile the respect panel reads (jobs done + cash),
+// so the two panels can never disagree. No shop transaction exists
+// yet, so the levels are a derived read, exactly like respect ranks:
+// armour grows with jobs done, engine grows with the score.
+function garageState() {
+  const completed = missions.getCompletedMissions().length;
+  const score = money + completed * 500;
+  return {
+    armor: Math.max(1, Math.min(3, 1 + completed)),
+    engine: Math.max(1, Math.min(3, 1 + Math.floor(score / 2000))),
+  };
+}
+
+// Round 14: the street race — live position among the cars on this
+// road, checkpoint distance and the par clock. Only while driving a
+// mission. Position counts the cars ahead of the player along the
+// driving direction; the field counts the non-police cars within
+// 150 m (rivals + traffic). The checkpoint is the mission marker.
+function raceState() {
+  const car = player.currentCar;
+  if (!car || !missions.getCurrentMission()) return null;
+  // The race chip belongs to the pursuit (a street race with rivals)
+  // and to normal gameplay; the cover chase is not a race, and the
+  // on-foot shots have no car at all.
+  if (SHOT_MODE && SHOT !== 'pursuit') return null;
+  const fx = Math.sin(car.heading || 0);
+  const fz = Math.cos(car.heading || 0);
+  const px = player.position.x;
+  const pz = player.position.z;
+  const marker = missions.getMarkerPosition(world);
+  let ahead = 0;
+  let total = 1;
+  // The staged race rivals (shotRivals, main.js staging) are not in
+  // the traffic list — count them the same way as traffic cars.
+  // Round 14: when rivals are staged (the pursuit shot), the race is
+  // against THEM, not the whole street — counting every traffic car
+  // within 150 m put Rico at POS 13/14 in a race he is contesting
+  // against two rivals. In normal gameplay (no rivals) the field is
+  // the traffic around the player, as before.
+  const field = shotRivals.length ? [...shotRivals] : [...traffic.getCars()];
+  for (const other of field) {
+    if (!other?.position || other === car) continue;
+    const dx = other.position.x - px;
+    const dz = other.position.z - pz;
+    if (Math.hypot(dx, dz) > 150) continue;
+    total += 1;
+    if (dx * fx + dz * fz > 1) ahead += 1;
+  }
+  return {
+    position: ahead + 1,
+    total,
+    checkpointM: marker ? Math.round(Math.hypot(marker.x - px, marker.z - pz)) : null,
+    parRemaining: missions.getParRemaining(),
+  };
+}
+
+// Round 14: the checkpoint name for the save line — the current
+// objective's place (Marina / Hideout / Docks / Harbour ...), or the
+// district when no mission is running.
+function checkpointName() {
+  const marker = missions.getMarkerPosition(world);
+  if (marker?.label) return String(marker.label).toUpperCase();
+  return (world.districtAt(player.position.x, player.position.z) || 'SOLMAR BAY').toUpperCase();
 }
 
 // Run the simulation N fixed steps so traffic / police / peds settle
@@ -1700,7 +1907,13 @@ function placePeds(spots) {
 // advances ~0.067 s per rendered frame, so from 8+ m out they cannot
 // reach the 2.2 m arrest range (plus 1.6 s arrest timer) before the
 // capture lands.
-function placeOfficersArc(distances) {
+// Round 14: the officers HOLD their marks (officer.staged — the
+// police update skips staged officers, so the arc cannot collapse
+// onto Rico while the panels converge), the arc breaks into clusters
+// (laterals vary per officer instead of one even spacing), and one
+// officer is down (fallen — the sync lays its mesh on the ground and
+// hides its marker; its pistol stays as a dropped gun).
+function placeOfficersArc(distances, laterals = null, fallenIndex = -1) {
   const officers = police.getOfficers();
   const fx = Math.sin(player.heading);
   const fz = Math.cos(player.heading);
@@ -1708,12 +1921,14 @@ function placeOfficersArc(distances) {
   const rz = -Math.sin(player.heading);
   officers.forEach((off, i) => {
     const d = distances[i % distances.length];
-    const lateral = (i - (officers.length - 1) / 2) * 3.2;
+    const lateral = laterals ? laterals[i % laterals.length] : (i - (officers.length - 1) / 2) * 3.2;
     off.position.x = player.position.x + fx * d + rx * lateral;
     off.position.y = 0;
     off.position.z = player.position.z + fz * d + rz * lateral;
     off.heading = Math.atan2(player.position.x - off.position.x, player.position.z - off.position.z);
     off.arrestTimer = 0;
+    off.staged = true;
+    off.fallen = (i === fallenIndex);
   });
 }
 
@@ -1736,9 +1951,13 @@ function stagePursuitCars(x, zBehind1, zBehind2, heading) {
 // Fallback police helicopter for the cover shot. Lane 2 owns the real
 // scene-density pass (a police heli included) — if their heli is
 // already in the world or on the police system, this is skipped so the
-// sky never gets two choppers. Cost: 8 meshes, ~96 tris, ~8 draw
-// calls — inside the round-12 headroom (4,262 calls / 149,560 tris vs
-// caps 4,300 / 150,000). Exposed as __solmar.round13.heli.
+// sky never gets two choppers. Round 14: the heli is built BIG (size
+// multiplier `scale` applied to every dimension, group scale stays 1
+// so the searchlight cone + ground pool below stay in world units),
+// with a rotor blur disc, a searchlight cone from the belly and a warm
+// light pool on the road — the air unit must read as a helicopter, not
+// a dark blob. Cost at scale 2.4: 11 meshes, ~180 tris. Exposed as
+// __solmar.round13.heli.
 function buildShotHeli(x, y, z, scale = 1) {
   // Skip only when a heli actually exists right now. (A bare
   // `typeof police.getHelicopter === 'function'` check used to skip
@@ -1746,31 +1965,52 @@ function buildShotHeli(x, y, z, scale = 1) {
   // left the cover with no heli at all.)
   const lane2Heli = police.helicopter || (typeof police.getHelicopter === 'function' && police.getHelicopter());
   if (world.helicopter || lane2Heli) return null;
-  const matBody = new THREE.MeshStandardMaterial({ color: 0x1a2a4a, roughness: 0.5, metalness: 0.3 });
+  const s = scale;
+  const matBody = new THREE.MeshStandardMaterial({ color: 0x33517a, roughness: 0.5, metalness: 0.3 });
   const matWhite = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 });
   const matDark = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
   const g = new THREE.Group();
-  g.scale.setScalar(scale);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.5, 4.2), matBody);
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.24, 0.4, 4.24), matWhite);
-  stripe.position.y = -0.2;
-  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 3.4), matBody);
-  tail.position.set(0, 0.3, -3.6);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.4, 0.9), matBody);
-  fin.position.set(0, 0.9, -5.0);
-  const rotor = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.08, 0.55), matDark);
-  rotor.position.y = 1.0;
-  const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.8, 0.3), matDark);
-  tailRotor.position.set(0.35, 0.4, -4.9);
-  const skidL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 3.4), matDark);
-  skidL.position.set(-0.9, -1.0, 0);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.2 * s, 1.5 * s, 4.2 * s), matBody);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.24 * s, 0.4 * s, 4.24 * s), matWhite);
+  stripe.position.y = -0.2 * s;
+  const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5 * s, 0.5 * s, 3.4 * s), matBody);
+  tail.position.set(0, 0.3 * s, -3.6 * s);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15 * s, 1.4 * s, 0.9 * s), matBody);
+  fin.position.set(0, 0.9 * s, -5.0 * s);
+  const rotor = new THREE.Mesh(new THREE.BoxGeometry(8.5 * s, 0.08, 0.55 * s), matDark);
+  rotor.position.y = 1.0 * s;
+  const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.8 * s, 0.3), matDark);
+  tailRotor.position.set(0.35 * s, 0.4 * s, -4.9 * s);
+  const skidL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 3.4 * s), matDark);
+  skidL.position.set(-0.9 * s, -1.0 * s, 0);
   const skidR = skidL.clone();
-  skidR.position.x = 0.9;
-  g.add(body, stripe, tail, fin, rotor, tailRotor, skidL, skidR);
+  skidR.position.x = 0.9 * s;
+  // Rotor blur disc: the spinning bar reads as a rotor, not a plank.
+  const rotorBlur = new THREE.Mesh(
+    new THREE.CircleGeometry(4.25 * s, 20),
+    new THREE.MeshBasicMaterial({ color: 0xfff2cc, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  rotorBlur.rotation.x = -Math.PI / 2;
+  rotorBlur.position.y = 1.0 * s;
+  // Searchlight: a translucent cone from the belly to the ground (apex
+  // at the belly, base on the road) + a warm pool of light below it.
+  // The heli hovers ~y above the road, so the cone is y long.
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(3.0, y, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  cone.position.y = -y / 2;
+  const pool = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture('rgba(255,255,255,0.95)'), transparent: true, depthWrite: false,
+    opacity: 0.45, color: 0xffe9a8,
+  }));
+  pool.scale.set(14, 14, 1);
+  pool.position.y = -y + 0.6;
+  g.add(body, stripe, tail, fin, rotor, tailRotor, skidL, skidR, rotorBlur, cone, pool);
   g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
   g.position.set(x, y, z);
   scene.add(g);
-  return { group: g, rotor, x, y, z, angle: 0.6, t: 0 };
+  return { group: g, rotor, x, y, z, angle: 0.6, t: 0, scale: s, followOffset: null };
 }
 
 // The staged dialogue line: shown as the HUD message toast (the
@@ -1787,85 +2027,121 @@ function setShotDialogue(speaker, role, line) {
 // sports car on the x=40 downtown road (the proven round-12 spot),
 // four stars, two interceptors tight behind, the fallback heli above,
 // Hot Wheels objective, Dante on the radio, peds on the sidewalk.
+// 1-cover-chase.jpg — Round 14: the FIRST job goes sideways. Mission
+// 1 "First Run" (the sheet's chapter 1 — the cover used to claim
+// mission 2 while the sunset claimed mission 1), five stars, the GT
+// big in the frame (camera moved in: ahead 12, was 20), the two
+// interceptors FLANKING the player (x 35 / 45, was both x 40 in a
+// line), the heli BIG (scale 2.4, was 1.6) and TRACKING the car so it
+// holds the top-centre of the frame at any capture moment, skid marks
+// + exhaust smoke on the GT, peds on the sidewalks where the camera
+// can actually see them (z -88..-102, beyond the car — the 13B peds
+// at z -68 sat 8 m from the camera and out of the frame).
 function stageCoverChase() {
   state = 'playing';
   showOnly(null);
   input.attach(canvas);
   applyGoldenHour();
   timeOfDay = 17.8;
-  money = 2450;
+  money = 1200;
   const car = createCar(scene, 'sports', 0xd7263d, 40, -80, 0);
   spawnedCars.add(car);
   car.speed = 26;
   player.teleport(40, -80, 0);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
-  shotCam = { mode: 'front', side: 6, ahead: 20, height: 5.5 };
+  shotCam = { mode: 'front', side: 6, ahead: 8.5, height: 4 };
   shotHoldSpeed = 26;
   police.maxPoliceCars = 2;
   police.maxOfficers = 0;
-  police.addWanted(4);
+  police.addWanted(5);
   stagePursuitCars(40, -98, -110, 0);
-  // Lane 2's heli only spawns once police._scene is set, and _scene is
-  // captured from a spawned car's group parent — staged cars bypass
-  // _spawnCar, so wire it here: the lane-2 heli then spawns during the
-  // settle (altitude 38, off-frame, but its searchlight pool lands on
-  // the road under the chase). My fallback heli below is the one the
-  // camera actually sees (y 22, in-frame).
-  if (!police._scene) {
-    const staged = police.policeCars.find((c) => c?.group?.parent);
-    if (staged) police._scene = staged.group.parent;
+  // Round 14: the interceptors FLANK the GT (one each side of the
+  // road centre) instead of trailing in a single file — the chase
+  // reads as a pincer, and both light bars stay in the frame. x 33 /
+  // 47 puts them at the road edges (the road is ~14 m wide), so they
+  // read on opposite sides of the GT in the picture.
+  police.policeCars[0].position.x = 33;
+  police.policeCars[1].position.x = 47;
+  // Round 14: NO lane-2 heli — the police._scene wiring used to spawn
+  // a second heli at altitude 38 whose dark body hung at the top edge
+  // of the frame (the ambiguous dark blob in 13B). The fallback heli
+  // below is the only chopper in the sky.
+  // Heli: scale 2.0 (rotor 17 m, body ~8.4 m) with a searchlight cone
+  // + ground pool (buildShotHeli), TRACKING the car at followOffset
+  // {x:10, y:13, z:-30} — right of the dialogue box (x 360-920) and
+  // clear of the clock (ends x ~690). Scale 2.4 clipped the rotor at
+  // the top edge; 2.0 keeps the whole rotor in the frame while the
+  // chopper still reads BIG (rotor span ~340 px). The update loop
+  // holds it there; verify with the projection probe, tune if it
+  // drifts.
+  shotHeli = buildShotHeli(45, 22, -97, 2.0);
+  if (shotHeli) shotHeli.followOffset = { x: 10, y: 13, z: -30 };
+  // Skid marks + exhaust smoke, as children of the GT group (they
+  // travel with the car): 2 dark planes at the rear wheels, 2 grey
+  // glow sprites at the exhaust. 4 draw calls, ~8 tris.
+  const skidMat = new THREE.MeshBasicMaterial({ color: 0x0a0a0a, transparent: true, opacity: 0.55, depthWrite: false });
+  for (const sx of [-0.8, 0.8]) {
+    const skid = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 2.6), skidMat);
+    skid.rotation.x = -Math.PI / 2;
+    skid.position.set(sx, 0.05, -2.5);
+    car.group.add(skid);
   }
-  // Heli above the road between the two interceptors, against the sky
-  // gap — the first position (x 18, y 27) sat at the top edge of the
-  // frame / behind the flanking towers and never read on camera, and
-  // the second (x 36, y 22, z -118) was OCCLUDED by the centre tower
-  // (crop-zoom of run 2 confirms: no heli anywhere in the top frame).
-  // The third (x 38, y 15, z -92) IS in the frustum — projection probe
-  // puts it at screen (685, 158) — but the DIALOGUE BOX covers exactly
-  // x 360-920, y 112-178, so the HUD itself hides the chopper. The
-  // fourth (x 38, y 22, z -92) projects to ~y 77 px in the round-13
-  // capture, but the Lane B probe (test-exact timing, two runs) puts
-  // the live heli at screen (701, 6-9) — half out of the top edge,
-  // touching the 17:49 clock — because the capture moment varies with
-  // convergence latency: as the car drives on, the heli sinks ~3.6 px
-  // per metre toward the dialogue box. Round-13B: (x 45, y 22, z -97),
-  // scale 1.6 (rotor 13.6 m, ~150 px wide — same 8 meshes, 0 extra
-  // draw calls, 0 extra tris). Probe at test timing: screen ~(805, 50)
-  // at the earliest capture, drifting to ~(830, 95) at a run-2-like
-  // late capture — right of the clock (ends x ~690), above the
-  // dialogue box (starts y 112), clear of the stars (x 1080+).
-  shotHeli = buildShotHeli(45, 22, -97, 1.6);
-  missions.startMission(2, world, systems());
+  const smokeTex = makeGlowTexture('rgba(200,200,200,0.9)');
+  for (const sx of [-0.6, 0.6]) {
+    const puff = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, opacity: 0.35, depthWrite: false, color: 0x888888 }));
+    puff.scale.set(2.5, 2.5, 1);
+    puff.position.set(sx, 0.5, -2.6);
+    car.group.add(puff);
+  }
+  missions.startMission(1, world, systems());
   settleShot(24);
-  police.setWanted(4); // re-pin after the settle (speeding rule fires once)
+  police.setWanted(5); // re-pin after the settle (speeding rule fires once)
   placePeds([
-    { roadX: 40, side: 1, z: -68, heading: -Math.PI / 2 },
-    { roadX: 40, side: 1, z: -100, heading: -Math.PI / 2 },
-    { roadX: 40, side: -1, z: -88, heading: Math.PI / 2 },
+    { roadX: 40, side: 1, z: -88, heading: -Math.PI / 2 },
+    { roadX: 40, side: 1, z: -98, heading: -Math.PI / 2 },
+    { roadX: 40, side: -1, z: -93, heading: Math.PI / 2 },
   ]);
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
-  setShotDialogue('DANTE', 'Wheelman', 'Four stars and a chopper — lose them at the Hideout, Rico!');
+  setShotDialogue('DANTE', 'Wheelman', 'Five stars on you, Rico — Marina can wait, lose them first!');
+  saveProgress(missions.getCurrentMissionNumber());
 }
 
-// 2-combat.jpg — on-foot combat at the Harbour. Mission 5's grab
-// marker is here, so the settle completes the grab (heat spikes to
-// four stars) and the objective becomes the four-star escape. Rico on
-// foot with the pistol out, six officers arranged in an arc in front
-// of him, peds on the sidewalk, armour on.
+// 2-combat.jpg — Round 14: the SECOND job turns into a shootout.
+// Mission 2 "Hot Wheels" (the sheet's chapter 2 — the cover used to
+// claim it while the sunset claimed mission 1), four stars, Rico
+// AIMING his pistol (aim pose + a pistol mesh in his right hand +
+// a frozen muzzle flash + tracer onto the nearest officer), the six
+// officers BROKEN into clusters at 7-11 m (was a neat 10-12.5 m line
+// of dolls) with one officer DOWN, one staged interceptor in the
+// frame (the panel's "10-12 m PURSUIT" is now true), two paused peds
+// + one fleeing south. Fixed camera moved to the south side so Rico
+// reads 3/4, ~120 px tall.
 function stageCombat() {
   state = 'playing';
   showOnly(null);
   input.attach(canvas);
   applyGoldenHour();
   timeOfDay = 18.2;
-  money = 1850;
+  money = 2450;
   player.teleport(200, 200, -Math.PI / 2); // facing west, into the city
   camYaw = player.heading + Math.PI;
   combat.selectWeapon('pistol');
   combat.addArmour(50);
-  police.maxPoliceCars = 0;
+  police.maxPoliceCars = 1;
   police.maxOfficers = 6;
+  // Round 14: one interceptor in the frame, staged BEFORE the spawn
+  // loop — policeCars already holds the capped 1 car, so the loop's
+  // spawn tick cannot field a second (orphan) chasing car. It never
+  // moves (staged) and never rams (SHOT_MODE damage is off); its light
+  // bar flashes via the update loop. The police panel's UNIT 1 reads
+  // it as the INTERCEPTOR (first car at 3+ stars).
+  const pc = makeCar({ position: { x: 197, y: 0, z: 188 }, heading: 0, model: 'Solmar Police Interceptor', colour: '#1a1a2e', driver: 'police' });
+  pc.kind = 'police-car';
+  pc.siren = true;
+  pc.speed = 0;
+  pc.staged = true;
+  police.policeCars = [pc];
   // Triangle budget: the Harbour view ran 155,452 tris in run 2
   // (cap 150,000) — the six officers are required, so thin the
   // ambient fleet instead. These caps are instance props read by the
@@ -1873,8 +2149,17 @@ function stageCombat() {
   // the settle only ever spawns up to these numbers.
   traffic.maxCars = 10;
   traffic.maxPedestrians = 8;
-  missions.startMission(5, world, systems());
+  // Job 1 is done (the sheet's chapter 2): mark it before the mission
+  // starts so the respect / garage panels read 1/8 from the first frame.
+  missions.completed.add(1);
+  missions.startMission(2, world, systems());
   settleShot(24);
+  // Round 14: wanted 4 BEFORE the spawn loop — mission 2's startWanted
+  // is 2, and the spawn tick fields only desiredUnits() officers, so
+  // looping at wanted 2 fields just 2 officers (the 13B grab spiked
+  // wanted to 4 before its loop, which is why 13B got all six).
+  // Re-pin after the settle too (the speeding rule fires once).
+  police.setWanted(4);
   // Officers spawn on the police 0.75 s spawn cooldown — the 24-step
   // settle is only 0.4 s of game time, so no officer exists yet at
   // this point. Run more steps until all six are fielded (cap 90
@@ -1882,73 +2167,158 @@ function stageCombat() {
   // the spawn tick, so they have no time to close in first, and
   // placeOfficersArc zeroes their arrest timers.
   for (let i = 0; i < 90 && police.getOfficers().length < 6; i++) update(1 / 60);
-  police.setWanted(4); // re-pin (the grab already spiked it to 4)
-  // Round-13B (Lane B): officers closer (10-12.5 m, was 12-14.5 m) so
-  // the red markers + pistols read at capture size; still far enough
-  // that the 6 m/s chase cannot reach the 2.2 m arrest range before
-  // the panels converge (arrest needs ~2.8 s game time, panels
-  // converge in a few wall seconds at ~0.05 s game per wall second).
-  placeOfficersArc([10, 11, 12, 10.5, 11.5, 12.5]);
+  // Round 14: clusters, not a line — laterals break the arc into a
+  // near pair, a centre pair and a far pair; officer 2 is DOWN
+  // (fallen — the sync lays it flat and hides its marker). Officer 2
+  // sits centre-frame in the open road, clear of the HUD panels (the
+  // far-right officer 5 landed behind the RESPECT panel). All six
+  // are staged (they hold their marks while the panels converge).
+  placeOfficersArc([7, 7.5, 9.5, 10, 8, 11], [-4.5, -3, 0, 2, -1.5, 4.5], 2);
+  // Rico AIMING: the aim pose (player.js setAim) + a pistol in his
+  // right hand. The pistol is a small dark box at the end of the
+  // right forearm — visible at capture size, 2 draw calls, ~12 tris.
+  player.setAim(true);
+  const pistolMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.6 });
+  const pistol = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.42), pistolMat);
+  pistol.position.set(0, -0.36, 0.10);
+  player.foreR.add(pistol);
+  player._aimPistol = pistol;
+  // The frozen muzzle flash: muzzle = Rico's gun tip (forward 0.95 m,
+  // chest height), target = the nearest officer's chest. The update
+  // loop re-asserts these three singletons every frame (combatFlash),
+  // and the crosshair pins to the same officer (combatAimOfficer).
+  const officers = police.getOfficers();
+  combatAimOfficer = officers[0] || null;
+  const fx = Math.sin(player.heading);
+  const fz = Math.cos(player.heading);
+  combatFlash = {
+    muzzle: { x: player.position.x + fx * 0.95, y: 1.3, z: player.position.z + fz * 0.95 },
+    target: combatAimOfficer
+      ? { x: combatAimOfficer.position.x, y: 1.35, z: combatAimOfficer.position.z }
+      : { x: player.position.x + fx * 7, y: 1.35, z: player.position.z + fz * 7 },
+  };
   placePeds([
     { roadX: 200, side: -1, z: 194, heading: Math.PI / 2 },
     { roadX: 200, side: -1, z: 206, heading: Math.PI / 2 },
+    { roadX: 200, side: 1, z: 186, heading: Math.PI / 2 },
   ]);
+  // The third ped FLEES south, away from Rico (unpause it after
+  // placePeds froze it with the other two).
+  for (const ped of traffic.getPedestrians()) {
+    if (Math.abs(ped.position.x - 208.5) < 1 && Math.abs(ped.position.z - 186) < 1) {
+      ped.paused = false;
+      ped.pauseTimer = 0;
+      ped.heading = Math.PI;
+    }
+  }
+  // Fixed camera, south side: Rico 3/4 from the front-right, ~9 m out
+  // (~120 px tall), officers beyond him, the interceptor in the
+  // background. (Tune via the projection probe if the frame drifts.)
+  shotCam = { mode: 'fixed', pos: [201, 2.8, 209], look: [196, 1.3, 199] };
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Night Drive — The Palms' };
   setShotDialogue('DANTE', 'Wheelman', 'Four stars and counting — drop them, Rico!');
+  saveProgress(missions.getCurrentMissionNumber());
 }
 
-// 3-pursuit.jpg — midday pursuit in the stolen Palm Coupe. Staged at
-// the Car Lot where mission 3 starts: the settle completes the steal
-// (player is in the right car at the marker) and the objective becomes
-// the delivery run to the Docks. Noon grade, three stars, two
-// interceptors behind, VEHICLE STOLEN banner.
+// 3-pursuit.jpg — Round 14: GOLDEN HOUR (was pale noon), mission 3
+// "Borrowed Beauty" (the sheet's chapter 3), three stars, the coupe
+// big in the frame (camera moved in: ahead 12, was the 24 default),
+// the interceptors offset laterally so they stop overlapping the
+// player car, a ROADBLOCK pair ahead (the two staged police cars,
+// repositioned every frame — zero new geometry: they ARE the two
+// extra police units the wanted-3 count already fields), two race
+// rivals alongside (the street-race chip is live), peds on both
+// sidewalks. VEHICLE STOLEN banner kept.
 function stagePursuit() {
   state = 'playing';
   showOnly(null);
   input.attach(canvas);
-  applyNoon();
-  timeOfDay = 13.2;
+  applyGoldenHour();
+  timeOfDay = 17.8;
   money = 3200;
   const car = makeCar({ position: { x: -120, y: 0, z: 120 }, heading: Math.PI, model: 'Palm Coupe', colour: 0xf5f0e6, driver: 'player' });
   car.speed = 24;
   player.teleport(-120, 120, Math.PI);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
-  shotCam = { mode: 'front', side: -6 };
+  shotCam = { mode: 'front', side: -6, ahead: 10.5, height: 5 };
   shotHoldSpeed = 24;
-  police.maxPoliceCars = 2;
+  police.maxPoliceCars = 4;
   police.maxOfficers = 0;
   police.addWanted(3);
-  // Round-13B (Lane B): interceptors closer — 12 m / 22 m behind the
-  // player (was 18 m / 30 m), so the lead car reads ~1.4x bigger with
-  // its light bar clearly visible. Both hold ~21-24 m/s against the
-  // player's pinned 24, so the gap stays ~13.5 m / ~23.5 m at capture
-  // and neither car can ram the player.
   stagePursuitCars(-120, 132, 142, Math.PI);
+  // Round 14: the interceptors stop overlapping the player car — one
+  // holds the left lane, one the right.
+  police.policeCars[0].position.x = -124;
+  police.policeCars[1].position.x = -116;
+  // Round 14: the roadblock — two staged police cars, crosswise
+  // across the road ahead (in the picture), repositioned every frame
+  // by the update loop. They are policeCars[0..1] so the panel's
+  // UNIT 1 / UNIT 2 honestly read ROADBLOCK, and the wanted-3 count
+  // (4 cars) is exactly the four units fielded.
+  const rb1 = makeCar({ position: { x: -123, y: 0, z: 150 }, heading: Math.PI / 2, model: 'Solmar Police Interceptor', colour: '#1a1a2e', driver: 'police' });
+  const rb2 = makeCar({ position: { x: -117, y: 0, z: 156 }, heading: -Math.PI / 2, model: 'Solmar Police Interceptor', colour: '#1a1a2e', driver: 'police' });
+  for (const rb of [rb1, rb2]) {
+    rb.kind = 'police-car';
+    rb.siren = true;
+    rb.speed = 0;
+    rb.staged = true;
+  }
+  shotRoadblock = [rb1, rb2];
+  police.policeCars = [rb1, rb2, ...police.policeCars];
+  // Round 14: two race rivals alongside the coupe (sports orange +
+  // sedan blue), repositioned every frame by the update loop. They
+  // feed the live race chip (POS / total) in the mission panel.
+  const r1 = makeCar({ position: { x: -124.5, y: 0, z: 117 }, heading: Math.PI, model: 'Solmar Sports', colour: 0xe67e22, driver: 'ai' });
+  const r2 = makeCar({ position: { x: -115.5, y: 0, z: 122 }, heading: Math.PI, model: 'Solmar Sedan', colour: 0x2e86c1, driver: 'ai' });
+  shotRivals = [r1, r2];
+  // Jobs 1-2 are done (the sheet's chapter 3).
+  missions.completed.add(1);
+  missions.completed.add(2);
   missions.startMission(3, world, systems());
   settleShot(24);
   police.setWanted(3); // re-pin after the settle (speeding rule fires once)
   placePeds([
-    { roadX: -120, side: 1, z: 112, heading: -Math.PI / 2 },
-    { roadX: -120, side: 1, z: 135, heading: -Math.PI / 2 },
+    { roadX: -120, side: 1, z: 128, heading: -Math.PI / 2 },
+    { roadX: -120, side: 1, z: 145, heading: -Math.PI / 2 },
+    { roadX: -120, side: -1, z: 136, heading: Math.PI / 2 },
   ]);
-  shotRadio = { station: 'SOLMAR FM 101.5', song: 'Midday Heat — The Palms' };
+  shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('RICO VEGA', 'Wheelman', 'VEHICLE STOLEN — Palm Coupe, pearl white');
+  saveProgress(missions.getCurrentMissionNumber());
 }
 
-// 4-sunset.jpg — story moment on the marina shore road (the round-12
-// end-vista framing, but in play — no menu overlay): Rico and Dante
-// face each other with the parked coupe beside them and the marina
-// vista beyond. Fixed camera, so updateCamera holds this exact frame.
+// 4-sunset.jpg — Round 14: the pre-heist briefing, mission 5
+// "Harbour Heist" (the sheet's chapter 5 — the cover used to claim
+// mission 1 while this shot claimed it), four stars, $4,500, wanted 1
+// with ONE staged patrol car down the road (option (a) from the
+// analyst: no more "NO HEAT — AREA CLEAR" dead panel — the heat
+// header now reads 1 star IN SIGHT), crosshair hidden (a story
+// moment, not combat), the Marina Bridge vista kept, the flat brown
+// wall dressed with two neon signs (world.js). Fixed camera unchanged.
 function stageSunset() {
   state = 'playing';
   showOnly(null);
   input.attach(canvas);
   applyGoldenHour();
   timeOfDay = 18.6;
-  money = 950;
+  money = 4500;
   player.teleport(196, -138, 1.26); // facing ESE, toward Dante
   camYaw = player.heading + Math.PI;
+  // Round-14: one patrol car, staged, far down the road north of the
+  // briefing (206,-165) — in the frame with its headlights on, clear
+  // of Rico, Dante and the coupe. maxPoliceCars = 1 caps the spawn
+  // loop at this one car (desiredUnits at wanted 1 is 2, but the cap
+  // wins), so no chasing car can arrive and bust the briefing.
+  police.maxPoliceCars = 1;
+  police.maxOfficers = 0;
+  const patrol = makeCar({ position: { x: 206, y: 0, z: -165 }, heading: 0, model: 'Solmar Police Interceptor', colour: '#1a1a2e', driver: 'police' });
+  patrol.kind = 'police-car';
+  patrol.siren = true;
+  patrol.speed = 0;
+  patrol.staged = true;
+  police.policeCars = [patrol];
+  police.addWanted(1);
   // Round-13B (Lane B): coupe moved to (200,-142) (was 204,-134) —
   // the closer camera pushes a coupe at -134 out of the right edge,
   // and at (204,-142) its centre lands at screen (1087, 382), hidden
@@ -1964,8 +2334,14 @@ function stageSunset() {
   // coupe (882, 379), bridge deck still spanning y ~280 across the
   // frame — the Marina Bridge vista survives the move-in.
   shotCam = { mode: 'fixed', pos: [198.6, 2.3, -128.2], look: [195.8, 1.6, -137.8] };
-  missions.startMission(1, world, systems());
+  // Jobs 1-4 are done (the sheet's chapter 5).
+  missions.completed.add(1);
+  missions.completed.add(2);
+  missions.completed.add(3);
+  missions.completed.add(4);
+  missions.startMission(5, world, systems());
   settleShot(24);
+  police.setWanted(1); // re-pin after the settle
   placePeds([
     // Dante on the WEST sidewalk, facing Rico — the east spot put him
     // behind the parked coupe and out of the frame. Round-13B: z -138
@@ -1977,6 +2353,7 @@ function stageSunset() {
   ]);
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('MAMA LOU', 'Boss', 'Golden hour over the Bay, Rico. Make it count.');
+  saveProgress(missions.getCurrentMissionNumber());
 }
 
 // ---- boot ------------------------------------------------------------------
@@ -2339,6 +2716,7 @@ window.__solmar = {
         x: +shotHeli.group.position.x.toFixed(1),
         y: +shotHeli.group.position.y.toFixed(1),
         z: +shotHeli.group.position.z.toFixed(1),
+        scale: shotHeli.scale || 1,
       } : (world.helicopter || police.helicopter ? { present: true, source: 'lane2' } : null),
       wanted: police.getWantedLevel(),
       policeCars: police.getPoliceCars().length,
@@ -2349,8 +2727,25 @@ window.__solmar = {
       trafficCars: traffic.getCars().length,
       weapon: typeof combat.getWeaponDef === 'function' ? combat.getWeaponDef().name : null,
       renderer: this.rendererInfo,
+      // Round 14: the new HUD state + combat staging facts, so the
+      // test can gate on them without scraping panel text.
+      timeOfDay: +timeOfDay.toFixed(1),
+      garage: garageState(),
+      race: raceState(),
+      saveInfo: save.getSaveInfo(),
+      fallenOfficers: police.getOfficers().filter((o) => o.fallen).length,
+      ricoPistol: Boolean(player._aimPistol),
+      muzzleVisible: muzzle.visible,
+      roadblock: shotRoadblock ? shotRoadblock.length : 0,
+      rivals: shotRivals ? shotRivals.length : 0,
     };
   },
+  // Round 14: project a world point to normalised screen coordinates
+  // through the live camera (see projectToScreen above). Called by
+  // the probe script as a separate evaluate — the round13 getter
+  // above must stay plain data (Playwright cannot serialise a
+  // function in its return value).
+  project(x, y, z) { return projectToScreen(x, y, z); },
   // Round-11 (final): harness camera-yaw probe. On foot the chase
   // camera yaw only moves by mouse look (or the direct sets after a
   // teleport/load/enterCar) — teleporting the player by writing

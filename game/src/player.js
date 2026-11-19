@@ -245,6 +245,17 @@ export function createPlayer(scene, world, spawn) {
     speed: 0,
     punchWindup: 0, // round 4: seconds left of the punch wind-up lean
     shadow, // round 4: ground blob (scene-owned, see createPlayer)
+    // Round-14: aim pose — the pistol-out stance for the combat shot
+    // (and any gameplay caller that wants it). The arm pivots are
+    // exposed on the player object so main.js can attach the pistol
+    // mesh to the right hand; setAim(true) makes update() hold the
+    // pose every frame instead of the walk-cycle swing.
+    armR, foreR, armL, foreL, torso, headGroup,
+    aiming: false,
+    setAim(aiming) {
+      this.aiming = Boolean(aiming);
+      return this.aiming;
+    },
     // Round-6: landmarks Rico has visited this session (names from
     // world.landmarks.list). main.js persists them into the save file.
     landmarksVisited: new Set(),
@@ -502,6 +513,20 @@ export function createPlayer(scene, world, spawn) {
         armR.rotation.x = -0.9 * phase + swing * 0.8 * (1 - phase);
         armL.rotation.x = -swing * 0.8;
         foreR.rotation.x = -0.5 * phase + foreBaseR * (1 - phase); // right forearm cocks back
+      }
+
+      // Round-14: aim pose — right arm forward horizontal (pistol out),
+      // left arm across in support, torso leaning into the shot. Applied
+      // after the walk cycle and the punch wind-up, so it wins over both
+      // while aiming; clearing the flag returns to the normal swing.
+      if (this.aiming) {
+        armR.rotation.x = -1.35;
+        armR.rotation.z = -0.05;
+        foreR.rotation.x = -0.08;
+        armL.rotation.x = -1.05;
+        armL.rotation.z = 0.28;
+        foreL.rotation.x = -0.55;
+        torso.rotation.x = 0.08;
       }
 
       // Round 12: the head rides the torso lean/hunch at half strength,

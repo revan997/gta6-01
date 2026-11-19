@@ -2,6 +2,8 @@
 // Round-13B: the staged combat shot gives its six officers a visible
 // pistol mesh + red marker (main.js makePersonMesh hostile flag); the
 // CombatSystem pistol itself is unchanged.
+// Round 14: no combat change — the staged aim pose lives in player.js
+// (setAim) and the frozen muzzle flash in main.js.
 // A punch attack and a pistol with aim, ammunition, muzzle effect and a
 // shot sound hook; damage to pedestrians and police; and a health and
 // armour model for the player. All randomness comes from the seeded
