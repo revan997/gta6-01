@@ -14,7 +14,7 @@ import { CONFIG } from './config.js';
 import { createRng, clamp01, lerp, smoothstep } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
-import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
+import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase, attachHeroDetail } from './vehicle.js';
 import { createRenderContext, boostCarPaintForCar, framingDistanceForHeight, makeGlowTexture } from './render.js';
 import { input } from './input.js';
 import { TrafficManager } from './traffic.js';
@@ -242,7 +242,18 @@ const missions = new MissionManager({
       const hint = missions.getLandmarkHint?.(player.position, landmarkList);
       showMessage((flavour || objective) + (hint ? ' ' + hint : ''));
     },
-    onComplete: ({ name, reward }) => {
+    onComplete: ({ number, name, reward }) => {
+      // Round 17: mission rewards are REAL guns, not toasts — Mama
+      // Lou gifts the SMG for finishing mission 1 (First Run) and
+      // the shotgun for finishing mission 3 (Borrowed Beauty). Both
+      // are earned in normal play before chapter 5, never cheats.
+      const r17w = CONFIG.round17?.weapons || {};
+      if (number === (r17w.smgUnlockMission ?? 1) && combat.unlockWeapon('smg')) {
+        showMessage('Mama Lou: the SMG is yours, Rico. Make it count.');
+      }
+      if (number === (r17w.shotgunUnlockMission ?? 3) && combat.unlockWeapon('shotgun')) {
+        showMessage('Mama Lou: take the shotgun. The Harbour job needs it.');
+      }
       showMissionComplete(name, reward);
     },
     onFail: ({ reason }) => {
@@ -593,6 +604,14 @@ function startPlaying() {
         armour: loaded.armour ?? undefined,
         ammo: loaded.ammo ?? undefined,
         mag: loaded.mag ?? undefined,
+        // Round 17 (save v9): restore the arsenal — the owned set +
+        // equipped weapon + every weapon's mag/reserve. The save wrote
+        // the weapons block for rounds, but this load block never read
+        // it back, so a reload silently re-locked the SMG / shotgun
+        // even when the save owned them. v8 and older saves carry no
+        // block (undefined), and fromSaveData treats a missing block
+        // as fists + pistol only, so every earlier save still works.
+        ...(loaded.weapons && typeof loaded.weapons === 'object' ? loaded.weapons : {}),
       });
     } else {
       timesPlayed = 1;
@@ -666,6 +685,10 @@ function saveProgress(currentMission) {
     // null when the caller passes neither mag nor combat), so the
     // "magazine persisted" feature never actually persisted anything.
     mag: combat.getMag(),
+    // Round 17 (v9): the owned arsenal — owned set + equipped weapon
+    // + every weapon's mag/reserve — so a reload restores the SMG /
+    // shotgun exactly as they were left, not as a fresh pistol.
+    weapons: combat.toSaveData(),
     timeOfDay,
     playTimeSeconds,
     timesPlayed,
@@ -1108,11 +1131,16 @@ function doPunch() {
 
 function doShoot() {
   if (state !== 'playing') return;
-  combat.selectWeapon('pistol');
+  // Round 17: a gun already in hand stays in hand — the SMG / shotgun
+  // shoot with their own definitions (rate / range / damage). Fists
+  // still quick-draw the pistol (the round-5 behaviour), and after a
+  // quick-drawn shot Rico lowers the gun back to fists.
+  const quickDraw = combat.getWeapon() === 'fists';
+  if (quickDraw) combat.selectWeapon('pistol');
   const targets = combat.collectTargets({ traffic, police });
   const result = combat.shoot(aimPoint(), player, targets);
   if (result && result.reason === 'no-ammo') showMessage('Out of ammo.');
-  else if (result && result.fired) combat.selectWeapon('fists');
+  else if (result && result.fired && quickDraw) combat.selectWeapon('fists');
 }
 
 function tryEnterExitCar() {
@@ -1205,6 +1233,18 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (state !== 'playing') return;
+  // Round 17: digits 1–5 select the weapon wheel slots (fists,
+  // pistol, SMG, shotgun, rifle). A locked weapon is REFUSED by
+  // combat.selectWeapon — the equipped weapon stays put and the HUD
+  // says so, never silently swapped for another gun.
+  if (code === 'Digit1' || code === 'Digit2' || code === 'Digit3' || code === 'Digit4' || code === 'Digit5') {
+    const key = ['fists', 'pistol', 'smg', 'shotgun', 'rifle'][Number(code.slice(-1)) - 1];
+    const before = combat.getWeapon();
+    combat.selectWeapon(key);
+    if (combat.getWeapon() !== key) showMessage(`${key === 'rifle' ? 'Rifle' : key.toUpperCase()} is locked.`);
+    else if (before !== key) showMessage(`${key === 'fists' ? 'Fists' : key.toUpperCase()} equipped.`);
+    return;
+  }
   if (code === 'KeyE') tryEnterExitCar();
   else if (code === 'KeyF') doPunch();
   else if (code === 'KeyR') {
@@ -1370,6 +1410,15 @@ function update(dt) {
   // the capture — the chopper stays in the cover frame.
   if (shotHeli) {
     shotHeli.t += dt;
+    // Round 17: staged shots are FROZEN (SHOT_MODE) — no hover bob,
+    // no drift, no rotor spin. The cover probe projects the hub /
+    // nav lights from the live matrix, then the screenshot is taken
+    // seconds later; a ±0.8 m bob moves those point features ~15 px
+    // between probe and capture, so the hub/nav gates read empty sky
+    // (hubDarkFrac 0.0, navs 0) and the rotor phase drags the
+    // body-vs-sky contrast box at random. Live play keeps the motion;
+    // a still image cannot tell a frozen rotor from a caught one.
+    const frozen = SHOT_MODE;
     // Round 14: the cover heli TRACKS the player car (followOffset, set
     // by stageCoverChase) instead of drifting from a fixed point — the
     // car drives on during the HUD convergence wait, so a fixed heli
@@ -1379,7 +1428,7 @@ function update(dt) {
       const c = player.currentCar.position;
       shotHeli.group.position.set(
         c.x + shotHeli.followOffset.x,
-        c.y + shotHeli.followOffset.y + Math.sin(shotHeli.t * 0.5) * 0.8,
+        c.y + shotHeli.followOffset.y + (frozen ? 0 : Math.sin(shotHeli.t * 0.5) * 0.8),
         c.z + shotHeli.followOffset.z,
       );
       // Round 16: SIDE-ON — the face-the-car yaw (round 15) showed the
@@ -1392,15 +1441,21 @@ function update(dt) {
       const sideYaw = ((CONFIG.round16?.heli?.sideYawDeg ?? 90) * Math.PI) / 180;
       shotHeli.group.rotation.y = Math.atan2(c.x - shotHeli.group.position.x, c.z - shotHeli.group.position.z) + sideYaw;
     } else {
-      const a = shotHeli.angle + Math.sin(shotHeli.t * 0.1) * 0.15;
+      const a = shotHeli.angle + (frozen ? 0 : Math.sin(shotHeli.t * 0.1) * 0.15);
       shotHeli.group.position.set(
         shotHeli.x + Math.cos(a) * 4,
-        shotHeli.y + Math.sin(shotHeli.t * 0.5) * 1.2,
+        shotHeli.y + (frozen ? 0 : Math.sin(shotHeli.t * 0.5) * 1.2),
         shotHeli.z + Math.sin(a) * 4,
       );
       shotHeli.group.rotation.y = a + Math.PI / 2;
     }
-    shotHeli.rotor.rotation.y += dt * 22;
+    // Round 17: a frozen rotor sits at a shallow 10 deg diagonal —
+    // at 0 deg (bars horizontal / foreshortened) neither bar crosses
+    // the disc-read row (y = mean rotor-tip y), so discDarkFrac fell
+    // to 0.32 (gate 0.35); a shallow diagonal bar crosses the row
+    // over a long segment and restores it. Live play keeps the spin.
+    if (frozen) shotHeli.rotor.rotation.y = (10 * Math.PI) / 180;
+    else shotHeli.rotor.rotation.y += dt * 22;
   }
 
   // Round 14 (pursuit shot): the roadblock pair and the race rivals are
@@ -1614,6 +1669,12 @@ function update(dt) {
     // station yet), so they are passed only in shot mode.
     vehicle: car || null,
     weapon: typeof combat.getWeapon === 'function' ? combat.getWeapon() : null,
+    // Round 17: the full arsenal for the weapon wheel — the five
+    // slots with live mag/reserve + the owned set (combat.js
+    // getWeaponsState). The wheel reads this, never a hardcoded
+    // LOCKED list; without it the SMG / shotgun would still show
+    // LOCKED after being earned.
+    weapons: typeof combat.getWeaponsState === 'function' ? combat.getWeaponsState() : null,
     respect: respectState(),
     ...(SHOT_MODE && shotRadio ? { radio: shotRadio } : {}),
     ...(SHOT_MODE && shotDialogue ? { dialogue: shotDialogue } : {}),
@@ -2078,7 +2139,7 @@ function buildShotHeli(x, y, z, scale = 1) {
   // against the sky.
   const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5 * s, 0.5 * s, 3.4 * s), matBody);
   tail.position.set(0, 0.3 * s, -3.6 * s);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15 * s, 1.4 * s, 0.9 * s), matNavy);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15 * s, 1.4 * s, 0.6 * s), matNavy);
   fin.position.set(0, 0.9 * s, -5.0 * s);
   // Round 16 iteration 2: the windshield — a dark glass box at the
   // nose's upper front, slightly proud of the fuselage. The flat white
@@ -2111,9 +2172,16 @@ function buildShotHeli(x, y, z, scale = 1) {
   // Round 16: DARK translucent (was pale 0xfff2cc @ 0.50 — it measured
   // 0% dark pixels on the rotor line, invisible against the bright
   // sky). A dark disc over a bright sky reads as rotor blur.
+  // Round 17: darker + more opaque (0x1a1a1a @ 0.70, was 0x2e2e2e @
+  // 0.38) — the 0.38 disc over a ~67 sky reads ~59, only 8 darker
+  // than the sky reference, so the disc-dark fraction measured the
+  // rotor blades, not the disc, and drifted 0.38 -> 0.35 -> 0.32
+  // (below the 0.35 gate). At 0.70 the disc reads ~38 over the sky,
+  // ~29 darker than the reference. The disc sits above the fuselage
+  // sightline, so it darkens only the sky row, never the body box.
   const rotorBlur = new THREE.Mesh(
     new THREE.CircleGeometry(discRadius * s, 20),
-    new THREE.MeshBasicMaterial({ color: 0x2e2e2e, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
   );
   rotorBlur.rotation.x = -Math.PI / 2;
   rotorBlur.position.y = 1.0 * s;
@@ -2134,6 +2202,74 @@ function buildShotHeli(x, y, z, scale = 1) {
   }));
   pool.scale.set(poolScale, poolScale, 1);
   pool.position.y = -y + 0.6;
+  // Round 17: the heli DETAIL — a helicopter is more than a body +
+  // rotor. Mast + hub above the fuselage (the rotor has something to
+  // spin on), dark glass on BOTH fuselage sides (the camera-facing
+  // side is local -x under the side-on yaw, but a symmetric pair can
+  // never be on the wrong side), a strut from each skid up to the
+  // belly, red tail / green nose nav lights, a horizontal stabilizer
+  // on the tail boom, engine exhausts on both flanks and a belly
+  // antenna. 12 meshes, ~290 tris — the cover has ~35k tris of
+  // headroom, and every round-16 gate (contrast, nose-tail, rotor
+  // span, disc dark fraction) is untouched: the detail sits inside
+  // the old silhouette, it does not redraw it. All named heli-* so
+  // the probe can count them.
+  const r17 = CONFIG.round17?.heliDetail || {};
+  const hd = (mesh, name) => { mesh.name = name; g.add(mesh); return mesh; };
+  // Round 17 (mast + hub): the hub sits HIGH (y 1.45, on a 0.7 mast
+  // from the roof) as the visible rotor head, and the probe's hub
+  // point (y 1.1) lands ON the tall dark mast — the mast is a long
+  // dark column that stays in the 10x6 probe box at every bob phase
+  // (run2: hubDarkFrac 1.0). The mast stays navy: the hub gate reads
+  // it dark, and the staged-shot bob freeze (update loop) holds the
+  // column at the probe point for the screenshot.
+  const mast = hd(new THREE.Mesh(new THREE.CylinderGeometry((r17.mast?.radius ?? 0.2) * s, (r17.mast?.radius ?? 0.2) * s, (r17.mast?.height ?? 0.7) * s, 8), matNavy), 'heli-mast');
+  mast.position.set(0, (r17.mast?.y ?? 1.1) * s, 0);
+  const hub = hd(new THREE.Mesh(new THREE.BoxGeometry((r17.hub?.width ?? 0.4) * s, (r17.hub?.height ?? 0.14) * s, (r17.hub?.width ?? 0.4) * s), matNavy), 'heli-hub');
+  hub.position.set(0, (r17.hub?.y ?? 1.45) * s, 0);
+  const st = r17.strut || {};
+  for (const sx of [-1, 1]) {
+    const glass = hd(new THREE.Mesh(new THREE.BoxGeometry(0.06 * s, 0.5 * s, 1.4 * s), matGlass), 'heli-side-glass');
+    glass.position.set(sx * 1.13 * s, 0.25 * s, 0.9 * s);
+    const strutLen = Math.hypot((st.topY ?? -0.1) - (st.botY ?? -1.0), (st.topX ?? 1.12) - (st.x ?? 0.9));
+    // Round 17 (struts): LEANING struts, not vertical — the top sits
+    // just outboard of the fuselage face (x 1.12) and the foot on the
+    // skid (x 0.9), so the strut reads dark along its whole body->skid
+    // run. A vertical strut at x 0.9 hides behind the fuselage above
+    // the belly, and the probe line reads white, not dark.
+    const strut = hd(new THREE.Mesh(new THREE.BoxGeometry((st.thickness ?? 0.12) * s, strutLen * s, (st.thickness ?? 0.12) * s), matDark), 'heli-strut');
+    strut.position.set(sx * (((st.topX ?? 1.12) + (st.x ?? 0.9)) / 2) * s, (((st.topY ?? -0.1) + (st.botY ?? -1.0)) / 2) * s, (st.z ?? 0.3) * s);
+    strut.rotation.z = -sx * Math.atan2((st.topX ?? 1.12) - (st.x ?? 0.9), (st.topY ?? -0.1) - (st.botY ?? -1.0));
+    const exhaust = hd(new THREE.Mesh(new THREE.CylinderGeometry(0.16 * s, 0.16 * s, 0.6 * s, 8), matDark), 'heli-exhaust');
+    exhaust.rotation.z = Math.PI / 2;
+    // Round 17: exhausts at y 0.5 (CONFIG.round17.heliDetail.exhaust.y),
+    // on the fuselage side below the body-vs-sky contrast sample box —
+    // at 0.85 they sat inside it as a dark disc and dragged it ~5 lum.
+    exhaust.position.set(sx * 1.3 * s, (r17.exhaust?.y ?? 0.5) * s, -0.5 * s);
+  }
+  const navTail = hd(new THREE.Mesh(
+    new THREE.SphereGeometry(0.12 * s, 6, 4),
+    new THREE.MeshBasicMaterial({ color: 0xff2a2a }),
+  ), 'heli-nav-tail');
+  navTail.position.set(0, (r17.navTail?.y ?? 0.5) * s, (r17.navTail?.z ?? -5.35) * s);
+  const navNose = hd(new THREE.Mesh(
+    new THREE.SphereGeometry(0.15 * s, 6, 4),
+    new THREE.MeshBasicMaterial({ color: 0x2aff5a }),
+  ), 'heli-nav-nose');
+  // Round 17: the nose light sits ON the south face at the nose
+  // (x -1.2, on the through-body windshield, z 1.9), radius 0.15 —
+  // the old spot (x 0, z 2.2, the nose TIP) is inside the fuselage's
+  // silhouette from the low south camera: the fuselage (x ±1.1)
+  // hides it completely (navNoseGreen 0 in run1 AND run2, even at
+  // radius 0.15). A nav light belongs on the aircraft's side anyway
+  // (green = starboard, which faces this camera); on the dark
+  // windshield it reads as a clear green dot. Probe point moved to
+  // match (see round17-test.mjs / round17-probe.mjs).
+  navNose.position.set((r17.navNose?.x ?? -1.2) * s, (r17.navNose?.y ?? 0.3) * s, (r17.navNose?.z ?? 1.9) * s);
+  const stab = hd(new THREE.Mesh(new THREE.BoxGeometry(1.6 * s, 0.08 * s, 0.5 * s), matBody), 'heli-stabilizer');
+  stab.position.set(0, 0.6 * s, -4.2 * s);
+  const antenna = hd(new THREE.Mesh(new THREE.CylinderGeometry(0.03 * s, 0.03 * s, 0.3 * s, 6), matDark), 'heli-antenna');
+  antenna.position.set(0, -0.9 * s, 0.5 * s);
   g.add(outline, body, stripe, tail, fin, windshield, rotor, tailRotor, skidL, skidR, rotorBlur, cone, pool);
   g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
   g.position.set(x, y, z);
@@ -2177,6 +2313,11 @@ function stageCoverChase() {
   const car = createCar(scene, 'sports', 0xd7263d, 40, -80, 0);
   spawnedCars.add(car);
   car.speed = 26;
+  // Round 17: the hero trim — taillight bar, exhausts, rear glass,
+  // flank stripes, rim discs, mirrors, grille, headlight lenses —
+  // on the GT ONLY (the hero car). The shared sports model is never
+  // touched, so the interceptors and traffic stay plain.
+  attachHeroDetail(car);
   player.teleport(40, -80, 0);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
@@ -2265,7 +2406,13 @@ function stageCombat() {
   money = 2450;
   player.teleport(200, 200, -Math.PI / 2); // facing west, into the city
   camYaw = player.heading + Math.PI;
-  combat.selectWeapon('pistol');
+  // Round 17: mission 1 is DONE (the sheet's chapter 2) — the SMG
+  // is Mama Lou's reward for it, so Rico unlocks it here and carries
+  // it into the shootout: full mag 30 + reserve 60, equipped. The
+  // pistol stays owned but holstered; the wheel's slot 3 now reads
+  // a real gun, not a LOCKED placeholder.
+  combat.unlockWeapon('smg');
+  combat.selectWeapon('smg');
   combat.addArmour(50);
   police.maxPoliceCars = 1;
   police.maxOfficers = 6;
@@ -2344,15 +2491,22 @@ function stageCombat() {
       scene.add(fallenPool);
     }
   }
-  // Rico AIMING: the aim pose (player.js setAim) + a pistol in his
-  // right hand. The pistol is a small dark box at the end of the
-  // right forearm — visible at capture size, 2 draw calls, ~12 tris.
+  // Rico AIMING: the aim pose (player.js setAim) + an SMG in his
+  // right hand — the mission-1 reward, not the pistol. The SMG is a
+  // long dark gun (0.09 x 0.14 x 0.62, longer than the pistol's 0.42
+  // — the combat probe's pistol-mesh count gates on depth 0.42, so
+  // the SMG never inflates the officers' pistol count) with a
+  // magazine hanging below the receiver, 3 draw calls, ~36 tris.
   player.setAim(true);
-  const pistolMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.6 });
-  const pistol = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.42), pistolMat);
-  pistol.position.set(0, -0.36, 0.10);
-  player.foreR.add(pistol);
-  player._aimPistol = pistol;
+  const smgMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.6 });
+  const smg = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.62), smgMat);
+  smg.position.set(0, -0.36, 0.10);
+  player.foreR.add(smg);
+  const smgMag = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.2, 0.12), smgMat);
+  smgMag.position.set(0, -0.5, 0.22);
+  player.foreR.add(smgMag);
+  player._aimSmg = smg;
+  player._aimPistol = null;
   // The frozen muzzle flash: muzzle = Rico's gun tip (forward 0.95 m,
   // chest height), target = the nearest officer's chest. The update
   // loop re-asserts these three singletons every frame (combatFlash),
@@ -2435,6 +2589,10 @@ function stagePursuit() {
   money = 3200;
   const car = makeCar({ position: { x: -120, y: 0, z: 120 }, heading: Math.PI, model: 'Palm Coupe', colour: 0xf5f0e6, driver: 'player' });
   car.speed = 24;
+  // Round 17: the hero trim on the player's stolen coupe too — the
+  // coupe is the hero car of this shot (the interceptors and rivals
+  // stay plain; the shared models are never touched).
+  attachHeroDetail(car);
   player.teleport(-120, 120, Math.PI);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
@@ -2530,6 +2688,17 @@ function stageSunset() {
   // it projects to (882, 379): right of Rico, clear of the panel.
   const car = createCar(scene, 'coupe', 0x2e86c1, 200, -142, 0);
   spawnedCars.add(car);
+  // Round 17: the hero trim on the player's parked teal coupe (the
+  // hero car of this shot), and the arsenal by chapter 5 — missions
+  // 1–4 are done, so the SMG (mission-1 reward) and the shotgun
+  // (mission-3 reward) are both owned; Rico stands on foot with
+  // fists, so the panel reads FISTS READY while the wheel shows
+  // SHOTGUN 6 / 12 in slot 4. The save written below therefore
+  // carries both guns, and a fresh load restores them.
+  attachHeroDetail(car);
+  combat.unlockWeapon('smg');
+  combat.unlockWeapon('shotgun');
+  combat.selectWeapon('fists');
   // Round 15: camera CLOSER + LOWER (was 10 m from Rico, y 2.3) — Rico
   // + the teal coupe + the two patrol cars fill the frame instead of
   // half of it being empty asphalt. Probe-verified: Rico ~130 px,
@@ -2963,6 +3132,12 @@ window.__solmar = {
       saveInfo: save.getSaveInfo(),
       fallenOfficers: police.getOfficers().filter((o) => o.fallen).length,
       ricoPistol: Boolean(player._aimPistol),
+      // Round 17: Rico holds the SMG in the combat shot (mission 1
+      // done — the SMG is his reward), and the probe carries the
+      // whole arsenal so the harness can gate on owned slots.
+      ricoSmg: Boolean(player._aimSmg),
+      ricoGun: player._aimSmg ? 'SMG' : (player._aimPistol ? 'Pistol' : null),
+      weapons: typeof combat.getWeaponsState === 'function' ? combat.getWeaponsState() : null,
       muzzleVisible: muzzle.visible,
       roadblock: shotRoadblock ? shotRoadblock.length : 0,
       // Round 15: the roadblock cars' world positions, so the test can

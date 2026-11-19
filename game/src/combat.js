@@ -4,9 +4,12 @@
 // CombatSystem pistol itself is unchanged.
 // Round 14: no combat change — the staged aim pose lives in player.js
 // (setAim) and the frozen muzzle flash in main.js.
-// A punch attack and a pistol with aim, ammunition, muzzle effect and a
+// A punch attack and firearms with aim, ammunition, muzzle effect and a
 // shot sound hook; damage to pedestrians and police; and a health and
-// armour model for the player. All randomness comes from the seeded
+// armour model for the player. Round 17: the arsenal is fists, pistol,
+// SMG (fast, 30-round mag) and shotgun (heavy, 6-shell mag) — all four
+// are real definitions in WEAPONS, unlocked by finishing missions 1 / 3.
+// All randomness comes from the seeded
 // generator passed in (an object with next()/range()/pick(), or a factory
 // taking a numeric seed). Never uses Math.random.
 //
@@ -52,8 +55,23 @@ function normaliseRng(rng, seed) {
 
 export const WEAPONS = {
   fists: { name: 'Fists', damage: 15, range: 2.2, rate: 0.45 },
-  pistol: { name: 'Pistol', damage: 34, range: 60, rate: 0.28, magSize: 12 },
+  pistol: { name: 'Pistol', damage: 34, range: 60, rate: 0.28, magSize: 12, reserveStart: 24 },
+  // Round 17: two REAL unlockable firearms — the wheel's slots 3-4
+  // stop being LOCKED placeholders. SMG: fast, light hits, big mag
+  // (Mama Lou's gift for finishing mission 1). Shotgun: slow, heavy
+  // hits, short range, tiny mag (mission 3's reward). Both are
+  // full combat definitions (damage / range / rate / magSize /
+  // reserveStart) — shoot() / reload() / equip() read them, never a
+  // hardcoded pistol value. The rifle (slot 5) has NO definition
+  // here on purpose: the HUD must keep showing it LOCKED rather than
+  // inventing a gun with no code behind it.
+  smg: { name: 'SMG', damage: 18, range: 55, rate: 0.09, magSize: 30, reserveStart: 60 },
+  shotgun: { name: 'Shotgun', damage: 55, range: 28, rate: 0.9, magSize: 6, reserveStart: 12 },
 };
+// Round 17: wheel order — the HUD renders these five slots; only the
+// four WEAPONS keys can ever be owned (rifle is listed here so the
+// wheel can name its LOCKED slot, never an open one).
+export const WEAPON_ORDER = ['fists', 'pistol', 'smg', 'shotgun', 'rifle'];
 
 export class CombatSystem {
   constructor(options = {}) {
@@ -63,8 +81,17 @@ export class CombatSystem {
     this.maxArmour = options.maxArmour ?? 100;
     this.health = options.health ?? this.maxHealth;
     this.armour = options.armour ?? 0;
-    this.ammo = options.ammo ?? 24; // reserve pistol rounds
-    this.mag = options.mag ?? WEAPONS.pistol.magSize;
+    // Round 17: the owned arsenal + per-weapon ammo. this.ammo /
+    // this.mag always mirror the EQUIPPED weapon (the rest of the
+    // class + the HUD read those two fields); the maps hold every
+    // weapon's load, so switching guns never destroys a magazine.
+    // A fresh profile owns fists + pistol; SMG / shotgun arrive via
+    // unlockWeapon() (mission 1 / mission 3 rewards).
+    this.owned = new Set(['fists', 'pistol']);
+    this.ammoByWeapon = { fists: 0, pistol: options.ammo ?? 24, smg: 0, shotgun: 0 };
+    this.magByWeapon = { fists: 0, pistol: options.mag ?? WEAPONS.pistol.magSize, smg: 0, shotgun: 0 };
+    this.ammo = this.ammoByWeapon.pistol;
+    this.mag = this.magByWeapon.pistol;
     this.weapon = 'fists';
     this.punchCooldown = 0;
     this.shotCooldown = 0;
@@ -215,8 +242,92 @@ export class CombatSystem {
   }
 
   selectWeapon(name) {
-    if (name === 'fists' || name === 'pistol') this.weapon = name;
+    if (typeof name !== 'string') return this.weapon;
+    const key = name.toLowerCase();
+    // Round 17: a locked weapon is REFUSED — the equipped weapon
+    // stays put, never silently swapped for another gun.
+    if (!WEAPONS[key] || !this.owned.has(key)) return this.weapon;
+    if (key !== this.weapon) {
+      // Park the outgoing weapon's load, load the incoming one.
+      this.ammoByWeapon[this.weapon] = this.ammo;
+      this.magByWeapon[this.weapon] = this.mag;
+      this.weapon = key;
+      this.ammo = this.ammoByWeapon[key] ?? 0;
+      this.mag = this.magByWeapon[key] ?? 0;
+    }
     return this.weapon;
+  }
+
+  // Round 17: equip() is the same gate as selectWeapon() — any weapon
+  // Rico OWNS can be equipped; anything else is refused.
+  equip(name) { return this.selectWeapon(name); }
+
+  // Round 17: ownership + per-weapon ammo, for the HUD wheel and the
+  // save system. hasWeapon() is the lock check; getWeaponState() is
+  // the whole arsenal in one plain object (no live state leaks out).
+  hasWeapon(name) { return typeof name === 'string' && this.owned.has(name.toLowerCase()); }
+  isOwned(name) { return this.hasWeapon(name); }
+  getOwnedWeapons() { return Object.keys(WEAPONS).filter((k) => this.owned.has(k)); }
+  getWeaponAmmo(name) {
+    const key = typeof name === 'string' ? name.toLowerCase() : '';
+    const def = WEAPONS[key];
+    if (!def) return null;
+    return { mag: this.magByWeapon[key] ?? 0, reserve: this.ammoByWeapon[key] ?? 0, magSize: def.magSize ?? 0 };
+  }
+  getWeaponState() {
+    this._syncAmmoMaps();
+    const weapons = {};
+    for (const key of Object.keys(WEAPONS)) {
+      weapons[key] = {
+        name: WEAPONS[key].name,
+        owned: this.owned.has(key),
+        mag: this.magByWeapon[key] ?? 0,
+        reserve: this.ammoByWeapon[key] ?? 0,
+        magSize: WEAPONS[key].magSize ?? 0,
+      };
+    }
+    return { weapon: this.weapon, owned: this.getOwnedWeapons(), weapons };
+  }
+
+  // Round 17: the HUD / probe shape — the five wheel slots in order,
+  // each with its live mag/reserve, plus the owned list and the
+  // equipped weapon. The HUD wheel, the round13 probe and the
+  // save/restore probe read this, never the raw maps. The rifle has
+  // no WEAPONS definition on purpose — its slot is always LOCKED.
+  getWeaponsState() {
+    const st = this.getWeaponState();
+    return {
+      equipped: st.weapon,
+      owned: st.owned,
+      weapons: st.weapons,
+      slots: WEAPON_ORDER.map((key) => {
+        const w = st.weapons[key];
+        return w
+          ? { key, name: w.name, owned: w.owned, mag: w.mag, reserve: w.reserve, magSize: w.magSize }
+          : { key, name: 'Rifle', owned: false, mag: 0, reserve: 0, magSize: 0 };
+      }),
+    };
+  }
+
+  // Round 17: unlock a weapon (mission reward). New guns arrive with
+  // a FULL magazine + their starting reserve. Returns true only on a
+  // real first unlock; re-unlocks and unknown keys return false.
+  unlockWeapon(name) {
+    const key = typeof name === 'string' ? name.toLowerCase() : '';
+    const def = WEAPONS[key];
+    if (!def || !def.magSize || this.owned.has(key)) return false;
+    this.owned.add(key);
+    this.ammoByWeapon[key] = def.reserveStart ?? 0;
+    this.magByWeapon[key] = def.magSize;
+    return true;
+  }
+
+  // Round 17: park the live mag/reserve into the maps (called before
+  // any snapshot — getWeaponState / toSaveData — so the equipped
+  // weapon's current load is never lost from the record).
+  _syncAmmoMaps() {
+    this.ammoByWeapon[this.weapon] = this.ammo;
+    this.magByWeapon[this.weapon] = this.mag;
   }
 
   // Advance cooldowns. Called once per frame by the game loop.
@@ -234,11 +345,21 @@ export class CombatSystem {
 
   // ---- pickups ----
 
-  addAmmo(amount) {
+  // Round 17: ammo goes to the reserve of the named weapon — the
+  // equipped firearm by default, the pistol when fists are equipped
+  // (fists carry no ammunition). The old single-reserve behaviour
+  // (everything into the pistol pile) is gone: a shotgun pickup must
+  // not refill the SMG.
+  addAmmo(amount, name = null) {
     const n = Math.max(0, Math.round(amount) || 0);
-    this.ammo += n;
+    const key = typeof name === 'string' && WEAPONS[name.toLowerCase()]
+      ? name.toLowerCase()
+      : (this.weapon !== 'fists' ? this.weapon : 'pistol');
+    if (!WEAPONS[key] || !WEAPONS[key].magSize) return this.ammo;
+    if (key === this.weapon) this.ammo += n;
+    else this.ammoByWeapon[key] = (this.ammoByWeapon[key] ?? 0) + n;
     this.hooks.audio?.playPickup?.();
-    return this.ammo;
+    return key === this.weapon ? this.ammo : this.ammoByWeapon[key];
   }
 
   addHealth(amount) {
@@ -330,6 +451,11 @@ export class CombatSystem {
   // object { fired, hit, target, damage, killed, reason }.
   shoot(targetPoint, player, targets = []) {
     if (this.isDown) return { fired: false, reason: 'down' };
+    // Round 17: fists cannot shoot — the caller (main.js doShoot)
+    // equips a firearm first; a bare-fists shoot is refused, not
+    // silently fired as a pistol.
+    const def = WEAPONS[this.weapon];
+    if (!def || !def.magSize) return { fired: false, reason: 'melee' };
     if (this.shotCooldown > 0) return { fired: false, reason: 'cooldown' };
     if (this.mag <= 0) {
       if (this.ammo > 0) {
@@ -338,7 +464,9 @@ export class CombatSystem {
       }
       return { fired: false, reason: 'no-ammo' };
     }
-    this.shotCooldown = WEAPONS.pistol.rate;
+    // Round 17: rate / range / damage all come from the EQUIPPED
+    // weapon's definition (was hardcoded pistol: 0.28 s, 60 m, 30-38).
+    this.shotCooldown = def.rate;
     this.mag -= 1;
     this.shotsFired += 1; // round-9: every shot that leaves the barrel counts
 
@@ -354,7 +482,7 @@ export class CombatSystem {
     this.muzzleTimer = 0.06;
     // Shot tracer for the game loop to draw as a fading line: from the
     // muzzle to the target point, or — with no target point — to the point
-    // at max pistol range along the shot line from the origin.
+    // at max weapon range along the shot line from the origin.
     const tracerTo = targetPoint
       ? { x: targetPoint.x, y: targetPoint.y ?? 0, z: targetPoint.z }
       : (() => {
@@ -366,9 +494,9 @@ export class CombatSystem {
           };
           const h = player.heading || 0;
           return {
-            x: origin.x + Math.sin(h) * WEAPONS.pistol.range,
+            x: origin.x + Math.sin(h) * def.range,
             y: origin.y,
-            z: origin.z + Math.cos(h) * WEAPONS.pistol.range,
+            z: origin.z + Math.cos(h) * def.range,
           };
         })();
     // Round-5: the tracer is drawn warm gold at dusk — the colour rides
@@ -390,7 +518,7 @@ export class CombatSystem {
     const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z) || 1;
     dir.x /= len; dir.y /= len; dir.z /= len;
     let best = null;
-    let bestAlong = WEAPONS.pistol.range;
+    let bestAlong = def.range;
     for (const target of targets) {
       if (target && target.alive === false) continue;
       if (!target?.position) continue;
@@ -400,25 +528,34 @@ export class CombatSystem {
         z: target.position.z - origin.z,
       };
       const along = to.x * dir.x + to.y * dir.y + to.z * dir.z;
-      if (along < 0 || along > WEAPONS.pistol.range) continue;
+      if (along < 0 || along > def.range) continue;
       const perpSq =
         (to.x - dir.x * along) ** 2 + (to.y - dir.y * along) ** 2 + (to.z - dir.z * along) ** 2;
       // Seeded spread: wider at long range, so a given seed reproduces hits.
-      const spread = 0.35 + along * 0.012;
+      // Round 17: the shotgun spreads wide (short-range scatter gun),
+      // the SMG / pistol stay tight.
+      const spreadBase = this.weapon === 'shotgun' ? 0.6 : 0.35;
+      const spreadSlope = this.weapon === 'shotgun' ? 0.03 : 0.012;
+      const spread = spreadBase + along * spreadSlope;
       if (perpSq > spread * spread) continue;
       if (along < bestAlong) { bestAlong = along; best = target; }
     }
     if (!best) return { fired: true, hit: false };
-    // Seeded damage roll: 30–38, so results vary per seed but reproduce.
-    const damage = Math.round(this.rng.range(30, 38));
+    // Seeded damage roll: ±15% around the equipped weapon's damage,
+    // so results vary per seed but reproduce.
+    const damage = Math.round(this.rng.range(def.damage * 0.85, def.damage * 1.15));
     this.shotsHit += 1; // round-9: a shot that finds a target counts
     const hit = this._applyDamage(best, damage, 'shot');
     return { fired: true, hit: true, target: best, damage, killed: hit.killed };
   }
 
   reload() {
-    if (this.mag >= WEAPONS.pistol.magSize || this.ammo <= 0) return false;
-    const needed = WEAPONS.pistol.magSize - this.mag;
+    // Round 17: the magazine size is the EQUIPPED weapon's (was a
+    // hardcoded pistol 12 — an SMG reload used to refill to 12).
+    const def = WEAPONS[this.weapon];
+    if (!def || !def.magSize) return false;
+    if (this.mag >= def.magSize || this.ammo <= 0) return false;
+    const needed = def.magSize - this.mag;
     const moved = Math.min(needed, this.ammo);
     this.mag += moved;
     this.ammo -= moved;
@@ -524,20 +661,58 @@ export class CombatSystem {
   }
 
   toSaveData() {
-    return { health: this.health, armour: this.armour, ammo: this.ammo, mag: this.mag };
+    // Round 17: the arsenal rides along — owned set + every weapon's
+    // mag/reserve + the equipped weapon — so a reload restores the
+    // SMG / shotgun exactly as they were left, not as a fresh pistol.
+    this._syncAmmoMaps();
+    return {
+      health: this.health, armour: this.armour, ammo: this.ammo, mag: this.mag,
+      weapon: this.weapon, owned: [...this.owned],
+      ammoByWeapon: { ...this.ammoByWeapon }, magByWeapon: { ...this.magByWeapon },
+    };
   }
 
   fromSaveData(data = {}) {
     if (typeof data.health === 'number') this.health = clamp(data.health, 0, this.maxHealth);
     if (typeof data.armour === 'number') this.armour = clamp(data.armour, 0, this.maxArmour);
-    if (typeof data.ammo === 'number') this.ammo = Math.max(0, data.ammo);
-    if (typeof data.mag === 'number') this.mag = Math.max(0, data.mag);
+    // The legacy ammo/mag fields are the PISTOL load (round-16 saves
+    // carry no weapons block); a weapons block overrides them below.
+    if (typeof data.ammo === 'number') this.ammoByWeapon.pistol = Math.max(0, data.ammo);
+    if (typeof data.mag === 'number') this.magByWeapon.pistol = Math.max(0, data.mag);
+    // Round 17: restore the arsenal — owned set first (fists + pistol
+    // can never be lost), then every weapon's mag/reserve, then the
+    // equipped weapon (only if it is actually owned).
+    if (Array.isArray(data.owned)) {
+      this.owned = new Set(data.owned.filter((k) => typeof k === 'string' && WEAPONS[k]));
+      this.owned.add('fists');
+      this.owned.add('pistol');
+    }
+    if (data.ammoByWeapon && typeof data.ammoByWeapon === 'object') {
+      for (const k of Object.keys(WEAPONS)) {
+        if (typeof data.ammoByWeapon[k] === 'number') this.ammoByWeapon[k] = Math.max(0, data.ammoByWeapon[k]);
+      }
+    }
+    if (data.magByWeapon && typeof data.magByWeapon === 'object') {
+      for (const k of Object.keys(WEAPONS)) {
+        if (typeof data.magByWeapon[k] === 'number') this.magByWeapon[k] = Math.max(0, data.magByWeapon[k]);
+      }
+    }
+    if (typeof data.weapon === 'string' && WEAPONS[data.weapon] && this.owned.has(data.weapon)) {
+      this.weapon = data.weapon;
+    }
+    this.ammo = this.ammoByWeapon[this.weapon] ?? 0;
+    this.mag = this.magByWeapon[this.weapon] ?? 0;
     this.isDown = this.health <= 0;
   }
 
   reset() {
     this.health = this.maxHealth;
     this.armour = 0;
+    // Round 17: a fresh profile owns fists + pistol only, with the
+    // pistol's starting load; the SMG / shotgun are earned again.
+    this.owned = new Set(['fists', 'pistol']);
+    this.ammoByWeapon = { fists: 0, pistol: 24, smg: 0, shotgun: 0 };
+    this.magByWeapon = { fists: 0, pistol: WEAPONS.pistol.magSize, smg: 0, shotgun: 0 };
     this.ammo = 24;
     this.mag = WEAPONS.pistol.magSize;
     this.weapon = 'fists';
@@ -562,8 +737,10 @@ export function createCombatSystem(options = {}) {
   return new CombatSystem(options);
 }
 
-// Round-13 final: re-touch — the weapon wheel reads the equipped
-// weapon name from combat.getWeapon() (main.js passes it to hud.update);
-// the two-weapon roster (fists, pistol) is unchanged, combat intact.
+// Round-17: re-touch — the weapon wheel reads the equipped weapon
+// name from combat.getWeapon() (main.js passes it to hud.update) and
+// the owned/ammo table from combat.getWeaponState(); the roster is
+// fists + pistol + SMG + shotgun, all real, and the rifle slot stays
+// LOCKED because no rifle code exists.
 
 export default CombatSystem;

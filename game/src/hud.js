@@ -821,25 +821,37 @@ export class HUD {
     P.policeAirOne.style.display = line ? '' : 'none';
   }
 
-  // 3. Weapon wheel — five slots with name + ammo. combat.js only
-  // defines TWO weapons (fists, pistol — WEAPONS), so slots 3–5 read
-  // LOCKED rather than inventing guns Rico does not own. The equipped
-  // weapon comes from state.weapon (combat.getWeapon(), passed by
-  // main.js since round 13 Lane 3 — the patch note is applied); it
-  // defaults to fists, the combat default. Ammo is state.mag / state.ammo.
+  // 3. Weapon wheel — five slots with name + ammo. Round 17: the
+  // slots read the REAL arsenal from state.weapons (combat.js
+  // getWeaponsState() — main.js passes it since round 17): an owned
+  // gun shows its live mag / reserve, an unowned slot reads LOCKED,
+  // fists read ∞. Before round 17 combat.js only defined two weapons
+  // (fists, pistol), so slots 3–5 read LOCKED rather than inventing
+  // guns Rico does not own — the fallback below keeps that shape
+  // when no weapons state is passed. The equipped weapon comes from
+  // state.weapons.equipped, else state.weapon (combat.getWeapon(),
+  // passed by main.js since round 13 Lane 3); it defaults to fists.
   renderWeaponWheel(state = {}) {
     const P = this._ensureRound13Panels();
     if (!P || !P.weapons) return;
-    const equipped = String(state.weapon || state.weaponName || state.currentWeapon || 'fists').toLowerCase();
+    const wstate = (state.weapons && typeof state.weapons === 'object') ? state.weapons : null;
+    const equipped = String(wstate?.equipped || state.weapon || state.weaponName || state.currentWeapon || 'fists').toLowerCase();
     const mag = state.mag ?? '–';
     const reserve = state.ammo ?? '–';
-    const slots = [
-      { key: 'fists', name: 'FISTS', ammo: '∞' },
-      { key: 'pistol', name: 'PISTOL', ammo: mag + ' / ' + reserve },
-      { key: 'smg', name: 'SMG', ammo: 'LOCKED' },
-      { key: 'shotgun', name: 'SHOTGUN', ammo: 'LOCKED' },
-      { key: 'rifle', name: 'RIFLE', ammo: 'LOCKED' },
-    ];
+    const slots = (wstate && Array.isArray(wstate.slots) && wstate.slots.length === 5)
+      ? wstate.slots.map((s) => ({
+          key: String(s.key || '').toLowerCase(),
+          name: String(s.name || s.key || '').toUpperCase(),
+          ammo: String(s.key || '').toLowerCase() === 'fists' ? '∞'
+            : (s.owned ? s.mag + ' / ' + s.reserve : 'LOCKED'),
+        }))
+      : [
+          { key: 'fists', name: 'FISTS', ammo: '∞' },
+          { key: 'pistol', name: 'PISTOL', ammo: mag + ' / ' + reserve },
+          { key: 'smg', name: 'SMG', ammo: 'LOCKED' },
+          { key: 'shotgun', name: 'SHOTGUN', ammo: 'LOCKED' },
+          { key: 'rifle', name: 'RIFLE', ammo: 'LOCKED' },
+        ];
     const sig = slots.map((s) => s.key + ':' + s.ammo).join('|') + '|' + equipped;
     if (!this._r13Changed('weapons', sig)) return;
     slots.forEach((s, i) => {
@@ -935,7 +947,11 @@ export class HUD {
       // driving variant (title, name, bar, big number, sub) so the
       // layout below it never moves.
       const weapon = String(state.weapon || state.weaponName || state.currentWeapon || 'fists');
-      const weaponName = weapon.toLowerCase() === 'pistol' ? 'PISTOL' : 'FISTS';
+      // Round 17: the weapon name is the equipped gun's, not just
+      // PISTOL / FISTS — the SMG (mission-1 reward) and the shotgun
+      // (mission-3 reward) read by their own names with live ammo.
+      const weaponName = weapon.toLowerCase() === 'fists' ? 'FISTS'
+        : weapon.toUpperCase();
       const mag = state.mag ?? '–';
       const reserve = state.ammo ?? '–';
       const health = Math.max(0, Math.round(state.health ?? 100));

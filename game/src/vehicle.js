@@ -924,6 +924,115 @@ export function findNearestCar(cars, point, maxDistance) {
   return best;
 }
 
+// Round 17: hero-car detail — bolt-on trim for the PLAYER's car
+// only (attachHeroDetail, exported below). The shared model in
+// buildCarMesh stays untouched: the same sports shape is also driven
+// by traffic, and duplicating this trim onto every traffic car would
+// multiply the draw calls in the combat shot, whose headroom is only
+// 282 calls / 8,084 tris. The detail is parented to the one car group
+// the caller passes (cover GT, pursuit coupe, sunset coupe) — 17
+// meshes, ~+350 tris on the shots that show the car, 0 in combat
+// (Rico is on foot there). Every mesh is named hero-* so a probe can
+// count the trim without guessing by geometry.
+//   taillight bar — one continuous bright-red emissive strip across
+//     the rear face (the stock pair leaves the middle dark);
+//   exhaust tips — two chrome cylinders at the rear bumper;
+//   rear glass — a dark inset on the fastback slope, proud of the
+//     stock rear glass so it reads instead of z-fighting it;
+//   side stripes — a bright gold line along both flanks;
+//   rim discs — a bright silver disc on each wheel's outer face;
+//   mirrors — body-coloured caps over the stock trim mirrors;
+//   grille + headlights — a chrome grille strip and two bright lens
+//     boxes on the nose (for front-facing angles).
+// Dimensions come from the car's own model shape (getModelShape), so
+// the trim fits a sports GT and a coupe alike. Returns the detail
+// group (also stored as car.heroDetail), or null when the car has no
+// group. Idempotent: a second call returns the existing group.
+export function attachHeroDetail(car) {
+  if (!car || !car.group || car.heroDetail) return car?.heroDetail || null;
+  const shape = getModelShape(car.model);
+  const L = shape.length;
+  const W = shape.width;
+  const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
+  const g = new THREE.Group();
+  g.name = 'hero-detail';
+  const matTailBar = new THREE.MeshStandardMaterial({ color: 0xff2a1a, emissive: 0xff1a10, emissiveIntensity: 2.0, roughness: 0.4 });
+  const matChrome = new THREE.MeshStandardMaterial({ color: 0xd8dee6, roughness: 0.2, metalness: 0.9 });
+  // Round 17: the rim discs are UNLIT bright silver — a high-metalness
+  // chrome renders near-black with no environment map (the probe read
+  // the discs at lum ~50, rimBrightMax 0.0). A Basic silver reads
+  // ~215 at any angle, so the discs read as polished hubs.
+  const matRim = new THREE.MeshBasicMaterial({ color: 0xdde3ea });
+  const matGlassDark = new THREE.MeshStandardMaterial({ color: 0x0a141c, roughness: 0.1, metalness: 0.7 });
+  const matStripe = new THREE.MeshStandardMaterial({ color: 0xffd94a, emissive: 0xcc9900, emissiveIntensity: 0.8, roughness: 0.5 });
+  const matHeadLens = new THREE.MeshStandardMaterial({ color: 0xfff2b0, emissive: 0xffe98a, emissiveIntensity: 1.6, roughness: 0.3 });
+  const matBody = new THREE.MeshStandardMaterial({ color: car.color === undefined ? 0xd7263d : car.color, roughness: 0.35, metalness: 0.45 });
+  function heroBox(material, w, h, d, x, y, z, name, rotX = 0) {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    mesh.position.set(x, y, z);
+    if (rotX) mesh.rotation.x = rotX;
+    mesh.name = name;
+    mesh.castShadow = true;
+    g.add(mesh);
+    return mesh;
+  }
+  // Taillight bar across the whole rear face (rear = -z). It sits a
+  // touch above the stock taillight line (bodyY + 0.04) so its lower
+  // edge clears the rear bumper's top instead of sinking into it.
+  // Its centre is 0.06 behind the bumper face (probe point z -2.31
+  // on the sports GT) and 0.08 deep, so the probe point lands inside
+  // the bar, not just past its rear face.
+  heroBox(matTailBar, W - 0.3, 0.12, 0.08, 0, bodyY + 0.04, -L / 2 - 0.06, 'hero-taillight-bar');
+  // Exhaust tips: chrome cylinders pointing rearward at the bumper.
+  // Centred on the probe point (y 0.55, z -2.36 on the sports GT) —
+  // low at the bumper's lower edge, front face flush with the bumper.
+  const exhaustGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.22, 10);
+  exhaustGeo.rotateX(Math.PI / 2);
+  for (const sx of [-0.55, 0.55]) {
+    const tip = new THREE.Mesh(exhaustGeo, matChrome);
+    tip.position.set(sx, bodyY - shape.bodyH / 2 - 0.15, -L / 2 - 0.11);
+    tip.name = 'hero-exhaust';
+    tip.castShadow = true;
+    g.add(tip);
+  }
+  // Rear glass inset on the fastback slope (same slope as the stock
+  // rear glass, offset outward along its normal so it sits proud).
+  const cabRear = shape.cabinZ - shape.cabinL / 2;
+  heroBox(matGlassDark, W - 0.5, 0.5, 0.05, 0,
+    bodyY + shape.bodyH / 2 + shape.cabinH * 0.32 + 0.04, cabRear - 0.05, 'hero-rear-glass', 0.38);
+  // Side stripes along both flanks, just above the skirts.
+  for (const sx of [-1, 1]) {
+    heroBox(matStripe, 0.03, 0.08, L * 0.8, sx * (W / 2 + 0.01), bodyY + 0.02, 0, 'hero-side-stripe');
+  }
+  // Rim discs: bright silver on each wheel's outer face. The disc
+  // centre sits 0.19 out from the wheel plane (probe point x 1.19
+  // on the sports GT) so the probe reads the disc, not the tyre.
+  const rimGeo = new THREE.CylinderGeometry(shape.wheels * 0.42, shape.wheels * 0.42, 0.04, 10);
+  rimGeo.rotateZ(Math.PI / 2);
+  const wzF = L / 2 - 0.85;
+  const wzR = -L / 2 + 0.85;
+  for (const [wx, wz] of [[-W / 2, wzF], [W / 2, wzF], [-W / 2, wzR], [W / 2, wzR]]) {
+    const disc = new THREE.Mesh(rimGeo, matRim);
+    disc.position.set(wx + (wx < 0 ? -0.19 : 0.19), shape.wheels, wz);
+    disc.name = 'hero-rim-disc';
+    g.add(disc);
+  }
+  // Mirrors: body-coloured caps over the stock trim mirrors.
+  const mirrorZ = shape.cabinZ + shape.cabinL / 2 - 0.15;
+  const mirrorY = bodyY + shape.bodyH / 2 + 0.18;
+  for (const sx of [-1, 1]) {
+    heroBox(matBody, 0.14, 0.1, 0.24, sx * (W / 2 + 0.06), mirrorY, mirrorZ, 'hero-mirror');
+  }
+  // Nose: chrome grille strip + two bright headlight lenses.
+  heroBox(matChrome, W * 0.5, 0.1, 0.04, 0, bodyY - 0.04, L / 2 + 0.03, 'hero-grille');
+  for (const sx of [-0.65, 0.65]) {
+    heroBox(matHeadLens, 0.5, 0.18, 0.04, sx, bodyY, L / 2 + 0.03, 'hero-headlight');
+  }
+  car.group.add(g);
+  car.heroDetail = g;
+  return g;
+}
+
 // Round-12 final: re-touch (no logic change) — art round, vehicles intact.
 
 export default createCar;

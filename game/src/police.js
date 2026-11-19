@@ -411,9 +411,11 @@ export class PoliceSystem {
   // every round-12 chase screenshot. One air unit at wanted >= 3: a
   // dark police-blue heli with spinning main + tail rotors, a
   // searchlight cone and a light pool on the ground below it, orbiting
-  // the player. ~10 draw calls / ~125 tris, only while wanted >= 3, so
-  // the profile scenario (wanted 0) pays nothing. Built with plain
-  // THREE primitives (no vehicle.js dependency — the heli is not a car).
+  // the player. Round 17 adds the heli detail class (mast, hub, side
+  // glass, struts, nav lights, stabilizer, antenna) — ~20 draw calls
+  // / ~200 tris, only while wanted >= 3, so the profile scenario
+  // (wanted 0) pays nothing. Built with plain THREE primitives (no
+  // vehicle.js dependency — the heli is not a car).
   // The scene is captured from a spawned police car's group parent;
   // without a scene (stand-in tests) the heli simply never spawns.
   _spawnHelicopter(player) {
@@ -458,6 +460,37 @@ export class PoliceSystem {
         skid.position.set(sx * 0.9, -0.85, 0.2);
         g.add(skid);
       }
+      // Round 17: the same detail class as the cover heli
+      // (buildShotHeli), in dark police livery — the live air unit is
+      // no longer a bare body + rotor. Mast + hub under the rotor,
+      // glass on both fuselage sides (the nose is already glass), a
+      // strut per skid, red tail / green nose nav lights, a horizontal
+      // stabilizer on the tail boom and a belly antenna. 10 meshes.
+      const addHeli = (mesh, name) => { mesh.name = name; g.add(mesh); return mesh; };
+      const mast = addHeli(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.3, 8), matBody), 'heli-mast');
+      mast.position.set(0, 0.8, 0);
+      const hub = addHeli(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.3), matBody), 'heli-hub');
+      hub.position.set(0, 0.95, 0);
+      for (const sx of [-1, 1]) {
+        const glass = addHeli(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.4, 1.0), matGlass), 'heli-side-glass');
+        glass.position.set(sx * 1.02, 0.1, 0.8);
+        const strut = addHeli(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), matWhite), 'heli-strut');
+        strut.position.set(sx * 0.9, -0.55, 1.0);
+      }
+      const navTail = addHeli(new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xff2a2a }),
+      ), 'heli-nav-tail');
+      navTail.position.set(0, 0.5, -5.3);
+      const navNose = addHeli(new THREE.Mesh(
+        new THREE.SphereGeometry(0.09, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0x2aff5a }),
+      ), 'heli-nav-nose');
+      navNose.position.set(0, 0.2, 2.6);
+      const stab = addHeli(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.06, 0.4), matBody), 'heli-stabilizer');
+      stab.position.set(0, 0.4, -4.2);
+      const antenna = addHeli(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 6), matBody), 'heli-antenna');
+      antenna.position.set(0, -0.75, 0.5);
       // Searchlight: a translucent cone from the belly to the ground
       // (depthTest stays ON — the round-9 harness forbids tall
       // depthTest-off meshes) + a warm pool of light on the ground

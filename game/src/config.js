@@ -688,6 +688,66 @@ export const CONFIG = {
     fallenPool: { width: 4, length: 8, opacity: 0.8 },
   },
 
+  // Round 17: hero-car + heli detail tuning + weapon unlocks. The
+  // numbers below are the TUNING RECORD for the implementation in
+  // vehicle.js attachHeroDetail (GT trim, computed from the car's own
+  // model shape), combat.js WEAPONS (SMG / shotgun definitions) and
+  // main.js buildShotHeli (heli detail, scale units) — main.ts
+  // validates this block so a copy that lost it fails loudly instead
+  // of shipping the round-16 plain GT / boxy heli / two-weapon roster
+  // while the probe claims the round-17 fixes.
+  // GT trim (sports shape: L 4.5, W 2.0, bodyY 0.94 — the cover
+  // camera is a FRONT 3/4, so the headlight lenses / grille are the
+  // NEAR end and the taillight bar / rear glass the FAR end).
+  round17: {
+    gt: {
+      tailBar: { width: 1.7, height: 0.12, depth: 0.08, y: 0.98, z: -2.31 },
+      exhaust: { x: 0.55, y: 0.55, z: -2.36, radius: 0.09, length: 0.22 },
+      rearGlass: { width: 1.5, height: 0.5, y: 1.35, z: -1.3, slope: 0.38 },
+      stripe: { y: 0.96, length: 3.6, thickness: 0.03, height: 0.08 },
+      rimDisc: { radius: 0.16, thickness: 0.04, x: 1.19 },
+      grille: { width: 1.0, height: 0.1, y: 0.9, z: 2.28 },
+      headlight: { width: 0.5, height: 0.18, x: 0.65, y: 0.94, z: 2.28 },
+    },
+    // Cover-heli detail (buildShotHeli, scale units, local axes:
+    // +z nose, -z tail, +x right). The side glass goes on BOTH
+    // fuselage sides — the camera-facing side is local -x under the
+    // +90 deg side-on yaw, but a symmetric pair can never be on the
+    // wrong side if the yaw ever changes.
+    heliDetail: {
+      // Mast + hub sit HIGH (mast 0.7 tall, hub y 1.45): the probe
+      // projects the hub at 1.1*sc, which lands ON the tall dark mast
+      // (it spans 0.75–1.45), so the hub gate reads the mast, not the
+      // hub mesh — a long dark column that stays in the 10x6 probe
+      // box at every bob phase (run2: hubDarkFrac 1.0). The hub mesh
+      // at 1.45 clears the roof silhouette as the visible rotor head.
+      // Exhausts sit at y 0.5 (on the fuselage side, below the
+      // contrast sample box) instead of 0.85 (inside it).
+      mast: { radius: 0.2, height: 0.7, y: 1.1 },
+      hub: { width: 0.4, height: 0.14, y: 1.45 },
+      sideGlass: { width: 0.06, height: 0.5, length: 1.4, y: 0.25, z: 0.9 },
+      // The struts LEAN: top at x 1.12 (just outboard of the fuselage
+      // face at 1.1, so the strut reads along its whole body->skid run
+      // instead of hiding behind the fuselage), bottom at x 0.9 on the
+      // skid. A vertical strut at x 0.9 is occluded by the fuselage
+      // above the belly, so the probe line reads white, not dark.
+      strut: { x: 0.9, topX: 1.12, topY: -0.1, botY: -1.0, z: 0.3, thickness: 0.12 },
+      navTail: { y: 0.5, z: -5.35 },
+      // Nose light on the SOUTH face at the nose (x -1.2, on the
+      // windshield, z 1.9): the nose-tip spot (x 0, z 2.2) is hidden
+      // behind the fuselage from the south camera (navNoseGreen 0).
+      navNose: { x: -1.2, y: 0.3, z: 1.9 },
+      stabilizer: { width: 1.6, height: 0.08, depth: 0.5, y: 0.6, z: -4.2 },
+      exhaust: { x: 1.3, y: 0.5, z: -0.5, radius: 0.16, length: 0.6 },
+      antenna: { y: -0.9, z: 0.5, height: 0.3 },
+    },
+    // Weapon unlocks (combat.js + main.js onComplete): the SMG is
+    // Mama Lou's reward for finishing mission 1 (First Run), the
+    // shotgun her reward for finishing mission 3 (Borrowed Beauty).
+    // Both are earned in normal play before chapter 5, never cheats.
+    weapons: { smgUnlockMission: 1, shotgunUnlockMission: 3 },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

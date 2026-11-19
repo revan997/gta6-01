@@ -3,14 +3,14 @@
 // saves stay v8.
 // Round 14: staged shots now call saveProgress (main.js) so the HUD
 // save line reads a real save; the format is unchanged (v8).
-// Saving to the browser's localStorage: the player's money, completed
-// missions, current mission, position and wanted level; load it back; and
-// report whether a save exists. No network, no other storage.
-// The saved shape is versioned so a future format change can migrate
-// instead of crashing on an old save.
-
+// Round 17: saves are v9 — the owned arsenal (owned set, equipped
+// weapon, every weapon's mag/reserve) rides in a `weapons` block, so a
+// reload restores the SMG / shotgun exactly as they were left instead
+// of silently re-locking them. v8 and older saves load with weapons
+// null and migrate to fists + pistol (the legacy pistol load still
+// lands in the pistol map), so every earlier save still works.
 export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 // Version 1, 2 and 3 saves are still readable: they migrate with the v2
 // fields (playTimeSeconds, timesPlayed), the v3 fields (totalEarned,
 // bestTimes, missionsCompletedCount, gamesPlayed), the v4 field
@@ -28,9 +28,17 @@ export const SAVE_VERSION = 8;
 // which fromSaveData leaves untouched (the live magazine keeps its
 // default full load); the save VERSION is what changed, not the city,
 // so every earlier save still loads exactly as before.
+// Round 17 (v9): the weapons block — see the header. v8 and older
+// saves carry no weapons block and migrate with weapons null, which
+// fromSaveData treats as fists + pistol only.
+export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+// Saving to the browser's localStorage: the player's money, completed
+// missions, current mission, position and wanted level; load it back; and
+// report whether a save exists. No network, no other storage.
+// The saved shape is versioned so a future format change can migrate
+// instead of crashing on an old save.
 // MissionsCompletedCount is recomputed from the completed list when it is
 // missing, so even a v1 save reports the right count on load.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 function safeParse(text) {
   try {
@@ -134,6 +142,22 @@ export class SaveSystem {
       chaseDistanceLevel: Math.max(0, Math.min(2, Math.round(
         state.chaseDistanceLevel ?? state.player?.chaseDistanceLevel ?? 1,
       ))),
+      // Round 17 (v9): the owned arsenal — owned set + equipped
+      // weapon + every weapon's mag/reserve. Read from the state, or
+      // from the live combat system; null when the caller passes
+      // neither (v8 and older callers simply never set it, and the
+      // load migrates with null — fists + pistol only).
+      weapons: (() => {
+        const w = isPlainObject(state.weapons) ? state.weapons
+          : (typeof state.combat?.toSaveData === 'function' ? state.combat.toSaveData() : null);
+        if (!w) return null;
+        return {
+          owned: Array.isArray(w.owned) ? [...w.owned] : null,
+          weapon: typeof w.weapon === 'string' ? w.weapon : null,
+          ammoByWeapon: isPlainObject(w.ammoByWeapon) ? { ...w.ammoByWeapon } : null,
+          magByWeapon: isPlainObject(w.magByWeapon) ? { ...w.magByWeapon } : null,
+        };
+      })(),
       // Round 11: build stamp — the save was written by the round-11
       // build (occlusion-safe camera, shadow-side fill light,
       // guaranteed bus/coupe/pickup fleet). A marker only: load builds
@@ -163,7 +187,7 @@ export class SaveSystem {
     }
     if (!raw) return null;
     const data = safeParse(raw);
-    // Accept v1–v7; older saves migrate with the new fields as 0 / [].
+    // Accept v1–v9; older saves migrate with the new fields as 0 / [].
     if (!isPlainObject(data) || !SUPPORTED_SAVE_VERSIONS.includes(data.version)) return null;
     return {
       version: data.version,
@@ -187,6 +211,17 @@ export class SaveSystem {
       // Round 9 (v8): rounds in the magazine — v7 and older saves have
       // none and migrate to null (the live magazine keeps its load).
       mag: typeof data.mag === 'number' ? Math.max(0, data.mag) : null,
+      // Round 17 (v9): the owned arsenal — v8 and older saves have
+      // none and migrate to null (fists + pistol only; the legacy
+      // pistol load still lands in the pistol map via ammo / mag).
+      weapons: isPlainObject(data.weapons) && Array.isArray(data.weapons.owned)
+        ? {
+            owned: [...data.weapons.owned],
+            weapon: typeof data.weapons.weapon === 'string' ? data.weapons.weapon : null,
+            ammoByWeapon: isPlainObject(data.weapons.ammoByWeapon) ? { ...data.weapons.ammoByWeapon } : null,
+            magByWeapon: isPlainObject(data.weapons.magByWeapon) ? { ...data.weapons.magByWeapon } : null,
+          }
+        : null,
       timeOfDay: typeof data.timeOfDay === 'number' ? data.timeOfDay : null,
       playTimeSeconds: typeof data.playTimeSeconds === 'number' ? Math.max(0, data.playTimeSeconds) : 0,
       timesPlayed: typeof data.timesPlayed === 'number' ? Math.max(0, data.timesPlayed) : 0,
@@ -231,6 +266,7 @@ export class SaveSystem {
   // Round-8 re-touch: debug helper — the save version and the persisted
   // chase level in one probe (null when there is no valid save).
   // Round 9: also reports the persisted magazine (v8; null on older saves).
+  // Round 17: also reports how many weapons the save owns (v9; null on older saves).
   getSaveInfo() {
     const data = this.load();
     if (!data) return null;
@@ -238,6 +274,7 @@ export class SaveSystem {
       version: data.version,
       chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
       mag: data.mag ?? null,
+      weaponsOwned: Array.isArray(data.weapons?.owned) ? data.weapons.owned.length : null,
       savedAt: data.savedAt || null,
     };
   }
@@ -297,6 +334,11 @@ export class SaveSystem {
         // carry no mag (undefined), and fromSaveData leaves the live
         // magazine untouched in that case.
         mag: saveData.mag ?? undefined,
+        // Round 17 (v9): restore the arsenal — v8 and older saves
+        // carry no weapons block (undefined), and fromSaveData treats
+        // that as fists + pistol only; a v9 block overrides the
+        // legacy ammo / mag per weapon.
+        ...(isPlainObject(saveData.weapons) ? saveData.weapons : {}),
       });
     }
     return true;
@@ -314,7 +356,9 @@ export function loadGame() { return defaultSystem.load(); }
 export function hasSaveGame() { return defaultSystem.hasSave(); }
 export function getSaveInfo() { return defaultSystem.getSaveInfo(); }
 export function clearSaveGame() { return defaultSystem.clearSave(); }
-// Round-13 final: re-touch — save format stays v8; the round-11 build
-// stamp in the payload is unchanged, save intact.
+// Round-17: re-touch — save format is v9; the round-11 build stamp
+// in the payload is unchanged, and the arsenal rides in a weapons
+// block that v8 and older saves simply do not carry (they migrate
+// with weapons null, fists + pistol only).
 
 export default SaveSystem;

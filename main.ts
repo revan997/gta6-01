@@ -229,6 +229,66 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 16: cover heli (scale ${r16.heli.scale}, side yaw ${r16.heli.sideYawDeg} deg, cone r ${r16.heli.coneRadius} @ ${r16.heli.coneOpacity}, disc r ${r16.heli.discRadius}) + sunset dialogue (left ${r16.sunsetDialogue.left}, width ${r16.sunsetDialogue.width}) + fallen pool (${r16.fallenPool.width}x${r16.fallenPool.length} m @ ${r16.fallenPool.opacity})`);
 }
+// Round-17: the hero-trim + arsenal + v9-save block must be present —
+// CONFIG.round17 (GT trim / heli detail tuning / weapon unlocks),
+// combat.js WEAPONS with real SMG + shotgun definitions (and NO
+// rifle definition — the wheel's slot 5 stays LOCKED on purpose),
+// vehicle.js attachHeroDetail (the hero-only trim), and save.js
+// SAVE_VERSION 9 (the weapons block). A copy that lost any of them
+// would ship the round-16 plain GT / boxy heli / two-weapon roster /
+// v8 save while the probe claims the round-17 fixes. Fail loudly here
+// instead of at the intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const r17 = cfg?.round17;
+  const r17Ok = r17?.gt
+    && typeof r17.gt.tailBar?.width === 'number' && r17.gt.tailBar.width >= 1.5
+    && typeof r17.gt.tailBar?.height === 'number'
+    && typeof r17.gt.exhaust?.x === 'number' && typeof r17.gt.rearGlass?.width === 'number'
+    && typeof r17.gt.stripe?.length === 'number' && typeof r17.gt.rimDisc?.radius === 'number'
+    && typeof r17.gt.grille?.width === 'number' && typeof r17.gt.headlight?.x === 'number'
+    && r17?.heliDetail
+    && typeof r17.heliDetail.mast?.radius === 'number' && typeof r17.heliDetail.hub?.width === 'number'
+    && typeof r17.heliDetail.sideGlass?.length === 'number' && typeof r17.heliDetail.strut?.x === 'number'
+    && typeof r17.heliDetail.navTail?.z === 'number' && typeof r17.heliDetail.navNose?.z === 'number'
+    && typeof r17.heliDetail.stabilizer?.width === 'number' && typeof r17.heliDetail.exhaust?.x === 'number'
+    && typeof r17.heliDetail.antenna?.height === 'number'
+    && r17?.weapons && r17.weapons.smgUnlockMission === 1 && r17.weapons.shotgunUnlockMission === 3;
+  if (!r17Ok) {
+    throw new Error('missing input: CONFIG.round17 hero-trim / heli-detail / weapon-unlock block not found in game/src/config.js');
+  }
+  const combatMod = await import(join(gameDir, 'src', 'combat.js'));
+  const weapons = combatMod?.WEAPONS;
+  const order = combatMod?.WEAPON_ORDER;
+  const weaponsOk = weapons?.smg && typeof weapons.smg.magSize === 'number' && weapons.smg.magSize === 30
+    && typeof weapons.smg.reserveStart === 'number' && weapons.smg.reserveStart === 60
+    && weapons?.shotgun && typeof weapons.shotgun.magSize === 'number' && weapons.shotgun.magSize === 6
+    && typeof weapons.shotgun.reserveStart === 'number' && weapons.shotgun.reserveStart === 12
+    && !weapons?.rifle
+    && Array.isArray(order) && order.length === 5 && order[2] === 'smg' && order[3] === 'shotgun' && order[4] === 'rifle'
+    && typeof combatMod?.CombatSystem === 'function'
+    && typeof combatMod.CombatSystem.prototype.getWeaponsState === 'function'
+    && typeof combatMod.CombatSystem.prototype.unlockWeapon === 'function';
+  if (!weaponsOk) {
+    throw new Error('missing input: combat.js SMG/shotgun WEAPONS definitions (or the getWeaponsState/unlockWeapon API) not found');
+  }
+  // vehicle.js imports three (a bare specifier), so it cannot be
+  // imported in plain node — validate its source text instead.
+  const vehicleSrc = readFileSync(join(gameDir, 'src', 'vehicle.js'), 'utf8');
+  const vehicleOk = vehicleSrc.includes('export function attachHeroDetail')
+    && vehicleSrc.includes("'hero-taillight-bar'") && vehicleSrc.includes("'hero-rim-disc'")
+    && vehicleSrc.includes("'hero-exhaust'") && vehicleSrc.includes("'hero-rear-glass'");
+  if (!vehicleOk) {
+    throw new Error('missing input: vehicle.js attachHeroDetail (hero-only GT trim) not found');
+  }
+  const saveMod = await import(join(gameDir, 'src', 'save.js'));
+  const saveOk = saveMod?.SAVE_VERSION === 9 && Array.isArray(saveMod?.SUPPORTED_SAVE_VERSIONS) && saveMod.SUPPORTED_SAVE_VERSIONS.includes(9);
+  if (!saveOk) {
+    throw new Error('missing input: save.js SAVE_VERSION 9 (weapons block) not found');
+  }
+  console.log(`round 17: hero GT trim (tail bar ${r17.gt.tailBar.width} m, ${r17.gt.rearGlass.width} m rear glass) + heli detail (mast r ${r17.heliDetail.mast.radius}, hub ${r17.heliDetail.hub.width} m) + SMG ${weapons.smg.magSize}/${weapons.smg.reserveStart} / shotgun ${weapons.shotgun.magSize}/${weapons.shotgun.reserveStart} (missions ${r17.weapons.smgUnlockMission}/${r17.weapons.shotgunUnlockMission}) + save v${saveMod.SAVE_VERSION}`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
@@ -328,3 +388,5 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
 // block), build entrypoint intact.
 // Round 16: re-touch — round-16 config gate (cover heli, sunset
 // dialogue, fallen pool), build entrypoint intact.
+// Round 17: revision — round-17 config gate (hero GT trim, heli
+// detail, SMG/shotgun definitions, save v9), build entrypoint intact.
