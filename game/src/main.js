@@ -1382,7 +1382,15 @@ function update(dt) {
         c.y + shotHeli.followOffset.y + Math.sin(shotHeli.t * 0.5) * 0.8,
         c.z + shotHeli.followOffset.z,
       );
-      shotHeli.group.rotation.y = Math.atan2(c.x - shotHeli.group.position.x, c.z - shotHeli.group.position.z);
+      // Round 16: SIDE-ON — the face-the-car yaw (round 15) showed the
+      // chopper head-on, so the tail boom hid behind the fuselage and
+      // the body read as a 21 px wide box. The +90 deg offset (from
+      // CONFIG.round16.heli.sideYawDeg) lays the long axis across the
+      // screen: nose one way, tail boom + fin the other, skids below,
+      // rotor disc above. A tracking heli crabs sideways like this in
+      // real life; the cone still hangs from the belly onto the road.
+      const sideYaw = ((CONFIG.round16?.heli?.sideYawDeg ?? 90) * Math.PI) / 180;
+      shotHeli.group.rotation.y = Math.atan2(c.x - shotHeli.group.position.x, c.z - shotHeli.group.position.z) + sideYaw;
     } else {
       const a = shotHeli.angle + Math.sin(shotHeli.t * 0.1) * 0.15;
       shotHeli.group.position.set(
@@ -2010,12 +2018,12 @@ function stagePursuitCars(x, zBehind1, zBehind2, heading) {
 // Fallback police helicopter for the cover shot. Lane 2 owns the real
 // scene-density pass (a police heli included) — if their heli is
 // already in the world or on the police system, this is skipped so the
-// sky never gets two choppers. Round 14: the heli is built BIG (size
-// multiplier `scale` applied to every dimension, group scale stays 1
-// so the searchlight cone + ground pool below stay in world units),
-// with a rotor blur disc, a searchlight cone from the belly and a warm
-// light pool on the road — the air unit must read as a helicopter, not
-// a dark blob. Cost at scale 2.4: 11 meshes, ~180 tris. Exposed as
+// sky never gets two choppers. Round 16: the heli is built SIDE-ON
+// (see the follow branch in the update loop) and BRIGHT — white
+// fuselage + tail boom, navy stripe/fin, dark outline rim, dark rotor
+// + disc — with a small dim searchlight cone + ground pool below: the
+// air unit must read as a helicopter at 768x480, not a dark blob or a
+// white triangle. Cost at scale 2.3: 14 meshes, ~216 tris. Exposed as
 // __solmar.round13.heli.
 function buildShotHeli(x, y, z, scale = 1) {
   // Skip only when a heli actually exists right now. (A bare
@@ -2025,53 +2033,108 @@ function buildShotHeli(x, y, z, scale = 1) {
   const lane2Heli = police.helicopter || (typeof police.getHelicopter === 'function' && police.getHelicopter());
   if (world.helicopter || lane2Heli) return null;
   const s = scale;
-  // Round 15: the body is a LIGHT police blue with a steady emissive
-  // lift, so the chopper reads against a bright orange sky instead of
-  // a dark block against a dark facade (round 14: 0x33517a, no
-  // emissive, read as a black blob). White rotor + brighter blur disc
-  // and searchlight cone, so rotor + cone read at 768x480. Same 11
-  // meshes, same ~180 tris — materials only, 0 new geometry.
-  const matBody = new THREE.MeshStandardMaterial({ color: 0x7ea6d8, roughness: 0.5, metalness: 0.3, emissive: 0x2e4a6b, emissiveIntensity: 0.8 });
-  const matWhite = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, roughness: 0.5 });
-  const matDark = new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.6 });
+  // Round 16: the chopper must read AS a helicopter at 768x480, not
+  // as a blue box. Round 15 measured the failure: face-on yaw (nose-
+  // tail 21 px on screen), light-blue body vs orange sky contrast
+  // 15.7, pale rotor disc invisible (0% dark pixels on the rotor
+  // line). Round 16: near-white fuselage (bright vs the orange sky)
+  // with a navy stripe + navy fin, a dark outline shell peeking out
+  // around the fuselage rim (thinner in depth than the body, taller +
+  // longer, so only the rim shows), dark unlit rotor bar + tail rotor
+  // + skids (silhouette parts read dark against a bright sky — the
+  // lit-standard-material greys washed out), and a dark translucent
+  // rotor disc. The side-on yaw lives in the update loop (follow
+  // branch); the geometry here is built for it: the long axis is
+  // local z, so a +90 deg yaw lays body + tail across the screen.
+  // Iteration 2 (run-1 review): the first side-on build read as a
+  // white BILLBOARD — the navy tail boom vanished against the dark
+  // left tower, so the fuselage did not connect to any tail. The boom
+  // is WHITE now (one connected fuselage+tail silhouette), the fin
+  // stays navy, and a dark windshield at the nose marks the front
+  // (the aircraft cue a flat white box lacks). 14 meshes, ~216 tris
+  // (was 11 / ~180).
+  const r16 = CONFIG.round16?.heli || {};
+  const coneRadius = typeof r16.coneRadius === 'number' ? r16.coneRadius : 3.0;
+  const coneOpacity = typeof r16.coneOpacity === 'number' ? r16.coneOpacity : 0.30;
+  const poolOpacity = typeof r16.poolOpacity === 'number' ? r16.poolOpacity : 0.45;
+  const poolScale = typeof r16.poolScale === 'number' ? r16.poolScale : 14;
+  const discRadius = typeof r16.discRadius === 'number' ? r16.discRadius : 4.25;
+  const matBody = new THREE.MeshStandardMaterial({ color: 0xe2ecf5, roughness: 0.4, metalness: 0.15, emissive: 0x8fa8c8, emissiveIntensity: 0.25 });
+  const matNavy = new THREE.MeshStandardMaterial({ color: 0x16305e, roughness: 0.5, metalness: 0.2, emissive: 0x0a1830, emissiveIntensity: 0.4 });
+  const matGlass = new THREE.MeshBasicMaterial({ color: 0x0d1620 });
+  const matDark = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
   const g = new THREE.Group();
+  // Dark outline shell: bigger than the body in height + length,
+  // thinner in depth, so it only peeks out as a dark rim around the
+  // fuselage silhouette from the side view.
+  const outline = new THREE.Mesh(new THREE.BoxGeometry(1.9 * s, 1.9 * s, 4.7 * s), new THREE.MeshBasicMaterial({ color: 0x14181f }));
   const body = new THREE.Mesh(new THREE.BoxGeometry(2.2 * s, 1.5 * s, 4.2 * s), matBody);
-  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.24 * s, 0.4 * s, 4.24 * s), matWhite);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.24 * s, 0.4 * s, 4.24 * s), matNavy);
   stripe.position.y = -0.2 * s;
+  // Round 16 iteration 2: the tail boom is WHITE (was navy) — a dark
+  // boom vanished against the dark left tower and the fuselage read
+  // as a disconnected billboard. White boom + navy fin = one connected
+  // aircraft silhouette, boom bright against the tower, fin dark
+  // against the sky.
   const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5 * s, 0.5 * s, 3.4 * s), matBody);
   tail.position.set(0, 0.3 * s, -3.6 * s);
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15 * s, 1.4 * s, 0.9 * s), matBody);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.15 * s, 1.4 * s, 0.9 * s), matNavy);
   fin.position.set(0, 0.9 * s, -5.0 * s);
+  // Round 16 iteration 2: the windshield — a dark glass box at the
+  // nose's upper front, slightly proud of the fuselage. The flat white
+  // box's missing cue: without it the nose is indistinguishable from
+  // a sign; with it the front reads as a cockpit.
+  // Iteration 3: the windshield is a THROUGH-body band (wider than
+  // the fuselage, so it reads on the camera-facing side face) at the
+  // nose — the first version sat on the nose's end face, nearly
+  // edge-on to the side camera and invisible. A dark window band
+  // across the nose's upper side is the cockpit cue from any side.
+  const windshield = new THREE.Mesh(new THREE.BoxGeometry(2.3 * s, 0.7 * s, 1.2 * s), matGlass);
+  windshield.position.set(0, 0.3 * s, 1.5 * s);
   const rotor = new THREE.Mesh(new THREE.BoxGeometry(8.5 * s, 0.08, 0.55 * s), matDark);
   rotor.position.y = 1.0 * s;
+  // Round 16: the cross bar — a second rotor bar at 90 deg (a child of
+  // the spinning rotor, so it spins with it). Face-on, the first bar
+  // reads; side-on it foreshortens to nothing, and the cross bar is
+  // the one that spans the screen.
+  const rotorCross = new THREE.Mesh(new THREE.BoxGeometry(0.55 * s, 0.08, 8.5 * s), matDark);
+  rotor.add(rotorCross);
   const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.8 * s, 0.3), matDark);
   tailRotor.position.set(0.35 * s, 0.4 * s, -4.9 * s);
-  const skidL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 3.4 * s), matDark);
+  // Round 16: skids scaled in cross-section too (was a fixed 0.12 m —
+  // ~1 px at any scale). At 0.16*s they read as landing skids.
+  const skidL = new THREE.Mesh(new THREE.BoxGeometry(0.16 * s, 0.16 * s, 3.4 * s), matDark);
   skidL.position.set(-0.9 * s, -1.0 * s, 0);
   const skidR = skidL.clone();
   skidR.position.x = 0.9 * s;
   // Rotor blur disc: the spinning bar reads as a rotor, not a plank.
+  // Round 16: DARK translucent (was pale 0xfff2cc @ 0.50 — it measured
+  // 0% dark pixels on the rotor line, invisible against the bright
+  // sky). A dark disc over a bright sky reads as rotor blur.
   const rotorBlur = new THREE.Mesh(
-    new THREE.CircleGeometry(4.25 * s, 20),
-    new THREE.MeshBasicMaterial({ color: 0xfff2cc, transparent: true, opacity: 0.50, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.CircleGeometry(discRadius * s, 20),
+    new THREE.MeshBasicMaterial({ color: 0x2e2e2e, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }),
   );
   rotorBlur.rotation.x = -Math.PI / 2;
   rotorBlur.position.y = 1.0 * s;
   // Searchlight: a translucent cone from the belly to the ground (apex
   // at the belly, base on the road) + a warm pool of light below it.
   // The heli hovers ~y above the road, so the cone is y long.
+  // Round 16: SMALLER + DIMMER (radius / opacity from CONFIG.round16)
+  // — in round 15 the big pale cone dominated the frame and read as a
+  // white triangle; the helicopter is the subject now, not the beam.
   const cone = new THREE.Mesh(
-    new THREE.ConeGeometry(3.0, y, 10, 1, true),
-    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.30, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.ConeGeometry(coneRadius, y, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: coneOpacity, side: THREE.DoubleSide, depthWrite: false }),
   );
   cone.position.y = -y / 2;
   const pool = new THREE.Sprite(new THREE.SpriteMaterial({
     map: makeGlowTexture('rgba(255,255,255,0.95)'), transparent: true, depthWrite: false,
-    opacity: 0.45, color: 0xffe9a8,
+    opacity: poolOpacity, color: 0xffe9a8,
   }));
-  pool.scale.set(14, 14, 1);
+  pool.scale.set(poolScale, poolScale, 1);
   pool.position.y = -y + 0.6;
-  g.add(body, stripe, tail, fin, rotor, tailRotor, skidL, skidR, rotorBlur, cone, pool);
+  g.add(outline, body, stripe, tail, fin, windshield, rotor, tailRotor, skidL, skidR, rotorBlur, cone, pool);
   g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
   g.position.set(x, y, z);
   scene.add(g);
@@ -2095,7 +2158,7 @@ function setShotDialogue(speaker, role, line) {
 // 1-cover-chase.jpg — Round 15: the sheet's opening beat (chapter 1),
 // FOUR stars (was five — the arc now rises 4 → 4 → 5 → 5), the GT big
 // in the frame, the two interceptors FLANKING the player, the heli BIG
-// (scale 2.0) and TRACKING the car over the OPEN SKY above the road
+// (scale 2.3, SIDE-ON) and TRACKING the car over the OPEN SKY above the road
 // corridor (followOffset x 0, y 14.5 — round 14 parked it over the dark
 // right-hand tower where it read as a black block), skid marks +
 // exhaust smoke on the GT, peds TRACKED relative to the car (8 / 14 m
@@ -2134,14 +2197,15 @@ function stageCoverChase() {
   // a second heli at altitude 38 whose dark body hung at the top edge
   // of the frame (the ambiguous dark blob in 13B). The fallback heli
   // below is the only chopper in the sky.
-  // Round 15: the heli sits over the OPEN SKY above the road corridor
+  // Round 16: the heli sits over the OPEN SKY above the road corridor
   // (followOffset x 0 — dead-centre over the road, not x +10 over the
   // dark right-hand tower where round 14 read as a black block — and
   // y 15.5, clear of the dialogue box below and the clock above).
-  // The bright body (buildShotHeli) + the orange sky behind it make
-  // the chopper countable without reading any text. Scale stays 2.0
-  // (rotor span ~345 px); the update loop holds it there.
-  shotHeli = buildShotHeli(45, 22, -97, 2.0);
+  // The bright SIDE-ON body (buildShotHeli, CONFIG.round16) + the
+  // orange sky behind it make the chopper countable without reading
+  // any text. Scale 2.3 (rotor span ~330 px); the update loop holds
+  // it there.
+  shotHeli = buildShotHeli(45, 22, -97, CONFIG.round16?.heli?.scale ?? 2.0);
   if (shotHeli) shotHeli.followOffset = { x: 0, y: 15.5, z: -30 };
   // Skid marks + exhaust smoke, as children of the GT group (they
   // travel with the car): 2 dark planes at the rear wheels, 2 grey
@@ -2255,6 +2319,31 @@ function stageCombat() {
   // pulled in to (10 m, +3): at (11, +3.5) it sat at screen x ~171,
   // isolated behind the radio panel instead of in the left cluster.
   placeOfficersArc([7, 7.5, 9, 8.5, 10, 9], [-2.5, -4.5, 0, 2, 3, -1], 2, [0, -0.3, 0, 0.3, -0.25, 0.2]);
+  // Round 16: a warm light pool on the asphalt under the FALLEN
+  // officer (officer 2, prone in the gap between the clusters).
+  // Baseline: his dark uniform on dark asphalt measured body-vs-ring
+  // contrast 20.2 — he was barely distinguishable from the road. The
+  // pool (the same radial glow texture as the heli's ground pool, flat
+  // on the road, 1 draw call, 2 tris — staging-only; combat is the
+  // tightest budget shot) lifts the asphalt around him so the dark
+  // prone silhouette reads. The fallen officer is staged (never
+  // moves), so the static pool stays under him through the capture.
+  {
+    const fallen = police.getOfficers().find((o) => o.fallen);
+    const poolCfg = CONFIG.round16?.fallenPool || {};
+    if (fallen) {
+      const poolW = typeof poolCfg.width === 'number' ? poolCfg.width : 4;
+      const poolL = typeof poolCfg.length === 'number' ? poolCfg.length : 8;
+      const poolOpacity = typeof poolCfg.opacity === 'number' ? poolCfg.opacity : 0.65;
+      const fallenPool = new THREE.Mesh(
+        new THREE.PlaneGeometry(poolW, poolL),
+        new THREE.MeshBasicMaterial({ map: makeGlowTexture('rgba(255,255,255,0.95)'), transparent: true, depthWrite: false, opacity: poolOpacity, color: 0xffe9a8 }),
+      );
+      fallenPool.rotation.x = -Math.PI / 2;
+      fallenPool.position.set(fallen.position.x, 0.06, fallen.position.z);
+      scene.add(fallenPool);
+    }
+  }
   // Rico AIMING: the aim pose (player.js setAim) + a pistol in his
   // right hand. The pistol is a small dark box at the end of the
   // right forearm — visible at capture size, 2 draw calls, ~12 tris.
@@ -2471,6 +2560,26 @@ function stageSunset() {
     { roadX: 200, side: -1, z: -148, heading: -Math.PI / 2 },
   ]);
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
+  // Round 16: the dialogue box moves RIGHT + NARROWS for this shot
+  // only — the centred 560 px box covered 7,458 px^2 of the MARINA
+  // neon sign (its left half: the sign spans screen x 290-473, the
+  // box x 360-920). The shifted box (left 485, width 420, from
+  // CONFIG.round16.sunsetDialogue) clears the sign's right edge (473)
+  // and the police panel's left edge (980); the PIER 12 sign and the
+  // bridge deck sit below the box's bottom. Text content is untouched
+  // (the convergence + dialogue gates read textContent, not layout),
+  // and hud.renderDialogue never resets the box position, so the
+  // override holds through the capture. Other shots keep the centred
+  // box — this override runs only in stageSunset.
+  {
+    const dlgCfg = CONFIG.round16?.sunsetDialogue || {};
+    const dlg = document.getElementById('hud-dialogue');
+    if (dlg && typeof dlgCfg.left === 'number' && typeof dlgCfg.width === 'number') {
+      dlg.style.left = `${dlgCfg.left}px`;
+      dlg.style.transform = 'none';
+      dlg.style.width = `${dlgCfg.width}px`;
+    }
+  }
   setShotDialogue('MAMA LOU', 'Boss', 'Golden hour over the Bay, Rico. Make it count.');
   saveProgress(missions.getCurrentMissionNumber());
 }

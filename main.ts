@@ -198,6 +198,37 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 13: road ${r13.road.base}, haze ${r13.haze.fogNear}-${r13.haze.fogFar} m, palms instanced (chunk ${r13.palms.chunkSize}), peds ${r13.traffic.maxPedestrians}, heli at ${r13.police.heliMinWanted}+ stars, cloud segs ${r13.savings.cloudSegments.join('x')}`);
 }
+// Round-16: the cover-heli + staging block must be present — the
+// side-on heli (CONFIG.round16.heli: scale, side yaw, small dim cone),
+// the sunset dialogue shift (left/width that clears the MARINA sign)
+// and the fallen-officer light pool (size/opacity). A copy that lost
+// it would ship the round-15 face-on blue-box heli, the centred
+// dialogue box over MARINA, and the invisible fallen officer, while
+// the probe claims the round-16 fixes. Fail loudly here instead of at
+// the intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const r16 = cfg?.round16;
+  const r16Ok = r16?.heli
+    && typeof r16.heli.scale === 'number' && r16.heli.scale >= 2 && r16.heli.scale <= 3
+    && typeof r16.heli.sideYawDeg === 'number' && r16.heli.sideYawDeg === 90
+    && typeof r16.heli.coneRadius === 'number' && r16.heli.coneRadius > 0 && r16.heli.coneRadius < 3
+    && typeof r16.heli.coneOpacity === 'number' && r16.heli.coneOpacity > 0 && r16.heli.coneOpacity < 0.3
+    && typeof r16.heli.poolOpacity === 'number' && typeof r16.heli.poolScale === 'number'
+    && typeof r16.heli.discRadius === 'number' && r16.heli.discRadius > 0 && r16.heli.discRadius <= 4.25
+    && r16?.sunsetDialogue
+    && typeof r16.sunsetDialogue.left === 'number' && r16.sunsetDialogue.left >= 473
+    && typeof r16.sunsetDialogue.width === 'number' && r16.sunsetDialogue.width <= 480
+    && r16?.fallenPool
+    && typeof r16.fallenPool.width === 'number' && r16.fallenPool.width > 0
+    && typeof r16.fallenPool.length === 'number' && r16.fallenPool.length > r16.fallenPool.width
+    && typeof r16.fallenPool.opacity === 'number' && r16.fallenPool.opacity > 0 && r16.fallenPool.opacity <= 1;
+  if (!r16Ok) {
+    throw new Error('missing input: CONFIG.round16 cover-heli / sunset-dialogue / fallen-pool block not found in game/src/config.js');
+  }
+  console.log(`round 16: cover heli (scale ${r16.heli.scale}, side yaw ${r16.heli.sideYawDeg} deg, cone r ${r16.heli.coneRadius} @ ${r16.heli.coneOpacity}, disc r ${r16.heli.discRadius}) + sunset dialogue (left ${r16.sunsetDialogue.left}, width ${r16.sunsetDialogue.width}) + fallen pool (${r16.fallenPool.width}x${r16.fallenPool.length} m @ ${r16.fallenPool.opacity})`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
@@ -295,3 +326,5 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
 }
 // Round-13 final: re-touch — round-13 config gate (density + budget
 // block), build entrypoint intact.
+// Round 16: re-touch — round-16 config gate (cover heli, sunset
+// dialogue, fallen pool), build entrypoint intact.

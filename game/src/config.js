@@ -642,6 +642,52 @@ export const CONFIG = {
     },
   },
 
+  // Round 16: the cover helicopter, readable as a helicopter. The
+  // round-15 chopper was a face-on blue box (nose-tail 21 px on
+  // screen, body-vs-sky contrast 15.7, rotor disc invisible) — it
+  // read as a building with a white triangle under it. Round 16 flies
+  // it SIDE-ON (yawOffset 90 deg, long axis across the screen, so the
+  // tail boom + fin + skids all read), paints the fuselage near-white
+  // with a navy stripe/tail (luminance contrast vs the orange sky),
+  // darkens the rotor (dark bar + dark translucent disc — the pale
+  // disc was invisible against the bright sky), and shrinks/dims the
+  // searchlight cone so it stops dominating the frame. Scale 2.3
+  // (rotor span ~330 px). Read by buildShotHeli + stageCoverChase
+  // (main.js) with fallbacks to the round-15 values; validated by
+  // main.ts so a copy that lost this block fails loudly.
+  round16: {
+    heli: {
+      scale: 2.3,
+      sideYawDeg: 90, // +90 deg from the face-the-car yaw: side profile
+      coneRadius: 1.8, // was 3.0 — the cone read as a white triangle
+      coneOpacity: 0.16, // was 0.30 — dimmed, no longer the subject
+      poolOpacity: 0.30, // was 0.45
+      poolScale: 10, // was 14
+      discRadius: 4.25, // rotor blur disc radius, in scale units.
+      // Iteration 3: back to the full 4.25 (was 3.8 in iteration 2) —
+      // the smaller disc no longer covered the rotor-bar span, so the
+      // disc-dark fraction fell to 0.20. The full disc's far edge
+      // pokes above the frame top, but that reads as an overhead rotor
+      // cropped by the frame, and the bars + disc together are the
+      // rotor cue; a smaller disc reads as neither.
+    },
+    // Round 16: the sunset dialogue box moves right + narrows so the
+    // MARINA neon sign reads in full — the centred 560 px box covered
+    // 7,458 px^2 of the sign (its left half). The shifted box (left
+    // 485, width 420) clears the sign's right edge (473) and the
+    // police panel's left edge (980). Read by stageSunset (main.js).
+    sunsetDialogue: { left: 485, width: 420 },
+    // Round 16: the fallen officer's light pool — a warm glow plane on
+    // the asphalt under the prone officer (combat staging only, 1 draw
+    // call, 2 tris). Baseline: the dark body on dark asphalt measured
+    // body-vs-ring contrast 15.2 (tight sampling); the pool must lift
+    // the ring well above the body. The plane is ELONGATED along the
+    // road (length 8 m along z, width 4 m) because the camera
+    // foreshortens depth on screen — a 5 m square pool's top/bottom
+    // fell outside the ring's screen extent. Read by stageCombat.
+    fallenPool: { width: 4, length: 8, opacity: 0.8 },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,
