@@ -222,6 +222,32 @@ const hasImage = readdirSync(screenshotsDir, { withFileTypes: true }).some(
 if (!hasImage) {
   throw new Error(`missing input: no image file (.jpg/.jpeg/.png/.webp/.gif) found in ${screenshotsDir}`);
 }
+// Round-14 (re-touch): the screenshots must be submission-ready —
+// 3-4 image files, each within the 256 KiB intake cap, and every .jpg
+// must start with the JPEG magic bytes (FF D8 FF). A renamed PNG or a
+// truncated capture would fail at the dossier builder with a cryptic
+// error; fail loudly here naming the file instead.
+{
+  const shots = readdirSync(screenshotsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && imageExts.has(extname(entry.name).toLowerCase()));
+  if (shots.length < 3 || shots.length > 4) {
+    throw new Error(`missing input: expected 3-4 screenshot files in ${screenshotsDir}, found ${shots.length}`);
+  }
+  for (const shot of shots) {
+    const shotPath = join(screenshotsDir, shot.name);
+    const size = statSync(shotPath).size;
+    if (size > 262144) {
+      throw new Error(`missing input: screenshot ${shot.name} is ${size} bytes (cap 262144)`);
+    }
+    if (extname(shot.name).toLowerCase() === '.jpg' || extname(shot.name).toLowerCase() === '.jpeg') {
+      const head = readFileSync(shotPath).subarray(0, 3);
+      if (head.length < 3 || head[0] !== 0xff || head[1] !== 0xd8 || head[2] !== 0xff) {
+        throw new Error(`missing input: screenshot ${shot.name} is not a valid JPEG file (bad magic bytes)`);
+      }
+    }
+  }
+  console.log(`screenshots: ${shots.length} files, all within 256 KiB and valid`);
+}
 
 // Fresh output: drop any previous game/, screenshots/ or dossier.json so
 // a second run cannot leave stale files behind.
