@@ -193,7 +193,10 @@ function buildCarMesh(model, color) {
     const sink = opts.sink ?? 0.08;
     const deckTopY = opts.deckY + 0.035;
     const crownBaseY = deckTopY - sink;
-    dome(new THREE.SphereGeometry(1, 14, 6, 0, Math.PI * 2, 0, Math.PI / 2),
+    // Round-13 (final agent, budget): the roof dome is a half-sphere
+    // (14, 6) -> (10, 4) — the crown's silhouette is set by its scale,
+    // not its segment count; ~88 tris saved per car, counts unchanged.
+    dome(new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI / 2),
       matBody, opts.crownSX, opts.lift + sink, opts.crownSZ, 0, crownBaseY, opts.crownZ);
     // Body-coloured deck the crown rises through — its top is flush
     // with the old flat roofline and it overhangs the glass sides by a
@@ -566,14 +569,17 @@ function buildCarMesh(model, color) {
   box(matPlate, 0.5, 0.14, 0.04, 0, bodyY - 0.02, -L / 2 - 0.14);
 
   // Wheels. The bus gets a middle axle as well (6 wheels).
+  // Round-13 (final agent, budget): tyre 14 -> 10, hub 10 -> 8, cap
+  // 8 -> 6 segments — a 0.4 m wheel reads identically at these counts;
+  // ~16 + ~8 + ~8 tris saved per wheel, hub-cap counts unchanged.
   const wheels = [];
-  const wheelGeo = new THREE.CylinderGeometry(shape.wheels, shape.wheels, 0.28, 14);
+  const wheelGeo = new THREE.CylinderGeometry(shape.wheels, shape.wheels, 0.28, 10);
   wheelGeo.rotateZ(Math.PI / 2);
-  const hubGeo = new THREE.CylinderGeometry(shape.wheels * 0.55, shape.wheels * 0.55, 0.3, 10);
+  const hubGeo = new THREE.CylinderGeometry(shape.wheels * 0.55, shape.wheels * 0.55, 0.3, 8);
   hubGeo.rotateZ(Math.PI / 2);
   // Round-6: one dark centre cap per wheel — a short cylinder slightly
   // proud of the hub on both faces, so the wheel reads tyre + rim + cap.
-  const capGeo = new THREE.CylinderGeometry(shape.wheels * 0.28, shape.wheels * 0.28, 0.34, 8);
+  const capGeo = new THREE.CylinderGeometry(shape.wheels * 0.28, shape.wheels * 0.28, 0.34, 6);
   capGeo.rotateZ(Math.PI / 2);
   const wy = shape.wheels;
   const wzF = L / 2 - 0.85;
@@ -603,8 +609,11 @@ function buildCarMesh(model, color) {
   // untouched — the wheel tops still overlap the body bottom by `stance`.
   // Net mesh delta vs round 6: +4 liners per 4-wheel car (+6 for the
   // 6-wheel bus); the domes replace the old arch boxes 1-for-1.
-  const fenderGeo = new THREE.SphereGeometry(shape.wheels * 1.28, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  const linerGeo = new THREE.CylinderGeometry(shape.wheels * 1.18, shape.wheels * 1.18, 0.06, 14);
+  // Round-13 (final agent, budget): fender half-dome (12, 6) -> (8, 4)
+  // and arch liner 14 -> 10 segments — the flare is 0.5 m across and
+  // mostly hidden behind the tyre; fender / arch-liner COUNTS unchanged.
+  const fenderGeo = new THREE.SphereGeometry(shape.wheels * 1.28, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+  const linerGeo = new THREE.CylinderGeometry(shape.wheels * 1.18, shape.wheels * 1.18, 0.06, 10);
   linerGeo.rotateZ(Math.PI / 2);
   for (const [wx, wz] of wheelSpots) {
     const side = wx < 0 ? -1 : 1;

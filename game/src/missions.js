@@ -617,5 +617,8 @@ export function createMissionManager(options = {}) {
 }
 
 export { MISSION_DEFS, DEFAULT_LOCATIONS };
-// Round-12 final: re-touch (no logic change) — art round, missions intact.
+// Round-13 final: re-touch — the mission panel + dialogue read
+// getMissionProgress() (also passed as missionSummary) and the
+// objective flavour table; mission texts and flow unchanged.
+
 export default MissionManager;

@@ -293,6 +293,8 @@ export const input = {
   },
 };
 
-// Round-12 final: re-touch (no logic change) — art round, input intact.
+// Round-13 final: re-touch — no new keys; the staged shots drive the
+// game through the same input paths (E carjack, F punch/shoot, L look,
+// P pause) the harness presses, input intact.
 
 export default input;

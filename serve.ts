@@ -76,9 +76,14 @@ const server = createServer((request, response) => {
   // Round 10: round 10 — Spire distance falloff, stronger sky gradient,
   // facade variation (lit windows, tints, cornices, parapets).
   // Round 12: round 12 — hero humanoid, facade cladding, Bridge suspension span (art round).
+  // Round 13: round 13 — HUD density (mission / police response /
+  // weapon wheel / dialogue / radio / vehicle / respect / district),
+  // scene density (palms instanced, heli, police halos, peds 24),
+  // golden-hour art (blue-grey asphalt, haze, roof tones) + the four
+  // staged gameplay screenshots (?shot=cover-chase|combat|pursuit|sunset).
   if (pathname === '/__health') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: true, round: 12, root }));
+    response.end(JSON.stringify({ ok: true, round: 13, root }));
     return;
   }
   // Round-6: a version endpoint — the build identity (game, round,
@@ -94,11 +99,13 @@ const server = createServer((request, response) => {
   // Round-11 final (re-touch): version 11 ships the persistent guaranteed fleet, the setCamYaw harness probe, and the lookFrac framing fix — all verified by two all-green consolidated runs before this serve.
   // light, guaranteed bus/coupe/pickup fleet, save still v8.
   // Round 12: round 12, hero humanoid, facade cladding, Bridge suspension span.
+  // Round 13: round 13, HUD density, scene density (instanced palms,
+  // heli, police halos), golden-hour art, four staged gameplay shots.
   if (pathname === '/__version') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({
-      game: 'solmar-bay', competition: 'gta6-01', round: 12,
-      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks', 'spire-falloff', 'stronger-sky-gradient', 'facade-variation', 'round11-fill-light', 'round11-guaranteed-fleet', 'round11-occlusion-camera', 'round12-hero-humanoid', 'round12-facade-cladding', 'round12-bridge-span'],
+      game: 'solmar-bay', competition: 'gta6-01', round: 13,
+      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks', 'spire-falloff', 'stronger-sky-gradient', 'facade-variation', 'round11-fill-light', 'round11-guaranteed-fleet', 'round11-occlusion-camera', 'round12-hero-humanoid', 'round12-facade-cladding', 'round12-bridge-span', 'round13-hud-density', 'round13-scene-density', 'round13-staged-shots', 'round13-budget-savings'],
       root,
     }));
     return;
@@ -157,4 +164,5 @@ server.on('error', (err) => {
   }
 });
 listen();
-// Round-12 final: re-touch (no logic change) — art round, server intact.
+// Round-13 final: re-touch — version 13 (HUD + scene density, staged
+// gameplay shots, budget savings), server intact.

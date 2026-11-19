@@ -34,6 +34,153 @@ function formatClock(timeOfDay) {
   return hh + ':' + mm;
 }
 
+// ---- Round 13: dense-HUD data tables ---------------------------------
+// Every table below is copied from the game's own source data (missions.js
+// MISSION_DEFS / objectiveFlavour, police.js, config.js) — the HUD never
+// invents a mission, a line of dialogue or a vehicle name. Anything the
+// game does NOT have a system for is marked as such in the comment on
+// the function that shows it (radio: no audio station exists; respect:
+// no respect system exists, so it is derived from jobs done; vehicle
+// condition: cars carry no damage field, so it reads GOOD until one is
+// added; SPOTLIGHT / FIRING: inferred from the wanted level, there is
+// no spotlight mesh or police-fire system).
+
+// Mission chain (missions.js MISSION_DEFS): name, reward, objective texts.
+const ROUND13_MISSIONS = {
+  1: { name: 'First Run', reward: 500, objectives: ['Pick up the package at the Marina', 'Deliver the package to North Beach'] },
+  2: { name: 'Hot Wheels', reward: 800, objectives: ['Lose the police, then reach the Hideout'] },
+  3: { name: 'Borrowed Beauty', reward: 1200, objectives: ['Steal the pearl-white Palm Coupe at the Car Lot', 'Deliver the Palm Coupe to the Docks'] },
+  4: { name: 'Long Tail', reward: 1500, objectives: ['Tail the courier from the Palms Hotel — do not get spotted', 'The courier stopped at the Lookout — report at the Stepped Quarter plaza'] },
+  5: { name: 'Harbour Heist', reward: 5000, objectives: ['Grab the cash at the Harbour', 'Escape the four-star chase — reach the Hideout'] },
+};
+
+// Dialogue (missions.js objectiveFlavour, verbatim lines, speaker + role
+// added from the mission briefings: Mama Lou the fixer, Dante the
+// wheelman, Priya the getaway driver). Key is "missionNumber:objectiveIndex".
+const ROUND13_DIALOGUE = {
+  '1:0': { speaker: 'Dante', role: 'Wheelman', line: "Marina, berth 12. Grab it and don't look back." },
+  '1:1': { speaker: 'Dante', role: 'Wheelman', line: "North Beach, by the palms. Quick feet, Rico — and press L on the way, the Spire fills the frame now." },
+  '2:0': { speaker: 'Dante', role: 'Wheelman', line: 'Break line of sight — alleys, not avenues. Then vanish.' },
+  '3:0': { speaker: 'Priya', role: 'Getaway Driver', line: 'Pearl white, Car Lot, back row. Quiet hands, Rico.' },
+  '3:1': { speaker: 'Priya', role: 'Getaway Driver', line: 'Docks, pier 3. And Rico — not one scratch.' },
+  '4:0': { speaker: 'Mama Lou', role: 'Fixer', line: 'Stay back. Stay patient. A shadow does not hurry.' },
+  '4:1': { speaker: 'Mama Lou', role: 'Fixer', line: 'The Lookout, was it? Good. Meet Priya at the Stepped Quarter plaza and tell her everything.' },
+  '5:0': { speaker: 'Dante', role: 'Wheelman', line: 'Vault boat lands at midnight. Grab and run — do NOT stop to count.' },
+  '5:1': { speaker: 'Priya', role: 'Getaway Driver', line: 'Whole city on you now. Hideout. GO.' },
+};
+const ROUND13_DIALOGUE_COLORS = { 'Mama Lou': '#8e44ad', Dante: '#1a8a7a', Priya: '#b8860b', Rico: '#c23a2a' };
+// Fallback line when no mission is running (an original Rico line, not a
+// mission quote — it is only ever shown in free roam).
+const ROUND13_FREE_ROAM_DIALOGUE = { speaker: 'Rico Vega', role: 'Driver', line: "Solmar Bay. My city, my rules — let's make it pay." };
+
+// Radio: NO audio station exists in the game (audio.js has no station /
+// song), so this is a HUD-only station board — deterministic by in-game
+// hour, so the station and song change as the day passes instead of
+// sitting frozen. A real audio station would replace radioForHour().
+const ROUND13_RADIO = [
+  { from: 5, to: 11, station: 'PALMS HITS 104.1', songs: ['Sunrise Over the Bay — The Palms', 'Boardwalk Lights — Costa Azul', 'Top Down — Marina Nights'] },
+  { from: 11, to: 17, station: 'SOLMAR FM 98.7', songs: ['Golden Hour — The Palms', 'Sunset Drive — Marina Lights', 'Bay Breeze — Costa Azul'] },
+  { from: 17, to: 21, station: 'RADIO VICE 101.3', songs: ['Neon Streets — The Vipers', 'Hot Pursuit — Siren Song', 'Midnight Run — Chrome Hearts'] },
+  { from: 21, to: 29, station: 'BAY SOUL 88.5', songs: ["Mama Lou's Blues — The Hideout Band", 'Low Tide — Solmar Strings', 'Last Call at the Docks — The Vipers'] },
+];
+function radioForHour(hour) {
+  const h = ((Math.floor(hour ?? 12) % 24) + 24) % 24;
+  const band = ROUND13_RADIO.find((b) => h >= b.from && h < (b.to > 24 ? 24 : b.to))
+    || ROUND13_RADIO.find((b) => b.from >= 21) || ROUND13_RADIO[0];
+  const song = band.songs[h % band.songs.length];
+  return { station: band.station, song };
+}
+
+// Respect ranks: NO respect system exists in the game, so the rank is
+// derived from jobs done — 20 points per completed mission plus the
+// current mission's objective progress (missions.getSummary() would
+// feed completedCount directly; see the patch note in the report).
+const ROUND13_RESPECT_RANKS = ['STREET ROOKIE', 'WHEELMAN', 'MADE DRIVER', 'BAY RUNNER', 'KING OF SOLMAR'];
+function respectFor(state) {
+  if (state.respect && typeof state.respect === 'object') {
+    const r = state.respect;
+    return {
+      rank: String(r.rank || ROUND13_RESPECT_RANKS[0]),
+      points: clamp(Math.round(r.points ?? 0), 0, 100),
+      progress: clamp(r.progress ?? 0, 0, 1),
+      completed: typeof r.completed === 'number' ? r.completed : null,
+      next: r.next ? String(r.next) : null,
+    };
+  }
+  const prog = state.missionProgress || state.missionSummary || null;
+  const completed = Array.isArray(state.completedMissions) ? state.completedMissions.length
+    : (typeof prog?.completedCount === 'number' ? prog.completedCount
+      : (typeof prog?.number === 'number' ? Math.max(0, prog.number - 1) : 0));
+  const active = (typeof prog?.objectiveIndex === 'number' && typeof prog?.objectiveCount === 'number' && prog.objectiveCount > 0)
+    ? (prog.objectiveIndex / prog.objectiveCount) * 20 : 0;
+  const points = clamp(Math.round(completed * 20 + active), 0, 100);
+  const band = Math.min(ROUND13_RESPECT_RANKS.length - 1, Math.floor(points / 20));
+  return {
+    rank: ROUND13_RESPECT_RANKS[band],
+    points,
+    progress: points >= 100 ? 1 : (points % 20) / 20,
+    completed,
+    next: points >= 100 ? null : ROUND13_RESPECT_RANKS[band + 1],
+  };
+}
+
+// Vehicle display names: shape keys (vehicle.js VEHICLE_MODELS) mapped
+// to the names the city uses; display names already on the car
+// ('Palm Coupe', 'City Bus', 'Solmar Police Interceptor' — main.js
+// keeps them on car.model) pass through untouched.
+const ROUND13_VEHICLE_NAMES = {
+  coupe: 'Palm Coupe', sedan: 'Solmar Sedan', pickup: 'Dune Pickup',
+  van: 'Bay Van', sports: 'Solmar GT', taxi: 'City Taxi', bus: 'City Bus',
+};
+function vehicleDisplayName(model) {
+  if (!model) return 'ON FOOT';
+  const m = String(model);
+  if (/police/i.test(m)) return 'Solmar Police Interceptor';
+  return ROUND13_VEHICLE_NAMES[m.toLowerCase()] || m;
+}
+
+// Police callsigns: cars carry no individual name in police.js (only
+// the model 'Solmar Police Interceptor'), officers are all literally
+// named 'Officer' — so the HUD assigns deterministic callsigns by
+// field order. Same unit, same name, every frame.
+const ROUND13_OFFICER_NAMES = ['Reyes', 'Costa', 'Marsh', 'Delgado', 'Ortiz', 'Santos', 'Rivas', 'Luna'];
+function policeUnitName(unit, carIndex, officerIndex) {
+  if (unit?.kind === 'police-officer') return 'OFC. ' + ROUND13_OFFICER_NAMES[officerIndex % ROUND13_OFFICER_NAMES.length];
+  return 'UNIT ' + (carIndex + 1) + ' · INTERCEPTOR';
+}
+// Status from real state only, except the two flagged inferences:
+// the interceptor (first car at 3+ stars, police.js _interceptCar) is
+// the ROADBLOCK car; a car within ramming range of a driven car is
+// RAMMING; FIRING (5 stars) and SPOTLIGHT (4 stars, second car) are
+// inferred from the wanted level — there is no police-fire or
+// spotlight system in the game to read them from.
+function policeUnitStatus(unit, carIndex, wanted, dist, playerInCar, isIntercept) {
+  if (isIntercept) return 'ROADBLOCK';
+  if (unit?.kind === 'police-officer') return 'PURSUIT';
+  if (playerInCar && dist !== null && dist <= 8) return 'RAMMING';
+  if (wanted >= 5) return 'FIRING';
+  if (wanted >= 4 && carIndex === 1) return 'SPOTLIGHT';
+  return 'PURSUIT';
+}
+const ROUND13_STATUS_COLORS = {
+  PURSUIT: '#ffffff', RAMMING: '#ff8a5e', ROADBLOCK: '#ff6b5e',
+  SPOTLIGHT: '#9fe8ff', FIRING: '#ff3b30',
+};
+
+function formatParTime(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds)) return '--:--';
+  const s = Math.max(0, Math.round(seconds));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function gearForSpeed(speedMs, topSpeedMs) {
+  const v = speedMs ?? 0;
+  if (v < -0.5) return 'R';
+  if (Math.abs(v) < 0.5) return 'N';
+  const top = topSpeedMs && topSpeedMs > 0 ? topSpeedMs : 38;
+  return String(Math.min(5, 1 + Math.floor((Math.abs(v) / top) * 5)));
+}
+
 export class HUD {
   // elements: optional map of DOM ids / elements. Defaults are the ids the
   // integration lane wires in index.html; missing elements are skipped.
@@ -71,6 +218,8 @@ export class HUD {
     this._hitMarkerEl = null; // round 4: centre hit-marker X, built lazily
     this._chaseToastEl = null; // round-8 re-touch: chase-distance toast, built lazily
     this._chaseToastTimer = null;
+    this._r13 = null; // round 13: the eight dense-HUD panels, built lazily
+    this._r13Sig = {}; // round 13: last rendered signature per panel (skip no-change frames)
   }
 
   _el(name) {
@@ -272,6 +421,417 @@ export class HUD {
     this._chaseToastTimer = setTimeout(() => { el.style.display = 'none'; }, Math.max(0.5, seconds) * 1000);
   }
 
+  // ---- Round 13: dense HUD (8 panels, all visible in normal gameplay) ----
+  // One lazy builder per panel, following the existing pattern (the HUD
+  // builds its own elements so index.html needs no new slots). Every
+  // render* method is a pure read of `state` — the panels show live
+  // game state, never staged screenshot-only values — and each skips
+  // its DOM writes when its signature is unchanged, so the per-frame
+  // update() stays cheap. Panels are positioned to avoid every legacy
+  // element (objective top-left, stars/health/money top-right,
+  // clock/district top-centre, minimap bottom-left, speed/ammo
+  // bottom-right, message centre) at the 1280px screenshot size.
+
+  _r13Panel(id, cssText) {
+    if (!this.doc || typeof this.doc.createElement !== 'function') return null;
+    const root = (this.doc.getElementById && this.doc.getElementById('hud')) || this.doc.body;
+    if (!root || typeof root.appendChild !== 'function') return null;
+    const el = this.doc.createElement('div');
+    el.id = id;
+    el.style.cssText = 'position:absolute;pointer-events:none;z-index:5;'
+      + 'background:rgba(8,16,22,0.78);border:1px solid rgba(255,255,255,0.35);'
+      + 'border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,0.45);' + cssText;
+    root.appendChild(el);
+    return el;
+  }
+
+  _r13Text(parent, cssText, text) {
+    const el = this.doc.createElement('div');
+    el.style.cssText = cssText + 'text-shadow:0 2px 5px rgba(0,0,0,0.9);';
+    el.textContent = text;
+    parent.appendChild(el);
+    return el;
+  }
+
+  _r13Changed(key, sig) {
+    if (this._r13Sig[key] === sig) return false;
+    this._r13Sig[key] = sig;
+    return true;
+  }
+
+  _ensureRound13Panels() {
+    if (this._r13 || !this.doc || typeof this.doc.createElement !== 'function') return this._r13;
+    const P = {};
+    const titleCss = 'font-size:11px;font-weight:bold;letter-spacing:2px;color:#ffd94a;';
+    const bodyCss = 'font-size:14px;line-height:1.4;color:#ffffff;';
+    // --- Mission panel: left column, under the legacy objective. ---
+    P.mission = this._r13Panel('hud-mission-panel', 'left:16px;top:118px;width:330px;padding:8px 10px;');
+    if (P.mission) {
+      P.missionTitle = this._r13Text(P.mission, titleCss, 'MISSION');
+      P.missionJob = this._r13Text(P.mission, 'font-size:17px;font-weight:bold;color:#ffffff;', '');
+      P.missionObjective = this._r13Text(P.mission, bodyCss, '');
+      P.missionStage = this._r13Text(P.mission, 'font-size:13px;font-weight:bold;color:#9fe8ff;', '');
+      P.missionNext = this._r13Text(P.mission, 'font-size:13px;color:#ffe98a;', '');
+      P.missionTimer = this._r13Text(P.mission, 'font-size:13px;font-weight:bold;color:#ffd94a;', '');
+    }
+    // --- Radio: left column, under the mission panel. ---
+    P.radio = this._r13Panel('hud-radio', 'left:16px;top:292px;width:330px;padding:8px 10px;');
+    if (P.radio) {
+      P.radioTitle = this._r13Text(P.radio, titleCss, 'RADIO');
+      P.radioStation = this._r13Text(P.radio, 'font-size:16px;font-weight:bold;color:#ffffff;', '');
+      P.radioSong = this._r13Text(P.radio, 'font-size:13px;color:#ffe98a;', '');
+    }
+    // --- Respect: left column, under the radio. ---
+    P.respect = this._r13Panel('hud-respect', 'left:16px;top:356px;width:330px;padding:8px 10px;');
+    if (P.respect) {
+      P.respectTitle = this._r13Text(P.respect, titleCss, 'RESPECT');
+      P.respectRank = this._r13Text(P.respect, 'font-size:16px;font-weight:bold;color:#ffffff;', '');
+      const track = this.doc.createElement('div');
+      track.style.cssText = 'height:7px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.45);margin-top:4px;';
+      const fill = this.doc.createElement('div');
+      fill.style.cssText = 'height:100%;width:0%;background:#ffd94a;';
+      track.appendChild(fill);
+      P.respect.appendChild(track);
+      P.respectFill = fill;
+      P.respectSub = this._r13Text(P.respect, 'font-size:12px;color:#ffffff;', '');
+    }
+    // --- Police response: right column, under the money readout. ---
+    P.police = this._r13Panel('hud-police-response', 'right:16px;top:148px;width:284px;padding:8px 10px;');
+    if (P.police) {
+      P.policeTitle = this._r13Text(P.police, titleCss, 'POLICE RESPONSE');
+      P.policeHeader = this._r13Text(P.police, 'font-size:14px;font-weight:bold;color:#ffffff;', '');
+      P.policeRows = [];
+      for (let i = 0; i < 4; i++) {
+        // 13px (not 14px): a full "UNIT 1 · INTERCEPTOR · 123m · ROADBLOCK"
+        // row must fit on ONE line inside the 284px panel at 1280px.
+        const row = this._r13Text(P.police, 'font-size:13px;font-weight:bold;line-height:1.7;color:#ffffff;white-space:nowrap;', '');
+        P.policeRows.push(row);
+      }
+      P.policeFooter = this._r13Text(P.police, 'font-size:12px;color:#ffe98a;', '');
+    }
+    // --- Vehicle panel: right column, under the police panel. ---
+    P.vehicle = this._r13Panel('hud-vehicle-panel', 'right:16px;top:356px;width:284px;padding:8px 10px;');
+    if (P.vehicle) {
+      P.vehicleTitle = this._r13Text(P.vehicle, titleCss, 'VEHICLE');
+      P.vehicleName = this._r13Text(P.vehicle, 'font-size:16px;font-weight:bold;color:#ffffff;', '');
+      const condTrack = this.doc.createElement('div');
+      condTrack.style.cssText = 'height:7px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.45);margin-top:4px;';
+      const condFill = this.doc.createElement('div');
+      condFill.style.cssText = 'height:100%;width:100%;background:#7be495;';
+      condTrack.appendChild(condFill);
+      P.vehicle.appendChild(condTrack);
+      P.vehicleCondFill = condFill;
+      P.vehicleCond = this._r13Text(P.vehicle, 'font-size:12px;color:#ffffff;', '');
+      const speedRow = this.doc.createElement('div');
+      speedRow.style.cssText = 'display:flex;align-items:baseline;justify-content:space-between;margin-top:2px;';
+      P.vehicle.appendChild(speedRow);
+      P.vehicleSpeed = this._r13Text(speedRow, 'font-size:40px;font-weight:bold;color:#ffffff;', '');
+      P.vehicleGear = this._r13Text(speedRow, 'font-size:26px;font-weight:bold;color:#ffd94a;', '');
+      P.vehicleSub = this._r13Text(P.vehicle, 'font-size:12px;color:#ffffff;', '');
+    }
+    // --- Dialogue: top centre, under the clock/district line. ---
+    P.dialogue = this._r13Panel('hud-dialogue', 'left:50%;top:112px;transform:translateX(-50%);width:560px;padding:8px 10px;display:flex;gap:10px;align-items:flex-start;');
+    if (P.dialogue) {
+      const portrait = this.doc.createElement('div');
+      portrait.style.cssText = 'flex:0 0 48px;width:48px;height:48px;border-radius:50%;border:2px solid rgba(255,255,255,0.6);'
+        + 'display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:bold;color:#ffffff;'
+        + 'text-shadow:0 2px 5px rgba(0,0,0,0.9);background:#8e44ad;';
+      portrait.textContent = 'M';
+      P.dialogue.appendChild(portrait);
+      P.dialoguePortrait = portrait;
+      const textWrap = this.doc.createElement('div');
+      textWrap.style.cssText = 'flex:1;min-width:0;';
+      P.dialogue.appendChild(textWrap);
+      P.dialogueName = this._r13Text(textWrap, 'font-size:14px;font-weight:bold;color:#ffffff;', '');
+      P.dialogueLine = this._r13Text(textWrap, 'font-size:14px;line-height:1.4;color:#ffe98a;', '');
+    }
+    // --- District: bottom-left, right of the minimap. ---
+    P.district = this._r13Panel('hud-district-panel', 'left:206px;bottom:14px;width:236px;padding:8px 10px;');
+    if (P.district) {
+      P.districtTitle = this._r13Text(P.district, titleCss, 'LOCATION');
+      P.districtName = this._r13Text(P.district, 'font-size:20px;font-weight:bold;color:#ffffff;', '');
+      P.districtSub = this._r13Text(P.district, 'font-size:12px;color:#ffe98a;', '');
+    }
+    // --- Weapon wheel: bottom centre, five slots. ---
+    P.weapons = this._r13Panel('hud-weapon-wheel', 'left:50%;bottom:14px;transform:translateX(-50%);width:380px;padding:8px 10px;');
+    if (P.weapons) {
+      P.weaponTitle = this._r13Text(P.weapons, titleCss, 'WEAPONS');
+      const row = this.doc.createElement('div');
+      row.style.cssText = 'display:flex;gap:6px;margin-top:4px;';
+      P.weapons.appendChild(row);
+      P.weaponSlots = [];
+      for (let i = 0; i < 5; i++) {
+        const slot = this.doc.createElement('div');
+        slot.style.cssText = 'flex:1;border:1px solid rgba(255,255,255,0.35);border-radius:4px;'
+          + 'background:rgba(0,0,0,0.45);text-align:center;padding:5px 2px;';
+        row.appendChild(slot);
+        const name = this._r13Text(slot, 'font-size:12px;font-weight:bold;color:#ffffff;', '');
+        const ammo = this._r13Text(slot, 'font-size:12px;color:#ffe98a;', '');
+        P.weaponSlots.push({ slot, name, ammo });
+      }
+    }
+    this._r13 = P;
+    return P;
+  }
+
+  // 1. Mission panel — job/chapter name, objective, stage x/y, NEXT
+  // objective, par timer. Reads state.missionName (which already
+  // carries " · PAR m:ss"), state.objective ("1/2 · text"),
+  // state.missionProgress { number, objectiveIndex, objectiveCount }
+  // and state.parRemaining (seconds). The NEXT objective comes from
+  // the ROUND13_MISSIONS table (missions.js texts) because main.js
+  // does not pass the next objective — see the patch note.
+  renderMissionPanel(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.mission) return;
+    const prog = state.missionProgress || state.missionSummary || null;
+    const number = typeof prog?.number === 'number' ? prog.number : null;
+    const def = number !== null ? ROUND13_MISSIONS[number] : null;
+    const jobName = (typeof state.missionName === 'string' && state.missionName.split(' · ')[0])
+      || def?.name || 'FREE ROAM';
+    const objective = typeof state.objective === 'string'
+      ? state.objective.replace(/^\d+\/\d+\s*·\s*/, '') : 'Explore Solmar Bay.';
+    const idx = typeof prog?.objectiveIndex === 'number' ? prog.objectiveIndex : null;
+    const count = typeof prog?.objectiveCount === 'number' ? prog.objectiveCount : (def ? def.objectives.length : null);
+    const stage = (idx !== null && count) ? ('STAGE ' + (idx + 1) + ' / ' + count) : 'STAGE — / —';
+    const next = def && idx !== null
+      ? (idx + 1 < def.objectives.length ? def.objectives[idx + 1] : 'FINISH — collect the payout')
+      : 'Find Mama Lou — start JOB 1 · First Run';
+    const timer = (typeof state.parRemaining === 'number')
+      ? ('PAR ' + formatParTime(state.parRemaining) + '  ·  REWARD $' + (def ? def.reward : 0))
+      : (def ? ('REWARD $' + def.reward) : 'NO ACTIVE JOB');
+    const sig = [jobName, objective, stage, next, timer, def ? def.number : ''].join('|');
+    if (!this._r13Changed('mission', sig)) return;
+    P.missionTitle.textContent = def ? ('MISSION — CHAPTER ' + number) : 'MISSION — FREE ROAM';
+    P.missionJob.textContent = jobName;
+    P.missionObjective.textContent = objective;
+    P.missionStage.textContent = stage;
+    P.missionNext.textContent = 'NEXT ▸ ' + next;
+    P.missionTimer.textContent = timer;
+  }
+
+  // 2. Police response — every fielded unit by callsign, distance and
+  // status. Reads state.police (police.getUnits(): cars + officers),
+  // state.wanted and state.player.position for distances; the
+  // interceptor is the first car at 3+ stars (police.js _interceptCar).
+  renderPoliceResponse(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.police) return;
+    const wanted = clamp(Math.round(state.wanted ?? 0), 0, 5);
+    const units = Array.isArray(state.police) ? state.police : [];
+    const playerPos = state.player?.position || null;
+    const playerInCar = Boolean(state.player?.currentCar || state.player?.vehicle || state.player?.car
+      || state.player?.inCar);
+    const distOf = (u) => {
+      if (!playerPos || !u?.position) return null;
+      return Math.hypot((u.position.x || 0) - (playerPos.x || 0), (u.position.z || 0) - (playerPos.z || 0));
+    };
+    const sight = 25 + wanted * 12; // police.js _playerSeen sight range
+    const inSight = units.some((u) => { const d = distOf(u); return d !== null && d < sight; });
+    const header = wanted > 0
+      ? ('★'.repeat(wanted) + ' WANTED — ' + (inSight ? 'IN SIGHT' : 'SEARCHING…'))
+      : 'NO HEAT — AREA CLEAR';
+    let carIndex = -1;
+    let officerIndex = -1;
+    const rows = units.slice(0, 4).map((u) => {
+      const isOfficer = u?.kind === 'police-officer';
+      if (isOfficer) officerIndex += 1; else carIndex += 1;
+      const d = distOf(u);
+      const isIntercept = !isOfficer && wanted >= 3 && carIndex === 0;
+      const status = policeUnitStatus(u, carIndex, wanted, d, playerInCar, isIntercept);
+      return {
+        text: policeUnitName(u, carIndex, officerIndex) + '  ·  '
+          + (d === null ? '—' : Math.round(d) + 'm') + '  ·  ' + status,
+        color: ROUND13_STATUS_COLORS[status] || '#ffffff',
+      };
+    });
+    const footer = units.length > 4 ? ('+' + (units.length - 4) + ' MORE UNITS ON THE STREET')
+      : (units.length === 0 ? 'Solmar Bay PD standing by — stay clean, Rico.' : '');
+    const sig = [header, ...rows.map((r) => r.text), footer].join('|');
+    if (!this._r13Changed('police', sig)) return;
+    P.policeHeader.textContent = header;
+    P.policeHeader.style.color = wanted > 0 ? (inSight ? '#ff6b5e' : '#ffd94a') : '#7be495';
+    P.policeRows.forEach((row, i) => {
+      if (rows[i]) { row.textContent = rows[i].text; row.style.color = rows[i].color; row.style.display = ''; }
+      else { row.textContent = ''; row.style.display = 'none'; }
+    });
+    P.policeFooter.textContent = footer;
+  }
+
+  // 3. Weapon wheel — five slots with name + ammo. combat.js only
+  // defines TWO weapons (fists, pistol — WEAPONS), so slots 3–5 read
+  // LOCKED rather than inventing guns Rico does not own. The equipped
+  // weapon comes from state.weapon (combat.getWeapon(), passed by
+  // main.js since round 13 Lane 3 — the patch note is applied); it
+  // defaults to fists, the combat default. Ammo is state.mag / state.ammo.
+  renderWeaponWheel(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.weapons) return;
+    const equipped = String(state.weapon || state.weaponName || state.currentWeapon || 'fists').toLowerCase();
+    const mag = state.mag ?? '–';
+    const reserve = state.ammo ?? '–';
+    const slots = [
+      { key: 'fists', name: 'FISTS', ammo: '∞' },
+      { key: 'pistol', name: 'PISTOL', ammo: mag + ' / ' + reserve },
+      { key: 'smg', name: 'SMG', ammo: 'LOCKED' },
+      { key: 'shotgun', name: 'SHOTGUN', ammo: 'LOCKED' },
+      { key: 'rifle', name: 'RIFLE', ammo: 'LOCKED' },
+    ];
+    const sig = slots.map((s) => s.key + ':' + s.ammo).join('|') + '|' + equipped;
+    if (!this._r13Changed('weapons', sig)) return;
+    slots.forEach((s, i) => {
+      const refs = P.weaponSlots[i];
+      if (!refs) return;
+      refs.name.textContent = (i + 1) + ' · ' + s.name;
+      refs.ammo.textContent = s.ammo;
+      const selected = s.key === equipped;
+      refs.slot.style.border = selected ? '2px solid #ffd94a' : '1px solid rgba(255,255,255,0.35)';
+      refs.slot.style.background = selected ? 'rgba(255,217,74,0.22)' : 'rgba(0,0,0,0.45)';
+      refs.ammo.style.color = s.ammo === 'LOCKED' ? '#9aa0a6' : '#ffe98a';
+    });
+  }
+
+  // 4. Dialogue — portrait (initial), speaker name + role, story line.
+  // Reads state.dialogue { speaker, role, line } when passed; otherwise
+  // the mission/objective table (missions.js objectiveFlavour verbatim);
+  // a live state.message starting with "Name: '...'" is parsed as a
+  // third source; free roam falls back to the standing Rico line.
+  renderDialogue(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.dialogue) return;
+    let entry = null;
+    if (state.dialogue && typeof state.dialogue === 'object') {
+      entry = { speaker: state.dialogue.speaker || 'Rico Vega', role: state.dialogue.role || '', line: state.dialogue.line || '' };
+    }
+    if (!entry) {
+      const prog = state.missionProgress || state.missionSummary || null;
+      const key = (typeof prog?.number === 'number' && typeof prog?.objectiveIndex === 'number')
+        ? (prog.number + ':' + prog.objectiveIndex) : null;
+      if (key && ROUND13_DIALOGUE[key]) entry = ROUND13_DIALOGUE[key];
+    }
+    if (!entry && typeof state.message === 'string') {
+      const m = state.message.match(/^([A-Za-z][A-Za-z ]+):\s*'([^']+)'/);
+      if (m) entry = { speaker: m[1], role: '', line: m[2] };
+    }
+    if (!entry || !entry.line) entry = ROUND13_FREE_ROAM_DIALOGUE;
+    const sig = [entry.speaker, entry.role, entry.line].join('|');
+    if (!this._r13Changed('dialogue', sig)) return;
+    P.dialoguePortrait.textContent = (entry.speaker || 'R').trim().charAt(0).toUpperCase();
+    P.dialoguePortrait.style.background = ROUND13_DIALOGUE_COLORS[entry.speaker] || '#555f6a';
+    P.dialogueName.textContent = entry.speaker.toUpperCase() + (entry.role ? '  ·  ' + entry.role.toUpperCase() : '');
+    P.dialogueLine.textContent = '“' + entry.line + '”';
+  }
+
+  // 5. Radio — station + song, deterministic by in-game hour (see the
+  // ROUND13_RADIO note: no audio station exists, this is a HUD board).
+  // Reads state.timeOfDay (hours 0–24); state.radio { station, song }
+  // wins when passed.
+  renderRadio(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.radio) return;
+    const live = (state.radio && typeof state.radio === 'object') ? state.radio : radioForHour(state.timeOfDay);
+    const station = String(live.station || 'SOLMAR FM 98.7');
+    const song = String(live.song || '—');
+    const sig = station + '|' + song;
+    if (!this._r13Changed('radio', sig)) return;
+    P.radioStation.textContent = '♪ ' + station;
+    P.radioSong.textContent = 'NOW PLAYING — ' + song;
+  }
+
+  // 6. Vehicle panel — vehicle name, condition, big speed + gear.
+  // Reads the driven car from state.vehicle / state.car /
+  // state.player.currentCar (player.js; main.js passes the whole
+  // player object, so currentCar is the car object). Condition has
+  // NO source in the game (cars carry no damage field) and reads
+  // GOOD / 100% unless state.vehicleCondition / car.condition /
+  // car.health is passed — the Lane 1 patch note's condition item is
+  // NOT applied: inventing damage the game never tracks would lie to
+  // the player, and the panel already reads GOOD honestly.
+  renderVehiclePanel(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.vehicle) return;
+    const rawCar = state.vehicle || state.car || state.player?.currentCar || state.player?.vehicle || state.player?.car || null;
+    const car = (rawCar && typeof rawCar === 'object') ? rawCar : null;
+    const model = car?.model || (typeof rawCar === 'string' ? rawCar : null);
+    const name = vehicleDisplayName(model);
+    const speedMs = car ? Math.abs(car.speed || 0) : Math.abs(state.speed ?? 0);
+    const kmh = Math.round(speedMs * 3.6);
+    const topKmh = car?.topSpeed ? Math.round(car.topSpeed * 3.6) : null;
+    const gear = car ? gearForSpeed(car.speed || 0, car.topSpeed || 38) : '—';
+    const condRaw = state.vehicleCondition ?? state.carCondition ?? car?.condition ?? car?.health ?? null;
+    const condPct = (typeof condRaw === 'number' && Number.isFinite(condRaw)) ? clamp(Math.round(condRaw), 0, 100) : 100;
+    const condLabel = condPct >= 80 ? 'GOOD' : condPct >= 50 ? 'WORN' : condPct >= 25 ? 'DAMAGED' : 'WRECKED';
+    const colorText = car?.color === undefined ? ''
+      : (typeof car.color === 'number'
+        ? '  ·  #' + car.color.toString(16).padStart(6, '0').toUpperCase()
+        : '  ·  ' + String(car.color).toUpperCase());
+    const sub = car
+      ? ('TOP ' + (topKmh ?? '—') + ' km/h' + colorText)
+      : 'Rico Vega — on foot';
+    const sig = [name, kmh, gear, condPct, sub].join('|');
+    if (!this._r13Changed('vehicle', sig)) return;
+    P.vehicleName.textContent = name;
+    P.vehicleCondFill.style.width = car ? condPct + '%' : '0%';
+    P.vehicleCondFill.style.background = condPct >= 50 ? '#7be495' : condPct >= 25 ? '#f39c12' : '#e74c3c';
+    P.vehicleCond.textContent = car ? ('CONDITION — ' + condLabel + ' ' + condPct + '%') : 'CONDITION — N/A (ON FOOT)';
+    P.vehicleSpeed.textContent = String(kmh);
+    P.vehicleGear.textContent = 'GEAR ' + gear;
+    P.vehicleSub.textContent = sub;
+  }
+
+  // 7. Respect — rank name + progress bar. Derived from jobs done
+  // (see respectFor / the ROUND13_RESPECT_RANKS note); state.respect
+  // { rank, points, progress, completed, next } wins when passed.
+  renderRespect(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.respect) return;
+    const r = respectFor(state);
+    const sig = [r.rank, r.points, r.completed].join('|');
+    if (!this._r13Changed('respect', sig)) return;
+    P.respectRank.textContent = r.rank;
+    P.respectFill.style.width = (r.progress * 100).toFixed(1) + '%';
+    P.respectSub.textContent = r.points + ' PTS  ·  ' + (r.completed ?? 0) + '/5 JOBS DONE'
+      + (r.next ? '  ·  NEXT: ' + r.next : '  ·  TOP RANK');
+  }
+
+  // 8. District — district / location name + nearest landmark.
+  // Reads state.district (world.districtAt via main.js) and
+  // state.steppedQuarter; the nearest landmark is computed from
+  // state.world.landmarks (spire / pyramid / bridge) and the player
+  // position. state.nearestLandmark { name, distance } wins when passed.
+  renderDistrict(state = {}) {
+    const P = this._ensureRound13Panels();
+    if (!P || !P.district) return;
+    const playerPos = state.player?.position || null;
+    let district = state.steppedQuarter ? 'Stepped Quarter' : (state.district || '');
+    if (!district && playerPos && state.world && typeof state.world.districtAt === 'function') {
+      try { district = state.world.districtAt(playerPos.x, playerPos.z) || ''; } catch (_) { district = ''; }
+    }
+    if (!district) district = 'Solmar Bay';
+    let landmark = null;
+    if (state.nearestLandmark && typeof state.nearestLandmark === 'object') {
+      landmark = { name: state.nearestLandmark.name, dist: state.nearestLandmark.distance };
+    } else if (playerPos && state.world?.landmarks) {
+      const lm = state.world.landmarks;
+      const candidates = [];
+      if (lm.spire) candidates.push({ name: 'Solmar Spire', x: lm.spire.x, z: lm.spire.z });
+      if (lm.pyramid) candidates.push({ name: 'Solmar Pyramid', x: lm.pyramid.x, z: lm.pyramid.z });
+      if (lm.bridge) candidates.push({ name: 'Marina Bridge', x: (lm.bridge.x0 + lm.bridge.x1) / 2, z: lm.bridge.z });
+      let best = null;
+      let bestD = Infinity;
+      for (const c of candidates) {
+        const d = Math.hypot((playerPos.x || 0) - c.x, (playerPos.z || 0) - c.z);
+        if (d < bestD) { bestD = d; best = c; }
+      }
+      if (best) landmark = { name: best.name, dist: Math.round(bestD) };
+    }
+    const sub = landmark ? ('NEAR ' + landmark.name.toUpperCase() + ' · ' + landmark.dist + 'm') : 'SOLMAR BAY · COASTAL CITY';
+    const sig = district + '|' + sub;
+    if (!this._r13Changed('district', sig)) return;
+    P.districtName.textContent = district.toUpperCase();
+    P.districtSub.textContent = sub;
+  }
+
   // update(state) — the single HUD entry point, called once per frame.
   update(state = {}) {
     if (!state) return;
@@ -402,6 +962,19 @@ export class HUD {
 
     // --- Minimap. ---
     this.drawMinimap(state);
+
+    // --- Round 13: dense HUD panels (mission, police, weapons,
+    // dialogue, radio, vehicle, respect, district). Each render is a
+    // guarded read of state and skips no-change frames, so a missing
+    // field can never break the legacy HUD above.
+    this.renderMissionPanel(state);
+    this.renderPoliceResponse(state);
+    this.renderWeaponWheel(state);
+    this.renderDialogue(state);
+    this.renderRadio(state);
+    this.renderVehiclePanel(state);
+    this.renderRespect(state);
+    this.renderDistrict(state);
   }
 
   // Draw the top-down minimap on the configured canvas.

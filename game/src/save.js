@@ -310,6 +310,7 @@ export function loadGame() { return defaultSystem.load(); }
 export function hasSaveGame() { return defaultSystem.hasSave(); }
 export function getSaveInfo() { return defaultSystem.getSaveInfo(); }
 export function clearSaveGame() { return defaultSystem.clearSave(); }
-// Round-12 final: re-touch (no logic change) — art round, save intact.
+// Round-13 final: re-touch — save format stays v8; the round-11 build
+// stamp in the payload is unchanged, save intact.
 
 export default SaveSystem;

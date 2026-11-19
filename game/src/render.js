@@ -390,6 +390,22 @@ export function applyFacadeTint(material, tint) {
   return material;
 }
 
+// Round-13 (Lane 2, roofs): per-building roof tones — grey, terracotta,
+// dark slate — picked deterministically from the building's (x, z)
+// position (same hash family as facadeTintFor, no rng), so the skyline
+// stops being one flat grey. world.js builds one shared material per
+// tone and picks per building; the round-12 cladding / tints / parapets
+// are untouched, and no gate reads roof colour.
+export const ROOF_TINTS = [0x6a6a68, 0x8a5a44, 0x4a4a52];
+
+export function roofTintFor(x, z) {
+  let h = (Math.imul(Math.floor(x * 10), 374761393)
+    + Math.imul(Math.floor(z * 10), 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return ROOF_TINTS[h % ROOF_TINTS.length];
+}
+
 // A warm lit-window glass material for geometry windows: MeshBasic
 // (unlit, so the pane reads as a glow at dusk instead of a shaded
 // surface — same perf reasoning as the round-5 window materials).
@@ -443,5 +459,8 @@ export function framingDistanceForHeight(height, fovDeg = 62, fill = 0.9) {
 }
 
 // Round-12 final: facade cladding variants (procedural canvas textures) — render.js reads the world.js cladding data.
+// Round-13 final: re-touch — roofTintFor() (grey / terracotta / slate
+// per building) + the shared glow texture police.js uses for siren
+// halos; cladding / tints unchanged.
 
 export default createRenderContext;

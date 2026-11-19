@@ -167,8 +167,16 @@ export class TrafficManager {
     // the config block, the caller's value (or 14) stands.
     const r11max = CONFIG.round11?.traffic?.maxCars;
     this.maxCars = (typeof r11max === 'number' && r11max > 0) ? r11max : (options.maxCars ?? 14);
-    this.maxPedestrians = options.maxPedestrians ?? 18;
-    this.spawnRadius = options.spawnRadius ?? 120; // spawn ahead within this
+    // Round-13 (Lane 2): more walkers on the sidewalks (18 -> 24) and a
+    // tighter spawn radius (120 -> 95 m), so the street in frame is
+    // denser at the SAME fleet size — maxCars stays 20 and parked stays
+    // 6 (round-11 harness pins both). Config wins over the caller's
+    // value, same pattern as maxCars above.
+    const r13t = CONFIG.round13?.traffic || {};
+    this.maxPedestrians = (typeof r13t.maxPedestrians === 'number' && r13t.maxPedestrians > 0)
+      ? r13t.maxPedestrians : (options.maxPedestrians ?? 18);
+    this.spawnRadius = (typeof r13t.spawnRadius === 'number' && r13t.spawnRadius > 0)
+      ? r13t.spawnRadius : (options.spawnRadius ?? 120); // spawn ahead within this
     this.despawnRadius = options.despawnRadius ?? 180;
     this.cars = [];
     this.pedestrians = [];
@@ -1005,6 +1013,12 @@ export class TrafficManager {
       parked,
       maxCars: this.maxCars,
       round11: true, // round-11 final: build stamp — this composition shape is the round-11 one (guaranteed slots + silhouette sizes), so the harness can tell a stale traffic.js from the live one.
+      // Round-13 (Lane 2): pedestrian population on the same probe, so
+      // the density pass is measurable without a second call.
+      pedestrians: this.pedestrians.length,
+      maxPedestrians: this.maxPedestrians,
+      spawnRadius: this.spawnRadius,
+      round13: true,
       byModel,
       bySilhouette,
       guaranteed: {
@@ -1045,6 +1059,8 @@ export function createTrafficManager(options = {}) {
   return new TrafficManager(options);
 }
 
-// Round-12 final: re-touch (no logic change) — art round, traffic intact.
+// Round-13 (Lane 2): denser street — 24 pedestrians, 95 m spawn radius.
+// Round-13 final: re-touch — the wanted-4 chase view the budget pass
+// protects is this fleet at full pursuit; fleet composition unchanged.
 
 export default TrafficManager;

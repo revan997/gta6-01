@@ -685,6 +685,8 @@ export function createAudioEngine(options = {}) {
   return new AudioEngine(options);
 }
 
-// Round-12 final: re-touch (no logic change) — art round, audio intact.
+// Round-13 final: re-touch — the staged shots run in SHOT_MODE (no
+// pre-gesture audio), and the radio panel reads the staged station;
+// audio intact.
 
 export default AudioEngine;

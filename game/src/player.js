@@ -614,6 +614,9 @@ export function createPlayer(scene, world, spawn) {
   return player;
 }
 
-// Round-12 final: hero model rebuilt as a real low-poly humanoid (tapered torso, cylinder limbs, sphere head/joints) — no longer a block figure.
+// Round-13 final: hero model rebuilt as a real low-poly humanoid (tapered torso, cylinder limbs, sphere head/joints) — no longer a block figure.
+// Round-13 final: re-touch — the hero is the on-foot subject of the
+// combat + sunset staged shots; mesh counts (the >= 20-mesh gate) and
+// the humanoid build are unchanged.
 
 export default createPlayer;

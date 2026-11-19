@@ -35,7 +35,9 @@ export const CONFIG = {
     sun: 0xffb36b,
     fog: 0xd96a35,
     ground: 0x8a9a6b,
-    road: 0x3a3f46,
+    road: 0x5f6874, // round-13: blue-grey asphalt (was 0x3a3f46) — the dark
+    // tarmac read as black under the low sun; this is the same hue the
+    // road texture paints (CONFIG.round13.road.base mirrors it)
     roadLine: 0xf5d76e,
     sidewalk: 0xb8b0a0,
     sand: 0xe8d5a0,
@@ -550,6 +552,88 @@ export const CONFIG = {
       reflectOpacity: 0.45,
       reflectWarmColor: 0xffb36b, // warm-gold strip under the deck centreline
       reflectWarmOpacity: 0.28,
+    },
+  },
+
+  // ---- Round-13 polish (Lane 2: scene density + golden-hour art) ----
+  // The round-12 gap: gameplay screenshots are EMPTY — no police visible
+  // at wanted 3, no helicopter, no pedestrians in frame, flat grey
+  // roofs, black tarmac. Everything here is tuning for the five files
+  // Lane 2 owns (world / render / config / traffic / police); every
+  // value has a fallback in the reader, so a missing block is the
+  // round-12 behaviour. The additions are paid for by the `savings`
+  // below + palm instancing (world.js bakePalmInstances): the round-12
+  // profile is 4,262 calls / 149,560 tris against caps of 4,300 /
+  // 150,000, so nothing here may add net cost. Pinned values are NOT
+  // touched: sky zenith/horizon/fog colour, sky-mid hexes, facade
+  // tints (8), fill-light values, maxCars 20, parked 6.
+  round13: {
+    road: {
+      base: '#5a6e84', // blue-grey asphalt (was #5f6874, originally
+      // #3a3f46) — the first blue-grey still read brown under the warm
+      // sun/hemi, so the base is cooler: blue > green > red, still a
+      // desaturated grey-blue. Value-only change: 0 rng / 0 tris.
+    },
+    haze: {
+      fogNear: 220, fogFar: 800, // was 260/900 — a touch more haze so
+      // the skyline softens into the sunset. Fog COLOUR stays 0xd96a35.
+    },
+    sun: {
+      glowScale: 520, haloScale: 850, // was 480/700 — a bigger warm halo
+      // so the low sun blooms into the haze. Disc scale + position
+      // untouched (round-6 harness pins sun.y <= 160).
+    },
+    windows: {
+      // More lit panes at dusk: same instance counts (lit vs dark just
+      // moves between InstancedMeshes), so 0 draw calls / 0 tris.
+      geometryLitRatios: [0.1, 0.3, 0.5, 0.7, 0.85], // was [0.05, 0.2, 0.4, 0.6, 0.75]
+      paintedLitRatios: [0.28, 0.48, 0.68, 0.88], // was [0.22, 0.42, 0.62, 0.85]
+    },
+    roofs: {
+      // Per-building roof tone (render.js roofTintFor): grey (round-4b),
+      // terracotta, dark slate — the skyline stops being one grey.
+      // Shared materials, no new geometry: 0 draw calls / 0 tris.
+      colours: [0x6a6a68, 0x8a5a44, 0x4a4a52],
+    },
+    palms: {
+      chunkSize: 16, // instancing chunk (world.js bakePalmInstances)
+      chunkSpan: 80, // max metres a chunk may span in x or z (tight culling)
+      downtownExtras: 6, // extra palms planted in park gaps downtown
+    },
+    neon: {
+      // NOTE: the shopfront neon CHANCE stays R4's 0.55 — raising it
+      // would change which shopfronts take the neon branch, and the
+      // branch consumes an extra rng.pick (neon colour), so the whole
+      // seeded city layout would shift (measured: 118 -> 105 buildings
+      // at 0.75). More glow instead comes from a brighter strip +
+      // a glow sprite per neon shopfront (world.js), both 0-rng.
+      stripEmissive: 2.4, // was 1.8 — the strip itself burns brighter
+      secondBillboardFace: true, // the rooftop billboard reads from both sides
+    },
+    savings: {
+      // Cheap tris wins that pay for the round-13 additions — all on
+      // small / distant spheres whose segment count is invisible:
+      cloudSegments: [6, 4], // was (10, 8) round 12, (8, 6) round 13 Lane 2 —
+      // final agent: (6, 4) — a distant flattened blob reads identically,
+      // and ~56 puffs save a further ~2,240 tris toward the wanted-4 cap
+      trafficLampSegments: [6, 5], // was (8, 8) — 36 tiny lamps, -2,304 tris
+    },
+    traffic: {
+      spawnRadius: 95, // was 120 — traffic + peds spawn closer to the
+      // player, so the street in frame is denser at the same fleet size
+      // (maxCars stays 20, parked stays 6 — round-11 harness pins both).
+      maxPedestrians: 24, // was 18 — more walkers on the sidewalks
+    },
+    police: {
+      spawnMin: 28, spawnMax: 55, // was 35/70 — pursuit cars arrive in frame
+      lightBarGlowScale: 2.2, // was 1.35 — bigger bar glow sprites
+      haloScale: 5.5, haloOpacity: 0.5, // big alternating red/blue halo
+      // above each pursuit car, visible across the street
+      heliMinWanted: 3, // air unit joins at 3+ stars
+      heliAltitude: 38, // clears mid-rise roofs; the cone + ground pool
+      // (not the body) are what read in the chase camera's frame
+      heliOrbitRadius: 30, // orbit ring out in front of the player, so
+      // the cone base + pool land ~30 m ahead, inside the frame
     },
   },
 

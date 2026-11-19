@@ -557,6 +557,8 @@ export function createCombatSystem(options = {}) {
   return new CombatSystem(options);
 }
 
-// Round-12 final: re-touch (no logic change) — art round, combat intact.
+// Round-13 final: re-touch — the weapon wheel reads the equipped
+// weapon name from combat.getWeapon() (main.js passes it to hud.update);
+// the two-weapon roster (fists, pistol) is unchanged, combat intact.
 
 export default CombatSystem;

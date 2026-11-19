@@ -6,7 +6,19 @@
 // All randomness comes from the seeded generator passed in (an object with
 // next()/range()/pick(), or a factory function taking a numeric seed).
 // Never uses Math.random.
+import * as THREE from 'three';
 import { CONFIG } from './config.js';
+import { makeGlowTexture } from './render.js';
+
+// Round-13 (Lane 2): one shared white radial-glow texture for the siren
+// halos + the heli's light pool. White so the sprite material colour
+// (red / blue / warm white) tints it; created lazily so a headless
+// import of this module never touches the DOM.
+let _glowTex = null;
+function sharedGlowTexture() {
+  if (!_glowTex) _glowTex = makeGlowTexture('rgba(255,255,255,0.95)');
+  return _glowTex;
+}
 
 function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -155,6 +167,8 @@ export class PoliceSystem {
     this._interceptCar = null; // round 4: the car currently cutting off ahead
     this.sirenPhase = 0; // light-bar flash phase: 0 = red bright, 1 = blue bright
     this._sirenTimer = 0; // seconds since the last phase toggle
+    this.helicopter = null; // round-13: the air unit ({ group, rotor, ... }) or null
+    this._scene = null; // round-13: captured from a spawned police car's group parent
   }
 
   getWantedLevel() { return this.wanted; }
@@ -180,7 +194,7 @@ export class PoliceSystem {
         if (nearest === null || d < nearest) nearest = +d.toFixed(1);
       }
     }
-    return { wanted: this.wanted, cars: cars.length, officers: this.officers.length, nearestDist: nearest };
+    return { wanted: this.wanted, cars: cars.length, officers: this.officers.length, nearestDist: nearest, helicopter: this.helicopter !== null };
   }
   // Flat list of every police unit (cars + officers) for the minimap.
   getUnits() { return [...this.policeCars, ...this.officers]; }
@@ -277,6 +291,18 @@ export class PoliceSystem {
     this.hiddenTimer = 0;
     this.decayTimer = 0;
     if (this.wanted !== before) this._emit('onWantedChange', { wanted: this.wanted, before });
+    // Round-13 (Lane 2): setWanted is the harness/probe path for staging
+    // heat, and addWanted() is the only place that used to flip the
+    // siren on — so a staged wanted-4 left _sirenOn false and every
+    // siren halo dark (update() keys halo visibility off _sirenOn).
+    // Keep the siren in sync here exactly like addWanted() does.
+    if (this.wanted > 0 && !this._sirenOn) {
+      this._sirenOn = true;
+      this._emit('onSiren', { on: true });
+    } else if (this.wanted === 0 && this._sirenOn) {
+      this._sirenOn = false;
+      this._emit('onSiren', { on: false });
+    }
     return this.wanted;
   }
 
@@ -286,6 +312,8 @@ export class PoliceSystem {
     this.decayTimer = 0;
     this.policeCars = [];
     this.officers = [];
+    this._removeHelicopter(); // round-13: ground the air unit with the heat
+    this._hideHalos(); // round-13: no flashing halos with no pursuit
     if (this._sirenOn) {
       this._sirenOn = false;
       this._emit('onSiren', { on: false });
@@ -299,6 +327,8 @@ export class PoliceSystem {
   markWasted() {
     if (this.wasted) return;
     this.wasted = true;
+    this._removeHelicopter(); // round-13: the chase is over
+    this._hideHalos();
     this._emit('onWasted', {});
   }
 
@@ -330,6 +360,11 @@ export class PoliceSystem {
   // Sprite scale is never touched by the flash-phase logic, so the boost
   // persists across phase toggles; emissive levels live in vehicle.js.
   // Stand-in cars have no mesh/bar, so this is a no-op for them.
+  // Round-13 (Lane 2): the bar glow grows again (2.2x, was 1.35x) and
+  // each pursuit car gets a big alternating red/blue HALO above the
+  // roof — the thing that makes a chase car visible from a block away.
+  // One sprite per car (max 6), 0 tris; its colour flips with the
+  // siren phase in update() below.
   _boostLightBar(car) {
     if (!car || car._duskBarBoosted || !car.group || !car.lightBar) return;
     car._duskBarBoosted = true;
@@ -337,7 +372,7 @@ export class PoliceSystem {
     // the glow boost below must not run on a bar sunk into the crown.
     seatPoliceLightBar(car);
     const cfg = CONFIG.round5?.police || {};
-    const scale = cfg.lightBarGlowScale ?? 1.35;
+    const scale = CONFIG.round13?.police?.lightBarGlowScale ?? (cfg.lightBarGlowScale ?? 1.35);
     for (const key of ['redGlowSprite', 'blueGlowSprite']) {
       const s = car.lightBar[key];
       if (s && s.scale) {
@@ -345,15 +380,184 @@ export class PoliceSystem {
         s.scale.y *= scale;
       }
     }
+    if (!car._sirenHalo && car.group && typeof car.group.add === 'function') {
+      try {
+        const mat = new THREE.SpriteMaterial({
+          map: sharedGlowTexture(), transparent: true, depthWrite: false,
+          opacity: 0, color: 0xff2222,
+        });
+        const sprite = new THREE.Sprite(mat);
+        const barY = (car.lightBar && typeof car.lightBar.barY === 'number')
+          ? car.lightBar.barY : 1.6;
+        sprite.position.set(0, barY + 1.1, 0);
+        sprite.scale.setScalar(CONFIG.round13?.police?.haloScale ?? 5.5);
+        car.group.add(sprite);
+        car._sirenHalo = { sprite, mat };
+      } catch (_) { /* the halo is cosmetic; a failed attach must never break the chase */ }
+    }
+  }
+
+  // Round-13 (Lane 2): hide every siren halo (busted / wasted / cleared).
+  _hideHalos() {
+    for (const car of this.policeCars) {
+      if (car._sirenHalo && car._sirenHalo.sprite) car._sirenHalo.sprite.visible = false;
+    }
+  }
+
+  // Round-13 (Lane 2): the police helicopter — the missing piece in
+  // every round-12 chase screenshot. One air unit at wanted >= 3: a
+  // dark police-blue heli with spinning main + tail rotors, a
+  // searchlight cone and a light pool on the ground below it, orbiting
+  // the player. ~10 draw calls / ~125 tris, only while wanted >= 3, so
+  // the profile scenario (wanted 0) pays nothing. Built with plain
+  // THREE primitives (no vehicle.js dependency — the heli is not a car).
+  // The scene is captured from a spawned police car's group parent;
+  // without a scene (stand-in tests) the heli simply never spawns.
+  _spawnHelicopter(player) {
+    if (this.helicopter || !this._scene || !player?.position) return null;
+    try {
+      const g = new THREE.Group();
+      const matBody = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.6, metalness: 0.3 });
+      const matWhite = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.5 });
+      const matGlass = new THREE.MeshStandardMaterial({ color: 0x1a2a38, roughness: 0.2, metalness: 0.6 });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.3, 3.4), matBody);
+      body.castShadow = true;
+      g.add(body);
+      const nose = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.0, 1.2), matGlass);
+      nose.position.set(0, -0.1, 2.0);
+      g.add(nose);
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.22, 3.42), matWhite);
+      stripe.position.y = 0.15;
+      g.add(stripe);
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 3.6), matBody);
+      tail.position.set(0, 0.25, -3.2);
+      g.add(tail);
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.1, 0.9), matBody);
+      fin.position.set(0, 0.7, -4.8);
+      g.add(fin);
+      const rotor = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.06, 0.35), matWhite);
+      rotor.position.y = 0.95;
+      g.add(rotor);
+      // Rotor blur disc: a faint translucent disc at rotor height so the
+      // spinning bar reads as a rotor, not a plank.
+      const rotorBlur = new THREE.Mesh(
+        new THREE.CircleGeometry(3.7, 20),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      rotorBlur.rotation.x = -Math.PI / 2;
+      rotorBlur.position.y = 0.95;
+      g.add(rotorBlur);
+      const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 0.3), matWhite);
+      tailRotor.position.set(0.32, 0.5, -4.8);
+      g.add(tailRotor);
+      for (const sx of [-1, 1]) {
+        const skid = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 3.0), matWhite);
+        skid.position.set(sx * 0.9, -0.85, 0.2);
+        g.add(skid);
+      }
+      // Searchlight: a translucent cone from the belly to the ground
+      // (depthTest stays ON — the round-9 harness forbids tall
+      // depthTest-off meshes) + a warm pool of light on the ground
+      // below the heli. At altitude 38 the heli BODY sits above the
+      // chase camera's frame, so the cone + pool are the visible part
+      // of the air unit — the cone is wide and bright enough to read
+      // across the street. Default cone orientation is apex-up, so at
+      // y = -alt/2 the apex sits at the belly and the base on the ground.
+      const alt = CONFIG.round13?.police?.heliAltitude ?? 38;
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(3.0, alt, 10, 1, true),
+        new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      cone.position.y = -alt / 2;
+      g.add(cone);
+      const pool = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: sharedGlowTexture(), transparent: true, depthWrite: false,
+        opacity: 0.45, color: 0xffe9a8,
+      }));
+      pool.scale.set(14, 14, 1);
+      pool.position.y = -alt + 0.6;
+      g.add(pool);
+      // Spawn directly on the orbit ring, IN FRONT of the player (along
+      // the player's heading), so the cone + pool are in the chase
+      // camera's frame from the first frame — not hovering overhead and
+      // lerping out over seconds (under a slow renderer that lerp never
+      // visibly finishes). angle 0 of the orbit is the player's forward.
+      const heading = player.heading ?? 0;
+      const radius = CONFIG.round13?.police?.heliOrbitRadius ?? 30;
+      const angle0 = Math.atan2(Math.cos(heading), Math.sin(heading));
+      g.position.set(
+        player.position.x + Math.cos(angle0) * radius,
+        alt,
+        player.position.z + Math.sin(angle0) * radius,
+      );
+      this._scene.add(g);
+      this.helicopter = { group: g, rotor, tailRotor, cone, pool, angle: angle0 };
+      return this.helicopter;
+    } catch (_) { return null; }
+  }
+
+  _updateHelicopter(step, player) {
+    const minWanted = CONFIG.round13?.police?.heliMinWanted ?? 3;
+    if (this.wanted < minWanted || this.busted || this.wasted) {
+      this._removeHelicopter();
+      return;
+    }
+    if (!this.helicopter) this._spawnHelicopter(player);
+    const heli = this.helicopter;
+    if (!heli || !player?.position) return;
+    const alt = CONFIG.round13?.police?.heliAltitude ?? 38;
+    const radius = CONFIG.round13?.police?.heliOrbitRadius ?? 30;
+    // Slow orbit around the player so the heli is usually in the chase
+    // camera's forward view, not parked behind the player.
+    heli.angle += step * 0.12;
+    const tx = player.position.x + Math.cos(heli.angle) * radius;
+    const tz = player.position.z + Math.sin(heli.angle) * radius;
+    const gp = heli.group.position;
+    gp.x += (tx - gp.x) * Math.min(1, step * 0.8);
+    gp.z += (tz - gp.z) * Math.min(1, step * 0.8);
+    gp.y += (alt - gp.y) * Math.min(1, step * 0.8);
+    // Nose toward the suspect; rotors spin.
+    heli.group.rotation.y = Math.atan2(player.position.x - gp.x, player.position.z - gp.z);
+    heli.rotor.rotation.y += step * 14;
+    heli.tailRotor.rotation.x += step * 20;
+  }
+
+  _removeHelicopter() {
+    if (!this.helicopter) return;
+    try {
+      if (this.helicopter.group.parent) this.helicopter.group.parent.remove(this.helicopter.group);
+    } catch (_) { /* already gone */ }
+    this.helicopter = null;
+  }
+
+  // Round-13: the air unit's live state for probes (null when grounded).
+  getHelicopter() {
+    const h = this.helicopter;
+    if (!h) return null;
+    return {
+      active: true,
+      x: +h.group.position.x.toFixed(1),
+      z: +h.group.position.z.toFixed(1),
+      altitude: +h.group.position.y.toFixed(1),
+      rotorAngle: +h.rotor.rotation.y.toFixed(2),
+    };
   }
 
   _spawnCar(player) {
-    const pos = this._spawnPositionNear(player, 35, 70);
+    // Round-13 (Lane 2): pursuit cars spawn closer (28-55 m, was 35-70)
+    // so they arrive in the chase camera's frame instead of far away.
+    const r13p = CONFIG.round13?.police || {};
+    const pos = this._spawnPositionNear(player, r13p.spawnMin ?? 35, r13p.spawnMax ?? 70);
     const car = this.createCar
       ? this.createCar({ position: pos, heading: 0, model: 'Solmar Police Interceptor', colour: '#1a1a2e', driver: 'police' })
       : makePoliceCar({ position: pos }, this.rng);
     car.kind = 'police-car';
     car.siren = true;
+    // Round-13 (Lane 2): capture the scene for the helicopter — the
+    // car's group hangs off the scene (vehicle.js createCar adds it),
+    // so its parent IS the scene. Stand-in cars have no group, and the
+    // heli simply stays grounded for them.
+    if (!this._scene && car.group && car.group.parent) this._scene = car.group.parent;
     this._boostLightBar(car);
     this.policeCars.push(car);
     return car;
@@ -540,11 +744,32 @@ export class PoliceSystem {
       this.sirenPhase = 0;
       this._sirenTimer = 0;
     }
+
+    // --- Round-13 (Lane 2): the air unit + the siren halos. ---
+    this._updateHelicopter(step, player);
+    if (this.policeCars.length) {
+      const haloOpacity = CONFIG.round13?.police?.haloOpacity ?? 0.5;
+      const haloScale = CONFIG.round13?.police?.haloScale ?? 5.5;
+      for (const car of this.policeCars) {
+        const halo = car._sirenHalo;
+        if (!halo || !halo.sprite) continue;
+        halo.sprite.visible = this._sirenOn;
+        if (!this._sirenOn) continue;
+        // Phase 0: red bright; phase 1: blue bright. The pulse rides
+        // the 0.45 s phase timer so the halo breathes with the bar.
+        halo.mat.color.setHex(this.sirenPhase === 0 ? 0xff2222 : 0x2244ff);
+        const pulse = Math.sin(this._sirenTimer * 14);
+        halo.mat.opacity = haloOpacity * (0.85 + 0.15 * pulse);
+        halo.sprite.scale.setScalar(haloScale * (1 + 0.06 * pulse));
+      }
+    }
   }
 
   _bust(player) {
     if (this.busted) return;
     this.busted = true;
+    this._removeHelicopter(); // round-13: the chase is over
+    this._hideHalos();
     this._emit('onBusted', { wanted: this.wanted });
   }
 
@@ -554,6 +779,8 @@ export class PoliceSystem {
     this.wasted = false;
     this.policeCars = [];
     this.officers = [];
+    this._removeHelicopter(); // round-13: ground the air unit
+    this._scene = null;
     this.hiddenTimer = 0;
     this.decayTimer = 0;
     this._sirenOn = false;
@@ -609,6 +836,10 @@ export function seatPoliceLightBar(car) {
   return true;
 }
 
-// Round-12 final: re-touch (no logic change) — art round, police intact.
+// Round-13 (Lane 2): visible pursuit — closer spawns, bigger light-bar
+// glow + alternating siren halos, and the police helicopter at 3+ stars.
 
 export default PoliceSystem;
+// Round-13 final: re-touch — desiredUnits() (5 cars / 6 officers at 4
+// stars) is untouched; the budget pass buys the headroom in geometry,
+// never by fielding fewer units.

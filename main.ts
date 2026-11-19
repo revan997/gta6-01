@@ -171,6 +171,29 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 11: fill (hemi ${r11.fill.hemiIntensity}, shadow ${r11.fill.shadowIntensity}, bounce ${r11.fill.bounceIntensity}) + traffic (maxCars ${r11.traffic.maxCars}, guaranteed ${r11.traffic.guaranteed.map((g) => g.model).join('/')}) + camera (blend ${r11.camera.blendRate}/s, sweep ${r11.camera.sweepStepDeg} deg, frame ${r11.camera.minFrameDistance}-${r11.camera.maxFrameDistance} m)`);
 }
+// Round-13: the density + budget block must be present — HUD/scene
+// tuning (CONFIG.round13) is what the four staged gameplay shots show,
+// and the savings sub-block is what keeps the wanted-4 chase inside the
+// 4,300-call / 150,000-tri budget. A copy that lost it would ship the
+// round-12 empty streets + the over-cap wanted-4 view. Fail loudly here
+// instead of at the intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const r13 = cfg?.round13;
+  const r13Ok = r13?.road && typeof r13.road.base === 'string'
+    && r13?.haze && typeof r13.haze.fogNear === 'number' && typeof r13.haze.fogFar === 'number'
+    && r13?.palms && typeof r13.palms.chunkSize === 'number'
+    && r13?.traffic && typeof r13.traffic.maxPedestrians === 'number'
+    && r13?.police && typeof r13.police.heliMinWanted === 'number'
+    && r13?.savings && Array.isArray(r13.savings.cloudSegments) && r13.savings.cloudSegments.length === 2
+    && Array.isArray(r13.savings.trafficLampSegments) && r13.savings.trafficLampSegments.length === 2
+    && cfg?.colors?.road !== 0x3a3f46; // the black tarmac is gone
+  if (!r13Ok) {
+    throw new Error('missing input: CONFIG.round13 density/budget block not found in game/src/config.js');
+  }
+  console.log(`round 13: road ${r13.road.base}, haze ${r13.haze.fogNear}-${r13.haze.fogFar} m, palms instanced (chunk ${r13.palms.chunkSize}), peds ${r13.traffic.maxPedestrians}, heli at ${r13.police.heliMinWanted}+ stars, cloud segs ${r13.savings.cloudSegments.join('x')}`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
@@ -240,4 +263,5 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
   walk(join(outDir, 'game'));
   console.log(`game tree: ${files} files, ${bytes} bytes (${gameJsFiles.length} .js modules, ${srcLines} source lines)`);
 }
-// Round-12 final: re-touch (no logic change) — art round, build entrypoint intact.
+// Round-13 final: re-touch — round-13 config gate (density + budget
+// block), build entrypoint intact.

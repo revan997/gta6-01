@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createRng, weightedChoice } from './random.js';
-import { applyFacadeTint, facadeCladdingFor, facadeTintFor, makeBeaconTexture, makeCanvasTexture, makeCoolGlassMaterial, makeGlowTexture, makeHaloTexture, makeLitGlassMaterial, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
+import { applyFacadeTint, facadeCladdingFor, facadeTintFor, makeBeaconTexture, makeCanvasTexture, makeCoolGlassMaterial, makeGlowTexture, makeHaloTexture, makeLitGlassMaterial, makeSignTexture, makeSunDiscTexture, makeWaterTexture, ROOF_TINTS, roofTintFor } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
 export function districtAt(x, z) {
@@ -105,13 +105,24 @@ export function buildWorld(scene, seedOrRng) {
   const R8Step = R8.steppedTower || {};
   const R8Roof = R8.roofline || {};
   const R6Sun = R6.sun || R5.sun;
+  // Round-13 (Lane 2): a bigger warm halo / glow around the low sun, so
+  // it blooms into the haze. Position + disc scale are untouched
+  // (round-6 harness pins sun.y <= 160).
+  // Round-13 (Lane 2) build state: palm placements collected for
+  // instanced baking (bakePalmInstances), and the round13 probe counts
+  // (read by the world.round13 return below).
+  const palmPlacements = []; // { x, z, scale }
+  let r13BillboardFaces = 1;
+  let r13PalmChunks = 0;
+  let r13PalmExtras = 0;
+  const R13 = CONFIG.round13 || {};
   const sunCfg = {
     x: R6Sun.x !== undefined ? R6Sun.x : R5.sun.x,
     y: R6Sun.y !== undefined ? R6Sun.y : R5.sun.y,
     z: R6Sun.z !== undefined ? R6Sun.z : R5.sun.z,
-    glowScale: R6Sun.glowScale || R5.sun.glowScale,
+    glowScale: R13.sun?.glowScale ?? R6Sun.glowScale ?? R5.sun.glowScale,
     discScale: R6Sun.discScale || R5.sun.discScale,
-    haloScale: R6Sun.haloScale || R5.sun.haloScale,
+    haloScale: R13.sun?.haloScale ?? R6Sun.haloScale ?? R5.sun.haloScale,
   };
   const R5W = R5.geometryWindows;
   // Plain facades get their own rng stream so the main rng sequence (and
@@ -124,8 +135,15 @@ export function buildWorld(scene, seedOrRng) {
 
   // Round-5: warm sunset haze + warm horizon-orange backdrop (was a pale
   // blue sky / pale blue fog).
+  // Round-13 (Lane 2): the haze closes in a touch (fogNear 260 -> 220,
+  // fogFar 900 -> 800) so the skyline softens into the sunset. Fog
+  // COLOUR is untouched — the harness pins it to 0xd96a35.
   scene.background = new THREE.Color(R5.lighting.background);
-  scene.fog = new THREE.Fog(R5.lighting.fog, R5.lighting.fogNear, R5.lighting.fogFar);
+  scene.fog = new THREE.Fog(
+    R5.lighting.fog,
+    R13.haze?.fogNear ?? R5.lighting.fogNear,
+    R13.haze?.fogFar ?? R5.lighting.fogFar,
+  );
 
   const roads = [];
   const buildings = []; // collision boxes: { minX, maxX, minZ, maxZ, height, district }
@@ -395,7 +413,11 @@ export function buildWorld(scene, seedOrRng) {
       // facade reads as stacked floors, not one flat slab. Banding is
       // deterministic geometry (no rng), so the texture rng stream —
       // one rng.next() per window, same as before — is unchanged.
-      const floorLitRatios = [0.22, 0.42, 0.62, 0.85];
+      // Round-13 (Lane 2): lit ratios raised again ([0.28, 0.48, 0.68,
+      // 0.88], was round-10's [0.22, 0.42, 0.62, 0.85]) so far more
+      // painted windows glow warm at dusk. Same one rng.next() per
+      // window, so the texture rng stream is unchanged.
+      const floorLitRatios = R13.windows?.paintedLitRatios || [0.22, 0.42, 0.62, 0.85];
       for (let floor = 0; floor < 8; floor++) {
         // Floor band: dark separator + faint light edge below it.
         ctx.fillStyle = 'rgba(0,0,0,0.16)';
@@ -544,7 +566,10 @@ export function buildWorld(scene, seedOrRng) {
   // dashes along V (roads running north-south).
   function makeRoadTexture(alongU) {
     return makeCanvasTexture(128, 128, (ctx, w, h) => {
-      ctx.fillStyle = '#3a3f46';
+      // Round-13 (Lane 2): blue-grey asphalt (was #3a3f46) — the dark
+      // tarmac read as black under the low sun; this reads as
+      // sun-warmed asphalt. Same speckle / centre line / edge lines.
+      ctx.fillStyle = R13.road?.base ?? '#5f6874';
       ctx.fillRect(0, 0, w, h);
       for (let i = 0; i < 500; i++) {
         const v = rng.noise2(i * 0.23, i * 0.41);
@@ -661,6 +686,15 @@ export function buildWorld(scene, seedOrRng) {
     color: C.downtownGlass, roughness: 0.15, metalness: 0.55,
   });
   const matRoof = new THREE.MeshStandardMaterial({ color: 0x6a6a68, roughness: 1 });
+  // Round-13 (Lane 2): roof tones — grey (round-4b), terracotta, dark
+  // slate. One shared material per tone (CONFIG.round13.roofs.colours,
+  // falling back to render.js ROOF_TINTS); the building loop picks one
+  // per building by position hash (render.js roofTintFor), so the
+  // skyline stops being one grey. 0 new geometry, 0 new draw calls.
+  const roofMats = new Map();
+  for (const c of (R13.roofs?.colours || ROOF_TINTS)) {
+    if (!roofMats.has(c)) roofMats.set(c, new THREE.MeshStandardMaterial({ color: c, roughness: 1 }));
+  }
   // Round-4b: balcony slabs (light concrete) + pitched terracotta roofs.
   const matBalcony = new THREE.MeshStandardMaterial({ color: 0xb8b0a0, roughness: 1 });
   const matRoofPitched = new THREE.MeshStandardMaterial({ color: 0x9a5a3a, roughness: 1 });
@@ -825,7 +859,12 @@ export function buildWorld(scene, seedOrRng) {
     head.position.set(0, 5.1, 0);
     head.castShadow = true;
     g.add(head);
-    const lampGeo = new THREE.SphereGeometry(0.17, 8, 8);
+    // Round-13 (Lane 2): lamp spheres drop to (6, 5) segments (was
+    // (8, 8)) — a 0.17 m lamp reads identically, and 36 lamps save
+    // 2,304 tris toward the round-13 additions. Shared geometry, so
+    // the three lamps per head still cost one geometry.
+    const lampSeg = R13.savings?.trafficLampSegments || [8, 8];
+    const lampGeo = new THREE.SphereGeometry(0.17, lampSeg[0], lampSeg[1]);
     function lamp(color, y) {
       const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.08 });
       const m = new THREE.Mesh(lampGeo, mat);
@@ -899,6 +938,22 @@ export function buildWorld(scene, seedOrRng) {
     return (h ^ (h >>> 16)) >>> 0;
   }
   const steppedTowers = []; // { x, z, height, w, d, tiers } — the new archetype
+  // Round-13 (Lane 2): one glow texture per neon palette colour, shared
+  // by every neon shopfront sprite (a texture per strip would cost
+  // dozens of 128x128 canvases for the same few colours).
+  const neonGlowTexs = new Map();
+  function neonGlowTexture(color) {
+    // The palette holds hex NUMBERS (0xff2a6d); makeGlowTexture wants a
+    // CSS colour string, so convert (and key the cache on the string).
+    const key = typeof color === 'number'
+      ? '#' + color.toString(16).padStart(6, '0') : String(color);
+    let tex = neonGlowTexs.get(key);
+    if (!tex) {
+      tex = makeGlowTexture(key, 0.1, 1);
+      neonGlowTexs.set(key, tex);
+    }
+    return tex;
+  }
   const parkGaps = [];
   const edges = [-half, ...lines, half];
   const windowMatLit = new THREE.MeshStandardMaterial({
@@ -994,7 +1049,11 @@ export function buildWorld(scene, seedOrRng) {
         // Round-10 (Lane C): a 0.75 ratio joins the set (was max 0.6),
         // so more floors glow warm at dusk. Same one rng.pick per
         // floor, so the rng stream is unchanged.
-        const floorLitRatio = rng.pick([0.05, 0.2, 0.4, 0.6, 0.75]);
+        // Round-13 (Lane 2): ratios raised again — more lit geometry
+        // windows at dusk. Same one rng.pick per floor, same stream.
+        const floorLitRatio = rng.pick(
+          R13.windows?.geometryLitRatios || [0.05, 0.2, 0.4, 0.6, 0.75],
+        );
         // Round-12 (Lane B): a per-BUILDING lit bias from the position
         // hash (no rng) — one building in four reads notably brighter,
         // one in four dimmer, the rest as rolled — so lit ratios vary
@@ -1169,10 +1228,26 @@ export function buildWorld(scene, seedOrRng) {
         // this material, so a tower keeps one consistent tone.
         const facadeTint = facadeTintFor(px, pz, height);
         applyFacadeTint(facadeMat, facadeTint);
+        // Round-13 (Lane 2): this building's roof tone (grey /
+        // terracotta / slate by position hash). Roof caps, parapets,
+        // AC units, tier ledges and setback caps below use roofMat;
+        // pilasters keep the dark matRoof so the doorway frame stays dark.
+        const roofMat = roofMats.get(roofTintFor(px, pz)) || matRoof;
         r10FacadeTints.add(facadeTint.color);
-        const buildingMesh = new THREE.Mesh(boxGeo, [
-          facadeMat, facadeMat, matRoof, matRoof, facadeMat, facadeMat,
-        ]);
+        // Round-13 (final agent, budget): a 6-material box costs SIX
+        // draw calls (three.js renders one call per BoxGeometry group),
+        // and this mesh is one of ~110 in the city. A plain box tower's
+        // top face is hidden under its roof cap (widened 0.92 -> 0.99
+        // below, so only a ~0.5% ring shows) and its bottom face is
+        // underground, so the box takes ONE material — facadeMat — and
+        // drops 5 calls per building. Stepped towers keep the 6-material
+        // array: their tier tops are exposed between ledges, so the roof
+        // tone there is real geometry, not a hidden face.
+        const buildingMesh = isStepped
+          ? new THREE.Mesh(boxGeo, [
+            facadeMat, facadeMat, roofMat, roofMat, facadeMat, facadeMat,
+          ])
+          : new THREE.Mesh(boxGeo, facadeMat);
         // Stepped towers: this mesh is only the base tier (baseHeight);
         // the upper tiers are stacked on it just below.
         buildingMesh.scale.set(bw, baseHeight, bd);
@@ -1184,7 +1259,7 @@ export function buildWorld(scene, seedOrRng) {
           // Tier 2 + tier 3: shrinking stacked boxes with a roof-ledge
           // slab at each step, then a small lantern crown on top — a
           // ziggurat silhouette no box tower has. All shared materials
-          // (facadeMat / matRoof / matLamp) and shared boxGeo: no new
+          // (facadeMat / roofMat / matLamp) and shared boxGeo: no new
           // material or geometry per tower.
           let tierY = tierHeights[0];
           for (let ti = 1; ti < 3; ti++) {
@@ -1192,20 +1267,20 @@ export function buildWorld(scene, seedOrRng) {
             const td = ti === 1 ? tier2D : tier3D;
             const th = tierHeights[ti];
             const tier = new THREE.Mesh(boxGeo, [
-              facadeMat, facadeMat, matRoof, matRoof, facadeMat, facadeMat,
+              facadeMat, facadeMat, roofMat, roofMat, facadeMat, facadeMat,
             ]);
             tier.scale.set(tw, th, td);
             tier.position.set(0, tierY + th / 2, 0);
             tier.castShadow = true;
             tier.receiveShadow = true;
             group.add(tier);
-            addBox(matRoof, tw * 0.94, 0.6, td * 0.94, 0, tierY + th + 0.3, 0, group);
+            addBox(roofMat, tw * 0.94, 0.6, td * 0.94, 0, tierY + th + 0.3, 0, group);
             tierY += th;
           }
           // Lantern crown: a small roof box + a warm emissive lantern
           // (shared matLamp) so the stepped tower glows at dusk.
           const crownH = R8Step.crownHeight ?? 1.6;
-          addBox(matRoof, tier3W * 0.5, crownH, tier3D * 0.5, 0, height + 0.6 + crownH / 2, 0, group);
+          addBox(roofMat, tier3W * 0.5, crownH, tier3D * 0.5, 0, height + 0.6 + crownH / 2, 0, group);
           addBox(matLamp, tier3W * 0.28, 0.9, tier3D * 0.28, 0, height + 0.6 + crownH + 0.45, 0, group);
           // Round-8 re-touch: crown beacon — one small warm lamp on top
           // of the lantern, so the ziggurat reads at dusk. Sizes come
@@ -1224,8 +1299,11 @@ export function buildWorld(scene, seedOrRng) {
         }
         // Roof cap (box towers only — a stepped tower already gets a
         // ledge slab on each tier, and a full-width cap at the top
-        // would float wider than its top tier).
-        if (!isStepped) addBox(matRoof, bw * 0.92, 0.6, bd * 0.92, 0, height + 0.3, 0, group);
+        // would float wider than its top tier). Round-13 (final agent):
+        // 0.99 wide, not 0.92 — the single-material box above leaves its
+        // top face facade-textured, so the cap must cover all but a ~0.5%
+        // ring; the cap is roof-toned, so the roofline still reads roof.
+        if (!isStepped) addBox(roofMat, bw * 0.99, 0.6, bd * 0.99, 0, height + 0.3, 0, group);
         // Round-4 rooftop clutter: AC units on most roofs (up to two),
         // a stair bulkhead on some low roofs, and water towers / antennas
         // on any roof above tallMinHeight — not just the tallest tower.
@@ -1234,22 +1312,22 @@ export function buildWorld(scene, seedOrRng) {
         // hang off the narrow top tier.
         const acCount = !isStepped && rng.chance(R4.rooftop.acChance) ? rng.int(1, R4.rooftop.acMax) : 0;
         for (let a = 0; a < acCount; a++) {
-          addBox(matRoof, rng.range(2, 3.5), 1.1, rng.range(2, 3),
+          addBox(roofMat, rng.range(2, 3.5), 1.1, rng.range(2, 3),
             rng.range(-bw / 4, bw / 4), height + 1.1, rng.range(-bd / 4, bd / 4), group);
         }
         if (height < 20 && rng.chance(R4.rooftop.bulkheadChance)) {
-          addBox(matRoof, rng.range(3, 4.5), 2.4, rng.range(3, 4),
+          addBox(roofMat, rng.range(3, 4.5), 2.4, rng.range(3, 4),
             rng.range(-bw / 5, bw / 5), height + 1.8, rng.range(-bd / 5, bd / 5), group);
         }
         if (!isStepped && height > R4.rooftop.tallMinHeight) {
           if (rng.chance(R4.rooftop.towerChance)) {
             const tx = rng.range(-bw / 4, bw / 4);
             const tz = rng.range(-bd / 4, bd / 4);
-            const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 8), matRoof);
+            const tower = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 3, 8), roofMat);
             tower.position.set(tx, height + 2.6, tz);
             tower.castShadow = true;
             group.add(tower);
-            const cone = new THREE.Mesh(new THREE.ConeGeometry(2.6, 2, 8), matRoof);
+            const cone = new THREE.Mesh(new THREE.ConeGeometry(2.6, 2, 8), roofMat);
             cone.position.set(tx, height + 5.1, tz);
             cone.castShadow = true;
             group.add(cone);
@@ -1285,9 +1363,20 @@ export function buildWorld(scene, seedOrRng) {
               if (rng.chance(R4.shopfront.neonChance)) {
                 const neonColor = rng.pick(CONFIG.neonPalette);
                 const neonMat = new THREE.MeshStandardMaterial({
-                  color: neonColor, emissive: neonColor, emissiveIntensity: 1.8,
+                  color: neonColor, emissive: neonColor, emissiveIntensity: R13.neon?.stripEmissive ?? 1.8,
                 });
                 addBox(neonMat, aw * 0.7, 0.22, 0.12, 0, 1.1, -0.5, shop);
+                // Round-13 (Lane 2): a soft glow sprite behind the strip
+                // so the sign blooms at dusk. Same branch (no rng), one
+                // shared texture per palette colour (neonGlowTexture),
+                // 1 sprite per neon shopfront, 0 tris.
+                const neonGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+                  map: neonGlowTexture(neonColor), transparent: true,
+                  depthWrite: false, opacity: 0.55,
+                }));
+                neonGlow.scale.set(aw * 1.1, 2.2, 1);
+                neonGlow.position.set(0, 1.1, -0.4);
+                shop.add(neonGlow);
               }
             } else {
               // Plain glass shopfront + a lit colour sign board, no awning.
@@ -1321,15 +1410,18 @@ export function buildWorld(scene, seedOrRng) {
           const fw = bw * rng.range(R4b.setbacks.widthFracMin, R4b.setbacks.widthFracMax);
           const fd = bd * rng.range(R4b.setbacks.widthFracMin, R4b.setbacks.widthFracMax);
           const fh = height * rng.range(R4b.setbacks.heightFracMin, R4b.setbacks.heightFracMax);
-          const tier = new THREE.Mesh(boxGeo, [
-            facadeMat, facadeMat, matRoof, matRoof, facadeMat, facadeMat,
-          ]);
+          // Round-13 (final agent, budget): the setback tier's top is
+          // hidden under its own cap (widened 0.92 -> 0.99 below), so —
+          // like the plain base box above — it takes one material and
+          // drops 5 draw calls. The tier still counts as a setback, a
+          // new roofline and a stepped-tower neighbour exactly as before.
+          const tier = new THREE.Mesh(boxGeo, facadeMat);
           tier.scale.set(fw, fh, fd);
           tier.position.set(0, height + fh / 2, 0);
           tier.castShadow = true;
           tier.receiveShadow = true;
           group.add(tier);
-          addBox(matRoof, fw * 0.92, 0.6, fd * 0.92, 0, height + fh + 0.3, 0, group);
+          addBox(roofMat, fw * 0.99, 0.6, fd * 0.99, 0, height + fh + 0.3, 0, group);
           r4bSetbacks += 1;
         }
         if (height >= R4b.balconies.minHeight && height <= R4b.balconies.maxHeight
@@ -1375,7 +1467,7 @@ export function buildWorld(scene, seedOrRng) {
             hasNewRoofline = true;
             const cw = Math.min(bw, bd) * 0.34;
             const ch = R8Roof.crownHeight ?? 1.8;
-            addBox(matRoof, cw, ch, cw, 0, height + 0.6 + ch / 2, 0, group);
+            addBox(roofMat, cw, ch, cw, 0, height + 0.6 + ch / 2, 0, group);
             addBox(matLamp, cw * 0.55, 0.9, cw * 0.55, 0, height + 0.6 + ch + 0.45, 0, group);
             r8Crowns += 1;
           } else if (height >= (R8Roof.mansardMinHeight ?? 14)
@@ -1396,12 +1488,12 @@ export function buildWorld(scene, seedOrRng) {
             const ph2 = rng.range(R8Roof.parapetHeightMin ?? 0.5, R8Roof.parapetHeightMax ?? 1.4);
             const steppedParapet = rng.chance(R8Roof.steppedParapetChance ?? 0.35);
             const sideH = steppedParapet ? ph2 * 0.55 : ph2;
-            addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, bd * 0.46 - pt / 2, group);
-            addBox(matRoof, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, -bd * 0.46 + pt / 2, group);
-            addBox(matRoof, pt, sideH, bd * 0.92, bw * 0.46 - pt / 2, height + 0.6 + sideH / 2, 0, group);
-            addBox(matRoof, pt, sideH, bd * 0.92, -bw * 0.46 + pt / 2, height + 0.6 + sideH / 2, 0, group);
+            addBox(roofMat, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, bd * 0.46 - pt / 2, group);
+            addBox(roofMat, bw * 0.92, ph2, pt, 0, height + 0.6 + ph2 / 2, -bd * 0.46 + pt / 2, group);
+            addBox(roofMat, pt, sideH, bd * 0.92, bw * 0.46 - pt / 2, height + 0.6 + sideH / 2, 0, group);
+            addBox(roofMat, pt, sideH, bd * 0.92, -bw * 0.46 + pt / 2, height + 0.6 + sideH / 2, 0, group);
             if (steppedParapet) {
-              addBox(matRoof, bw * 0.3, ph2 * 0.5, bd * 0.3, 0, height + 0.6 + ph2 * 0.25, 0, group);
+              addBox(roofMat, bw * 0.3, ph2 * 0.5, bd * 0.3, 0, height + 0.6 + ph2 * 0.25, 0, group);
               r8SteppedParapets += 1;
             }
             r4bParapets += 1;
@@ -1440,10 +1532,10 @@ export function buildWorld(scene, seedOrRng) {
         if (!isStepped && !hasPitchedRoof && height < R4b.parapet.minHeight && facadeHash(px, pz) % 2 === 0) {
           const lpH = 0.5;
           const lpT = 0.22;
-          addBox(matRoof, bw * 0.92, lpH, lpT, 0, height + 0.6 + lpH / 2, bd * 0.46 - lpT / 2, group);
-          addBox(matRoof, bw * 0.92, lpH, lpT, 0, height + 0.6 + lpH / 2, -bd * 0.46 + lpT / 2, group);
-          addBox(matRoof, lpT, lpH, bd * 0.92, bw * 0.46 - lpT / 2, height + 0.6 + lpH / 2, 0, group);
-          addBox(matRoof, lpT, lpH, bd * 0.92, -bw * 0.46 + lpT / 2, height + 0.6 + lpH / 2, 0, group);
+          addBox(roofMat, bw * 0.92, lpH, lpT, 0, height + 0.6 + lpH / 2, bd * 0.46 - lpT / 2, group);
+          addBox(roofMat, bw * 0.92, lpH, lpT, 0, height + 0.6 + lpH / 2, -bd * 0.46 + lpT / 2, group);
+          addBox(roofMat, lpT, lpH, bd * 0.92, bw * 0.46 - lpT / 2, height + 0.6 + lpH / 2, 0, group);
+          addBox(roofMat, lpT, lpH, bd * 0.92, -bw * 0.46 + lpT / 2, height + 0.6 + lpH / 2, 0, group);
           r10LowParapets += 1;
         }
         // Round-5: bake the recessed geometry windows for this building.
@@ -2058,6 +2150,26 @@ export function buildWorld(scene, seedOrRng) {
     billboard.position.set(tx, th + 5.5, tz - td / 2 - 0.4);
     billboard.rotation.y = Math.PI;
     scene.add(billboard);
+    // Round-13 (Lane 2): the billboard reads from BOTH sides — a second
+    // face on the tower's far side (same texture, 1 extra draw call)
+    // plus a soft warm glow sprite behind it, so the sign glows at
+    // dusk instead of going dark on its back face.
+    if (R13.neon?.secondBillboardFace !== false) {
+      const billboardBack = new THREE.Mesh(
+        new THREE.PlaneGeometry(Math.min(20, tw * 0.8), 7),
+        new THREE.MeshBasicMaterial({ map: billboardTex }),
+      );
+      billboardBack.position.set(tx, th + 5.5, tz + td / 2 + 0.4);
+      scene.add(billboardBack);
+      const bbGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: makeGlowTexture('rgba(255,217,74,0.8)'), transparent: true,
+        depthWrite: false, opacity: 0.3,
+      }));
+      bbGlow.scale.set(26, 12, 1);
+      bbGlow.position.set(tx, th + 5.5, tz - td / 2 - 0.4);
+      scene.add(bbGlow);
+      r13BillboardFaces = 2;
+    }
     // Helipad: dark circle + white H bars on the roof.
     const pad = new THREE.Mesh(
       new THREE.CircleGeometry(Math.min(tw, td) * 0.32, 24),
@@ -2102,25 +2214,89 @@ export function buildWorld(scene, seedOrRng) {
       g.add(halo);
     }
   }
+  // Round-13 (Lane 2): palms are COLLECTED here and baked into chunked
+  // InstancedMeshes by bakePalmInstances() after every placement call
+  // (beachfront loop + scattered plazas + park extras). One palm used
+  // to be 7 meshes (1 trunk + 6 leaves) = 7 draw calls, so 114 palms
+  // cost ~798 calls; instancing bakes them into 2 calls per 16-palm
+  // chunk (~16 calls total) with the look unchanged — same trunk
+  // cylinder, same 6 box leaves, same tilt, same shadows.
+  // Chunking matters: one city-wide InstancedMesh would carry a ~600 m
+  // bounding sphere and render every palm whenever any of the beach is
+  // in view (the profile view looks north from downtown, so the beach
+  // palms are culled there — a single mesh would add ~11k tris to that
+  // view and blow the 150k cap). Chunks are therefore GREEDY 2D-COMPACT:
+  // sorted by x, then cut whenever the chunk would span more than 80 m
+  // in x OR z — a beach strip chunk stays a beach strip, and a scattered
+  // plaza palm never drags beach palms into its bounding sphere. Each
+  // chunk gets a tight sphere via computeBoundingSphere(), so frustum
+  // culling stays almost as fine-grained as the per-palm meshes.
+  // (First attempt sorted by x only: a chunk mixed beach palms (z ~270)
+  // with scattered palms (z -280..260), its sphere covered the city,
+  // and the profile view rendered every palm — +~9.5k tris. Fixed here.)
   function addPalm(x, z, scale) {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    g.scale.setScalar(scale || 1);
-    scene.add(g);
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 5.5, 6), matTrunk);
-    trunk.position.y = 2.75;
-    trunk.rotation.z = 0.08;
-    trunk.castShadow = true;
-    g.add(trunk);
-    for (let i = 0; i < 6; i++) {
-      const leaf = new THREE.Mesh(boxGeo, matLeaf);
-      leaf.scale.set(2.6, 0.12, 0.7);
-      const a = (i / 6) * Math.PI * 2;
-      leaf.position.set(Math.cos(a) * 1.2, 5.6, Math.sin(a) * 1.2);
-      leaf.rotation.y = -a;
-      leaf.rotation.z = 0.35;
-      leaf.castShadow = true;
-      g.add(leaf);
+    palmPlacements.push({ x, z, scale: scale || 1 });
+  }
+  function bakePalmInstances() {
+    const chunkSize = R13.palms?.chunkSize || 16;
+    const maxSpan = R13.palms?.chunkSpan ?? 80;
+    const sorted = [...palmPlacements].sort((a, b) => a.x - b.x || a.z - b.z);
+    const chunks = [];
+    let cur = [];
+    let minX = Infinity; let maxX = -Infinity;
+    let minZ = Infinity; let maxZ = -Infinity;
+    for (const p of sorted) {
+      const nx0 = Math.min(minX, p.x); const nx1 = Math.max(maxX, p.x);
+      const nz0 = Math.min(minZ, p.z); const nz1 = Math.max(maxZ, p.z);
+      if (cur.length > 0
+        && (cur.length >= chunkSize || nx1 - nx0 > maxSpan || nz1 - nz0 > maxSpan)) {
+        chunks.push(cur);
+        cur = [];
+        minX = Infinity; maxX = -Infinity; minZ = Infinity; maxZ = -Infinity;
+      }
+      cur.push(p);
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    if (cur.length) chunks.push(cur);
+    const trunkGeo = new THREE.CylinderGeometry(0.22, 0.34, 5.5, 6);
+    const dummy = new THREE.Object3D();
+    r13PalmChunks = 0;
+    for (const chunk of chunks) {
+      const trunks = new THREE.InstancedMesh(trunkGeo, matTrunk, chunk.length);
+      const leaves = new THREE.InstancedMesh(boxGeo, matLeaf, chunk.length * 6);
+      let li = 0;
+      chunk.forEach((p, i) => {
+        const s = p.scale;
+        // Trunk: same as the old mesh (centre y 2.75, tilt 0.08).
+        dummy.position.set(p.x, 2.75 * s, p.z);
+        dummy.rotation.set(0, 0, 0.08);
+        dummy.scale.setScalar(s);
+        dummy.updateMatrix();
+        trunks.setMatrixAt(i, dummy.matrix);
+        // Leaves: 6 boxes around the crown, same tilt/offset as before.
+        for (let k = 0; k < 6; k++) {
+          const a = (k / 6) * Math.PI * 2;
+          dummy.position.set(p.x + Math.cos(a) * 1.2 * s, 5.6 * s, p.z + Math.sin(a) * 1.2 * s);
+          dummy.rotation.set(0, -a, 0.35);
+          dummy.scale.set(2.6 * s, 0.12 * s, 0.7 * s);
+          dummy.updateMatrix();
+          leaves.setMatrixAt(li, dummy.matrix);
+          li += 1;
+        }
+      });
+      trunks.instanceMatrix.needsUpdate = true;
+      leaves.instanceMatrix.needsUpdate = true;
+      trunks.castShadow = true;
+      leaves.castShadow = true;
+      // Tight per-chunk bounds: three r187 InstancedMesh computes the
+      // sphere from the instance matrices, so each chunk culls on its
+      // own ~40 m strip instead of the whole beach.
+      trunks.computeBoundingSphere();
+      leaves.computeBoundingSphere();
+      scene.add(trunks);
+      scene.add(leaves);
+      r13PalmChunks += 1;
     }
   }
   function addBench(x, z, rotY, parent) {
@@ -2149,7 +2325,10 @@ export function buildWorld(scene, seedOrRng) {
     trunk.position.y = 1.4;
     trunk.castShadow = true;
     g.add(trunk);
-    const canopy = new THREE.Mesh(new THREE.SphereGeometry(2.2, 10, 8),
+    // Round-13 (final agent, budget): canopy (10, 8) -> (8, 6) — a 2.2 m
+    // leaf ball 40+ m from the camera reads identically, ~60 tris saved
+    // per tree. Trunk segments (6) already minimal.
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(2.2, 8, 6),
       new THREE.MeshStandardMaterial({ color: 0x4a8a3f, roughness: 1 }));
     canopy.position.y = 4.2;
     canopy.scale.y = 0.85;
@@ -2220,7 +2399,9 @@ export function buildWorld(scene, seedOrRng) {
     g.position.set(x, 0, z);
     scene.add(g);
     addBox(matPlanter, 1.3, 0.55, 1.3, 0, 0.28, 0, g);
-    const shrub = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), matShrub);
+    // Round-13 (final agent, budget): shrub (8, 6) -> (6, 4) — a 0.55 m
+    // planter ball; ~40 tris saved per shrub, invisible at street level.
+    const shrub = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 4), matShrub);
     shrub.position.y = 0.85;
     shrub.scale.y = 0.8;
     shrub.castShadow = true;
@@ -2288,7 +2469,9 @@ export function buildWorld(scene, seedOrRng) {
     g.position.set(x, 0.12, z);
     scene.add(g);
     addBox(matPole, 0.14, 2.2, 0.14, 0, 1.1, 0, g);
-    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 8), matLamp);
+    // Round-13 (final agent, budget): lamp globe (8, 8) -> (6, 5) — a
+    // 0.22 m globe; ~80 tris saved per lamp, same glow.
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.22, 6, 5), matLamp);
     lamp.position.y = 2.3;
     g.add(lamp);
   }
@@ -2380,11 +2563,21 @@ export function buildWorld(scene, seedOrRng) {
     }
     if (rng.chance(0.7)) addTree(gap.x + rng.range(-10, 10), gap.z + rng.range(-10, 10), rng.range(0.9, 1.4));
     if (rng.chance(0.3)) addBench(gap.x, gap.z, rng.range(0, Math.PI));
+    // Round-13 (Lane 2): a palm in the first few park gaps, so the
+    // palm line is not beach-only. Fixed offsets, no rng — the layout
+    // stream is unchanged. Collected by addPalm, baked with the rest.
+    if (r13PalmExtras < (R13.palms?.downtownExtras ?? 6)) {
+      addPalm(gap.x + 4, gap.z - 4, 1.1);
+      r13PalmExtras += 1;
+    }
   }
   // A few palms scattered in plazas / downtown corners.
   for (let i = 0; i < 24; i++) {
     addPalm(rng.range(-280, 280), rng.range(-280, 260), rng.range(0.8, 1.2));
   }
+  // Round-13 (Lane 2): bake all collected palms (beachfront + scattered
+  // + park extras) into chunked InstancedMeshes — see bakePalmInstances.
+  bakePalmInstances();
 
   // ---- Round-4: street furniture, beach + docks dressing ----
   // Bus stops mid-block on the sidewalk (offset 8.5 m = on the sidewalk,
@@ -2469,7 +2662,9 @@ export function buildWorld(scene, seedOrRng) {
     const g = new THREE.Group();
     g.position.set(x, 0.1, z);
     scene.add(g);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), matBuoy);
+    // Round-13 (final agent, budget): buoy ball (10, 8) -> (8, 6) — a
+    // 0.55 m bobber in the marina; ~60 tris saved per buoy.
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.55, 8, 6), matBuoy);
     ball.position.y = 0.25;
     ball.castShadow = true;
     g.add(ball);
@@ -2615,7 +2810,12 @@ export function buildWorld(scene, seedOrRng) {
     // Round-5: each cloud picks one warm tint (pink / orange / cream).
     const cloudMat = rng.pick(cloudMats);
     for (let p = 0; p < puffs; p++) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(rng.range(9, 18), 10, 8), cloudMat);
+      // Round-13 (Lane 2): cloud puffs drop to (8, 6) segments (was
+      // (10, 8)) — a distant flattened blob reads identically, and
+      // ~56 puffs save ~3,360 tris toward the round-13 additions.
+      const cloudSeg = R13.savings?.cloudSegments || [10, 8];
+      const s = new THREE.Mesh(
+        new THREE.SphereGeometry(rng.range(9, 18), cloudSeg[0], cloudSeg[1]), cloudMat);
       s.scale.y = 0.45;
       s.position.set(rng.range(-16, 16), rng.range(-2, 2), rng.range(-8, 8));
       g.add(s);
@@ -2802,6 +3002,22 @@ export function buildWorld(scene, seedOrRng) {
       geometryBuildings: r5GeoBuildings,
       buildingCount: buildings.length,
     },
+    // Round-13 (Lane 2, scene density + golden-hour art): live build
+    // counts for the harness — palms instanced (not per-palm meshes),
+    // roof tones, billboard faces, road base + haze actually in use.
+    round13: {
+      palmCount: palmPlacements.length,
+      palmChunks: r13PalmChunks,
+      palmExtras: r13PalmExtras,
+      palmInstanced: r13PalmChunks > 0,
+      roofTones: roofMats.size,
+      billboardFaces: r13BillboardFaces,
+      roadBase: R13.road?.base ?? '#5f6874',
+      fogNear: scene.fog ? scene.fog.near : null,
+      fogFar: scene.fog ? scene.fog.far : null,
+      sunHaloScale: sunCfg.haloScale,
+      sunGlowScale: sunCfg.glowScale,
+    },
     // Round-11 (Lane B, fill light): the fill-light tuning, read off
     // CONFIG.round11.fill at build time so the harness can gate on the
     // values the live scene was built with (not a stale config claim
@@ -2870,5 +3086,9 @@ export function buildWorld(scene, seedOrRng) {
 }
 
 // Round-12 final: facade cladding variants + Marina Bridge as a suspension span (pylons, cables, fascia lights, water reflection strip).
+// Round-13 final: re-touch — single-material box towers / setback tiers
+// (6 draw calls -> 1 per box, roof caps widened 0.92 -> 0.99 to hide the
+// top face) + cheaper canopy / shrub / buoy / lamp / cloud segments;
+// layout, counts and the Bridge span unchanged.
 
 export default buildWorld;
