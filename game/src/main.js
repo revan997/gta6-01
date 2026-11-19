@@ -2623,6 +2623,12 @@ function stagePursuit() {
   // Jobs 1-2 are done (the sheet's chapter 3).
   missions.completed.add(1);
   missions.completed.add(2);
+  // Round 17 (re-touch): mission 1 is already done in chapter 3, so
+  // Rico ALREADY owns the SMG (Mama Lou's mission-1 reward) — unlock
+  // it here so the pursuit wheel honestly reads SMG 30 / 60 instead of
+  // SMG LOCKED. The shotgun stays LOCKED in this shot (mission-3
+  // reward, only owned after mission 3 finishes).
+  combat.unlockWeapon('smg');
   missions.startMission(3, world, systems());
   settleShot(24);
   police.setWanted(5); // re-pin after the settle (speeding rule fires once)

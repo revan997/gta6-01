@@ -288,6 +288,25 @@ if (!existsSync(gameFavicon)) {
     throw new Error('missing input: save.js SAVE_VERSION 9 (weapons block) not found');
   }
   console.log(`round 17: hero GT trim (tail bar ${r17.gt.tailBar.width} m, ${r17.gt.rearGlass.width} m rear glass) + heli detail (mast r ${r17.heliDetail.mast.radius}, hub ${r17.heliDetail.hub.width} m) + SMG ${weapons.smg.magSize}/${weapons.smg.reserveStart} / shotgun ${weapons.shotgun.magSize}/${weapons.shotgun.reserveStart} (missions ${r17.weapons.smgUnlockMission}/${r17.weapons.shotgunUnlockMission}) + save v${saveMod.SAVE_VERSION}`);
+  // Round 17 (re-touch): the pursuit staging must unlock the SMG —
+  // mission 1 is already done in chapter 3 (jobs 2/8), so Rico owns
+  // the SMG (Mama Lou's mission-1 reward) before mission 3 starts; a
+  // copy that lost the unlock would show SMG LOCKED on the pursuit
+  // wheel while combat and sunset honestly show it owned. The shotgun
+  // must NOT be unlocked here (mission-3 reward, only owned after
+  // mission 3 finishes). main.js imports three, so check source text,
+  // like the vehicle.js check above.
+  const mainSrc = readFileSync(join(gameDir, 'src', 'main.js'), 'utf8');
+  const pursuitIdx = mainSrc.indexOf('function stagePursuit()');
+  const pursuitSrc = pursuitIdx >= 0 ? mainSrc.slice(pursuitIdx) : '';
+  const startM3 = pursuitSrc.indexOf('missions.startMission(3');
+  const smgIdx = pursuitSrc.indexOf("combat.unlockWeapon('smg')");
+  const pursuitSmgOk = smgIdx >= 0 && startM3 > 0 && smgIdx < startM3;
+  const pursuitNoShotgun = startM3 > 0 && !pursuitSrc.slice(0, startM3).includes("combat.unlockWeapon('shotgun')");
+  if (!pursuitSmgOk || !pursuitNoShotgun) {
+    throw new Error('missing input: stagePursuit in game/src/main.js must unlock the SMG (mission-1 reward) before mission 3 starts, without unlocking the shotgun');
+  }
+  console.log('round 17: pursuit staging unlocks SMG before mission 3 (shotgun stays locked)');
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
@@ -390,3 +409,5 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
 // dialogue, fallen pool), build entrypoint intact.
 // Round 17: revision — round-17 config gate (hero GT trim, heli
 // detail, SMG/shotgun definitions, save v9), build entrypoint intact.
+// Round 17 (re-touch): pursuit staging gate — SMG unlocked in
+// stagePursuit before mission 3 starts, shotgun stays locked there.
