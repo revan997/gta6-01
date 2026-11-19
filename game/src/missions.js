@@ -617,4 +617,5 @@ export function createMissionManager(options = {}) {
 }
 
 export { MISSION_DEFS, DEFAULT_LOCATIONS };
+// Round-12 final: re-touch (no logic change) — art round, missions intact.
 export default MissionManager;

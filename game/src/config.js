@@ -524,8 +524,32 @@ export const CONFIG = {
       maxRescuePasses: 24, // pull-in steps for the chase-camera rescue
       focusWindowMs: 4000, // round-11 final: how long one L look holds the solved view (ms, wall clock) — the single source of truth: main.js opens the window for this long and the HUD landmark label shows for the same span, so the label never outlives the view it names.
       lowLandmarkMaxFocusY: 20, // round-11 final: landmarks this short (the 8 m Marina Bridge) get a lifted focus camera (below) — at street height the camera sits under the deck and the bridge reads as a brown slab, not a span.
-      lowLandmarkLift: 6, // ... metres the focus camera sits above a low landmark's focus height (bridge: y = 8 + 6 = 14), so the deck is seen from above at an angle instead of edge-on from below.
+      lowLandmarkLift: 6, // ... metres the focus camera sits above a low landmark's focus height (bridge: y = 8 + 6 = 14), so the deck is seen from above at an angle instead of edge-on from below. Round-12 (Lane C): the pylon tops (~20 m) now give that lifted view a vertical silhouette to read — the lift stays 6.
       lookFrac: 0.45, // round-11 final: the look target is this fraction of the focus height, not the apex — aiming at the apex crops the base out of the frame (pyramid-north showed brown tiers floating in red sky with no base; the Spire's base was cropped too). 0.45 centres the landmark in the 62° FOV with margin both ways at the solved framing distance.
+    },
+  },
+
+  // ---- Round-12 polish (Lane C): Marina Bridge reads as a span ----
+  // Round-11 defect: from N/S/W the bridge was a thin dark deck line
+  // over black water (1 m slab, 6 m wide, one bare rail bar, nothing
+  // above the deck). world.js reads this block; the bridge geometry
+  // (arch peak 8 m, x0 150 / x1 330, z -240) is unchanged, and the
+  // bridge stays purely visual — no gameplay code reads the deck.
+  round12: {
+    bridge: {
+      deckWidth: 8, // was 6 — a more substantial deck from above
+      deckThickness: 1.8, // was 1 — a real edge profile from N/S
+      deckColor: 0x8a7a62, // warm taupe (was dark slate 0x4a4f58) — separates from the water
+      fasciaColor: 0xd8c9a8, // bright sandstone edge band, proud of the deck side
+      centreLineColor: 0xf5d76e, // gold road line on the deck top
+      pylonHeight: 12, // pylon rise above the deck top (tops ~20 m at mid-span)
+      cableSag: 2, // main-cable height above the deck at mid-span
+      cableColor: 0x2e3138, // dark steel — silhouette against the sky
+      edgeLightSpacing: 22.5, // metres between warm fascia marker lights
+      reflectColor: 0x3a8ab0, // lighter water strip under the span
+      reflectOpacity: 0.45,
+      reflectWarmColor: 0xffb36b, // warm-gold strip under the deck centreline
+      reflectWarmOpacity: 0.28,
     },
   },
 
@@ -609,5 +633,7 @@ export const CONFIG = {
     cloudCount: 14,
   },
 };
+
+// Round-12 final: bridge span config (deck 8 m, pylons, cables, fascia lights) — world.js buildBridge reads CONFIG.round12.bridge.
 
 export default CONFIG;

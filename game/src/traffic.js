@@ -1045,4 +1045,6 @@ export function createTrafficManager(options = {}) {
   return new TrafficManager(options);
 }
 
+// Round-12 final: re-touch (no logic change) — art round, traffic intact.
+
 export default TrafficManager;

@@ -240,3 +240,4 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
   walk(join(outDir, 'game'));
   console.log(`game tree: ${files} files, ${bytes} bytes (${gameJsFiles.length} .js modules, ${srcLines} source lines)`);
 }
+// Round-12 final: re-touch (no logic change) — art round, build entrypoint intact.

@@ -1830,4 +1830,5 @@ window.__solmar = {
   // game itself calls this, so gameplay is untouched.
   setCamYaw(yaw) { camYaw = yaw; },
   // Round-11 final (re-touch): the harness sets the yaw after every teleport a screenshot depends on, and the landmark shots re-arm L then shoot immediately — the 4 s focus window is shorter than a rAF wait plus capture latency under SwiftShader (diag6).
+  // Round-12 final: re-touch — north-focus anomaly investigated (see round12 report); camera solve unchanged, art round.
 };

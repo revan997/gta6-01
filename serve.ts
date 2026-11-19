@@ -75,9 +75,10 @@ const server = createServer((request, response) => {
   // Round 9: round 9 — eye-level sky, luminous Spire, integrated roofs.
   // Round 10: round 10 — Spire distance falloff, stronger sky gradient,
   // facade variation (lit windows, tints, cornices, parapets).
+  // Round 12: round 12 — hero humanoid, facade cladding, Bridge suspension span (art round).
   if (pathname === '/__health') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: true, round: 11, root }));
+    response.end(JSON.stringify({ ok: true, round: 12, root }));
     return;
   }
   // Round-6: a version endpoint — the build identity (game, round,
@@ -92,11 +93,12 @@ const server = createServer((request, response) => {
   // Round 11: round 11, occlusion-safe focus camera, shadow-side fill
   // Round-11 final (re-touch): version 11 ships the persistent guaranteed fleet, the setCamYaw harness probe, and the lookFrac framing fix — all verified by two all-green consolidated runs before this serve.
   // light, guaranteed bus/coupe/pickup fleet, save still v8.
+  // Round 12: round 12, hero humanoid, facade cladding, Bridge suspension span.
   if (pathname === '/__version') {
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({
-      game: 'solmar-bay', competition: 'gta6-01', round: 11,
-      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks', 'spire-falloff', 'stronger-sky-gradient', 'facade-variation', 'round11-fill-light', 'round11-guaranteed-fleet', 'round11-occlusion-camera'],
+      game: 'solmar-bay', competition: 'gta6-01', round: 12,
+      features: ['sculpted-cars', 'solmar-spire', 'marina-bridge', 'warm-sunset', 'luminous-spire', 'solmar-pyramid', 'burnt-sienna-sky', 'sculpted-car-bodies', 'stepped-towers', 'varied-rooflines', 'integrated-roofs', 'eye-level-sky', 'luminous-spire-glass', 'minimap-landmarks', 'spire-falloff', 'stronger-sky-gradient', 'facade-variation', 'round11-fill-light', 'round11-guaranteed-fleet', 'round11-occlusion-camera', 'round12-hero-humanoid', 'round12-facade-cladding', 'round12-bridge-span'],
       root,
     }));
     return;
@@ -155,3 +157,4 @@ server.on('error', (err) => {
   }
 });
 listen();
+// Round-12 final: re-touch (no logic change) — art round, server intact.

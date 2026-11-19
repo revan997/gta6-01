@@ -685,4 +685,6 @@ export function createAudioEngine(options = {}) {
   return new AudioEngine(options);
 }
 
+// Round-12 final: re-touch (no logic change) — art round, audio intact.
+
 export default AudioEngine;

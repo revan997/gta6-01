@@ -399,6 +399,34 @@ export function makeLitGlassMaterial(hex = 0xffe9a8) {
   return new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide });
 }
 
+// Round-12 (Lane B, facade materials): per-district cladding roles —
+// the material language each district's facades are painted in, so the
+// texture pass in world.js can give every district a genuinely different
+// wall instead of the same concrete + window grid in a different tint.
+// Downtown / Marina read as glass towers, Old Town as brick, Beachfront
+// as pale stucco, Docks as corrugated metal. Returns the cladding name;
+// unknown districts fall back to concrete.
+export const DISTRICT_CLADDING = {
+  Downtown: 'glass',
+  'Old Town': 'brick',
+  Beachfront: 'stucco',
+  Marina: 'glass',
+  Docks: 'metal',
+};
+
+export function facadeCladdingFor(district) {
+  return DISTRICT_CLADDING[district] || 'concrete';
+}
+
+// Round-12 (Lane B): a cool-lit window glass material — pale blue-white
+// (overcast / fluorescent interior) — the third lit tone beside the two
+// warm golds, so lit floors are warm / cool / dark instead of one
+// uniform yellow. MeshBasic (unlit), same perf reasoning as the
+// round-5 / round-10 window materials.
+export function makeCoolGlassMaterial(hex = 0xbfd9ff) {
+  return new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide });
+}
+
 // Round-11 (Lane A): framing distance for a landmark look — how far
 // from an object of `height` metres the camera must stand for the
 // object to fill `fill` (0..1) of the vertical field of view. The
@@ -413,5 +441,7 @@ export function framingDistanceForHeight(height, fovDeg = 62, fill = 0.9) {
   if (!(tan > 0) || !(fill > 0)) return h;
   return (h / 2) / tan / fill;
 }
+
+// Round-12 final: facade cladding variants (procedural canvas textures) — render.js reads the world.js cladding data.
 
 export default createRenderContext;

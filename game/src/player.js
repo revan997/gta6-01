@@ -42,6 +42,8 @@ export function createPlayer(scene, world, spawn) {
   const matBandana = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.85 });
   const matGold = new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.3, metalness: 0.8 });
   const matBelt = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.7 });
+  const matWhite = new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.9 });
+  const matSole = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.6 });
 
   function part(material, w, h, d, x, y, z, parent) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -51,37 +53,167 @@ export function createPlayer(scene, world, spawn) {
     return mesh;
   }
 
-  // Torso (jacket over shirt), head, hair, arms, legs, shoes.
-  const torso = part(matJacket, 0.62, 0.72, 0.34, 0, 1.12, 0);
-  part(matShirt, 0.5, 0.6, 0.1, 0, 1.12, 0.16);
-  // Rico detail: red bandana at the neck, gold chain on the chest front,
-  // dark belt at the waist. Static meshes, like the shirt — they sit on
-  // the group, not on the bobbing torso.
-  part(matBandana, 0.38, 0.07, 0.36, 0, 1.5, 0);
-  part(matGold, 0.3, 0.06, 0.05, 0, 1.32, 0.2);
+  // Round-12 helpers: cylinders (limbs), spheres (head, joints) and
+  // tapered boxes (torso/hips — top vertices scaled toward the
+  // shoulders, so the silhouette tapers instead of stacking cubes).
+  function cyl(material, rTop, rBottom, h, x, y, z, parent, seg = 12) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, seg), material);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    (parent || group).add(mesh);
+    return mesh;
+  }
+  function ball(material, r, x, y, z, parent, sx = 1, sy = 1, sz = 1) {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), material);
+    mesh.position.set(x, y, z);
+    mesh.scale.set(sx, sy, sz);
+    mesh.castShadow = true;
+    (parent || group).add(mesh);
+    return mesh;
+  }
+  function taperBox(material, wTop, wBottom, h, dTop, dBottom, x, y, z, parent) {
+    const g = new THREE.BoxGeometry(wBottom, h, dBottom);
+    const pos = g.attributes.position;
+    const sx = wTop / wBottom;
+    const sz = dTop / dBottom;
+    for (let i = 0; i < pos.count; i++) {
+      if (pos.getY(i) > 0) { pos.setX(i, pos.getX(i) * sx); pos.setZ(i, pos.getZ(i) * sz); }
+    }
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, material);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    (parent || group).add(mesh);
+    return mesh;
+  }
+
+  // Round 12 (Lane A hero): Rico rebuilt as a real low-poly humanoid —
+  // tapered torso, spherical head with face cues, articulated arms
+  // (shoulder/elbow) and legs (hip/knee). Same overall proportions as
+  // the old block figure (feet 0, hips 0.78, shoulders 1.42, head
+  // 1.68, top ~1.95) so collision, camera and spawn are untouched.
+  // Pivots (armL/armR/legL/legR/torso) keep their old names — update()
+  // below drives them exactly as before, plus elbow/knee pivots.
+
+  // Torso: a Group at chest height so the bob/lean in update() moves
+  // the jacket, shirt and shoulders together. Children are local.
+  const torso = new THREE.Group();
+  torso.position.set(0, 1.12, 0);
+  group.add(torso);
+  taperBox(matJacket, 0.68, 0.54, 0.72, 0.36, 0.30, 0, 0, 0, torso); // jacket, shoulders -> waist
+  taperBox(matJacket, 0.56, 0.57, 0.08, 0.32, 0.33, 0, -0.38, 0, torso); // jacket hem flare
+  part(matShirt, 0.26, 0.42, 0.06, 0, 0.08, 0.16, torso); // open-jacket shirt V
+  // Lapels: two angled jacket flaps framing the shirt V.
+  const lapelL = part(matJacket, 0.10, 0.34, 0.03, -0.11, 0.15, 0.175, torso);
+  lapelL.rotation.z = 0.28; lapelL.rotation.y = -0.15;
+  const lapelR = part(matJacket, 0.10, 0.34, 0.03, 0.11, 0.15, 0.175, torso);
+  lapelR.rotation.z = -0.28; lapelR.rotation.y = 0.15;
+  // Collar points + chest pocket with a white square.
+  const collarL = part(matShirt, 0.14, 0.03, 0.12, -0.09, 0.33, 0.14, torso);
+  collarL.rotation.z = 0.3; collarL.rotation.x = -0.3;
+  const collarR = part(matShirt, 0.14, 0.03, 0.12, 0.09, 0.33, 0.14, torso);
+  collarR.rotation.z = -0.3; collarR.rotation.x = -0.3;
+  part(matJacket, 0.12, 0.09, 0.02, -0.19, 0.12, 0.175, torso); // chest pocket
+  part(matWhite, 0.08, 0.03, 0.02, -0.19, 0.17, 0.18, torso); // pocket square
+  // Shoulder pads round the jacket's shoulder line.
+  ball(matJacket, 0.11, -0.33, 0.32, 0, torso, 1.2, 0.55, 1);
+  ball(matJacket, 0.11, 0.33, 0.32, 0, torso, 1.2, 0.55, 1);
+  // Rico detail: red bandana ring at the neck + knot, gold chain draped
+  // on the chest, dark belt at the waist (belt stays on the group so it
+  // sits on the hips, not the leaning torso).
+  cyl(matBandana, 0.20, 0.22, 0.07, 0, 0.36, 0, torso, 14);
+  part(matBandana, 0.08, 0.06, 0.05, 0, 0.36, -0.20, torso); // bandana knot
+  const chain = new THREE.Mesh(new THREE.TorusGeometry(0.10, 0.014, 6, 14, Math.PI), matGold);
+  chain.position.set(0, 0.26, 0.20); chain.rotation.set(0.15, 0, Math.PI); chain.castShadow = true;
+  torso.add(chain);
   part(matBelt, 0.64, 0.08, 0.36, 0, 0.78, 0);
-  // Round-5: a warm sunset rim across the shoulders — the low sun catches
-  // Rico's jacket edge, so he reads as lit by golden hour, not flat.
-  part(new THREE.MeshStandardMaterial({ color: 0xff9a3c, emissive: 0xff7a2a, emissiveIntensity: 0.55, roughness: 0.8 }),
-    0.64, 0.06, 0.36, 0, 1.46, 0);
-  const head = part(matSkin, 0.36, 0.38, 0.34, 0, 1.68, 0);
-  part(matHair, 0.38, 0.14, 0.36, 0, 1.9, 0);
-  part(matHair, 0.38, 0.22, 0.08, 0, 1.78, -0.16);
-  const armL = part(matJacket, 0.18, 0.66, 0.2, -0.42, 1.12, 0);
-  const armR = part(matJacket, 0.18, 0.66, 0.2, 0.42, 1.12, 0);
-  // Arm pivots sit at the shoulder so the swing below looks like walking.
-  armL.geometry.translate(0, -0.28, 0);
-  armL.position.y = 1.42;
-  armR.geometry.translate(0, -0.28, 0);
-  armR.position.y = 1.42;
-  const legL = part(matPants, 0.22, 0.72, 0.24, -0.16, 0.42, 0);
-  const legR = part(matPants, 0.22, 0.72, 0.24, 0.16, 0.42, 0);
-  legL.geometry.translate(0, -0.3, 0);
-  legL.position.y = 0.78;
-  legR.geometry.translate(0, -0.3, 0);
-  legR.position.y = 0.78;
-  part(matShoes, 0.24, 0.12, 0.36, -0.16, 0.06, 0.04);
-  part(matShoes, 0.24, 0.12, 0.36, 0.16, 0.06, 0.04);
+  part(matGold, 0.10, 0.05, 0.02, 0, 0.78, 0.17); // belt buckle
+  // Round-5: a warm sunset rim along the REAR top edge of the
+  // shoulders — the low sun catches Rico's jacket edge, so he reads as
+  // lit by golden hour, not flat. Thin and rear-biased on purpose: a
+  // full-depth slab read as a pale shoulder cape from chase view.
+  part(new THREE.MeshStandardMaterial({ color: 0xff9a3c, emissive: 0xff7a2a, emissiveIntensity: 0.35, roughness: 0.8 }),
+    0.60, 0.04, 0.10, 0, 0.35, -0.12, torso);
+  // Pelvis / hips under the jacket hem.
+  taperBox(matPants, 0.56, 0.50, 0.30, 0.34, 0.30, 0, 0.82, 0);
+
+  // Head: sphere cranium + jaw, nose, eyes, brows, mouth, ears, hair.
+  // The head stays on the group (not the torso) so the sprint hunch
+  // never buries it; update() counter-rotates it at half the lean.
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 1.68, 0);
+  group.add(headGroup);
+  ball(matSkin, 0.19, 0, 0.02, 0, headGroup, 0.95, 1.12, 1.0); // cranium
+  ball(matSkin, 0.13, 0, -0.09, 0.03, headGroup, 0.9, 0.75, 0.95); // jaw/chin
+  const nose = cyl(matSkin, 0.012, 0.028, 0.08, 0, -0.01, 0.19, headGroup, 8);
+  nose.rotation.x = Math.PI / 2;
+  ball(matHair, 0.022, -0.07, 0.03, 0.165, headGroup); // eyes
+  ball(matHair, 0.022, 0.07, 0.03, 0.165, headGroup);
+  const browL = part(matHair, 0.08, 0.015, 0.015, -0.07, 0.075, 0.17, headGroup);
+  browL.rotation.z = 0.12;
+  const browR = part(matHair, 0.08, 0.015, 0.015, 0.07, 0.075, 0.17, headGroup);
+  browR.rotation.z = -0.12;
+  part(matHair, 0.09, 0.012, 0.02, 0, -0.115, 0.15, headGroup); // mouth
+  ball(matSkin, 0.035, -0.185, 0, 0, headGroup, 0.5, 1, 0.7); // ears
+  ball(matSkin, 0.035, 0.185, 0, 0, headGroup, 0.5, 1, 0.7);
+  // Hair: cap over the crown + rounded back mass + sideburns + fringe.
+  // The back mass is a flattened sphere hugging the skull — a flat box
+  // here read as a black slab from chase view.
+  const hairCap = new THREE.Mesh(
+    new THREE.SphereGeometry(0.205, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.48), matHair);
+  hairCap.position.set(0, 0.05, -0.01); hairCap.castShadow = true;
+  headGroup.add(hairCap);
+  ball(matHair, 0.18, 0, -0.02, -0.10, headGroup, 0.95, 1.05, 0.65); // back hair mass
+  part(matHair, 0.04, 0.12, 0.05, -0.18, -0.04, 0.05, headGroup); // sideburns
+  part(matHair, 0.04, 0.12, 0.05, 0.18, -0.04, 0.05, headGroup);
+  const fringe = part(matHair, 0.30, 0.07, 0.06, 0, 0.12, 0.17, headGroup);
+  fringe.rotation.x = -0.15;
+
+  // Arms: shoulder pivot -> upper arm -> elbow pivot -> forearm + hand.
+  // Pivots are children of the torso so the bob/lean carries the arms.
+  function buildArm(side) { // side: -1 left, +1 right
+    const shoulder = new THREE.Group();
+    shoulder.position.set(0.40 * side, 0.30, 0);
+    torso.add(shoulder);
+    ball(matJacket, 0.115, 0, 0, 0, shoulder, 1, 0.9, 1); // shoulder ball
+    cyl(matJacket, 0.105, 0.085, 0.34, 0, -0.17, 0, shoulder); // upper arm
+    const elbow = new THREE.Group();
+    elbow.position.set(0, -0.34, 0);
+    shoulder.add(elbow);
+    cyl(matJacket, 0.082, 0.075, 0.14, 0, -0.07, 0, elbow); // rolled sleeve
+    cyl(matSkin, 0.068, 0.06, 0.16, 0, -0.20, 0, elbow); // forearm
+    ball(matSkin, 0.075, 0, -0.33, 0, elbow, 0.85, 1.2, 0.95); // hand / fist
+    part(matSkin, 0.10, 0.06, 0.06, 0, -0.41, 0.01, elbow); // fingers
+    return { shoulder, elbow };
+  }
+  const armLParts = buildArm(-1);
+  const armRParts = buildArm(1);
+  const armL = armLParts.shoulder;
+  const armR = armRParts.shoulder;
+  const foreL = armLParts.elbow;
+  const foreR = armRParts.elbow;
+
+  // Legs: hip pivot -> thigh -> knee pivot -> shin + sneaker.
+  function buildLeg(side) {
+    const hip = new THREE.Group();
+    hip.position.set(0.16 * side, 0.78, 0);
+    group.add(hip);
+    cyl(matPants, 0.115, 0.09, 0.38, 0, -0.19, 0, hip); // thigh
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.38, 0);
+    hip.add(knee);
+    cyl(matPants, 0.088, 0.072, 0.32, 0, -0.16, 0, knee); // shin
+    part(matShoes, 0.14, 0.08, 0.20, 0, -0.33, 0.02, knee); // shoe upper
+    part(matSole, 0.15, 0.07, 0.34, 0, -0.36, 0.05, knee); // sole
+    ball(matShoes, 0.075, 0, -0.365, 0.19, knee, 1, 0.45, 1.1); // toe cap
+    return { hip, knee };
+  }
+  const legLParts = buildLeg(-1);
+  const legRParts = buildLeg(1);
+  const legL = legLParts.hip;
+  const legR = legRParts.hip;
+  const shinL = legLParts.knee;
+  const shinR = legRParts.knee;
 
   // Round 4: Rico's ground shadow — a cheap dark circle on the pavement
   // that grounds him visually (the renderer has no blob shadows). It
@@ -323,14 +455,30 @@ export function createPlayer(scene, world, spawn) {
         }
       }
 
-      // Walk-cycle swing.
+      // Walk-cycle swing (round 12: articulated limbs — thighs swing,
+      // knees flex on the recovery step, elbows pump bent).
       this.walkPhase += this.speed * safeDt * 1.6;
-      const swing = this.speed > 0.2 ? Math.sin(this.walkPhase) * 0.55 : 0;
+      const moving = this.speed > 0.2;
+      const amp = Math.min(1, this.speed / CONFIG.player.runSpeed);
+      const swing = moving ? Math.sin(this.walkPhase) * 0.55 : 0;
+      const bob = moving ? Math.abs(Math.cos(this.walkPhase)) * 0.04 : 0;
       legL.rotation.x = swing;
       legR.rotation.x = -swing;
+      // Knee flex peaks as the leg lifts through / recovers forward:
+      // the shin trails the thigh, so the foot kicks up behind.
+      shinL.rotation.x = -Math.max(0, Math.sin(this.walkPhase + 2.2)) * 0.85 * amp - 0.04;
+      shinR.rotation.x = -Math.max(0, Math.sin(this.walkPhase + Math.PI + 2.2)) * 0.85 * amp - 0.04;
       armL.rotation.x = -swing * 0.8;
       armR.rotation.x = swing * 0.8;
-      torso.position.y = 1.12 + (this.speed > 0.2 ? Math.abs(Math.cos(this.walkPhase)) * 0.04 : 0);
+      armL.rotation.z = 0.12;
+      armR.rotation.z = -0.12;
+      // Elbows stay bent (more when running) and pump with the swing.
+      const foreBaseL = 0.35 + amp * 0.55 + swing * 0.3;
+      const foreBaseR = 0.35 + amp * 0.55 - swing * 0.3;
+      foreL.rotation.x = foreBaseL;
+      foreR.rotation.x = foreBaseR;
+      torso.position.y = 1.12 + bob;
+      headGroup.position.y = 1.68 + bob * 0.5;
 
       // Round-3 polish: Rico leans into turns and hunches forward when
       // sprinting, so on-foot movement reads as running, not gliding.
@@ -351,7 +499,13 @@ export function createPlayer(scene, world, spawn) {
         torso.rotation.x = -0.22 * phase + (running ? 0.12 : 0) * (1 - phase);
         armR.rotation.x = -0.9 * phase + swing * 0.8 * (1 - phase);
         armL.rotation.x = -swing * 0.8;
+        foreR.rotation.x = -0.5 * phase + foreBaseR * (1 - phase); // right forearm cocks back
       }
+
+      // Round 12: the head rides the torso lean/hunch at half strength,
+      // so the neck never kinks at the collar.
+      headGroup.rotation.z = (this.leanZ ?? 0) * 0.5;
+      headGroup.rotation.x = torso.rotation.x * 0.5;
 
       // Round 4: keep the ground shadow under Rico — flat on the ground,
       // shrinking and fading as he jumps, so the eye always knows where
@@ -459,5 +613,7 @@ export function createPlayer(scene, world, spawn) {
 
   return player;
 }
+
+// Round-12 final: hero model rebuilt as a real low-poly humanoid (tapered torso, cylinder limbs, sphere head/joints) — no longer a block figure.
 
 export default createPlayer;

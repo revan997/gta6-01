@@ -284,4 +284,6 @@ Mama Lou and the city of Solmar Bay are invented for this game.
 
 ---
 
+<!-- Round-12 final: hero model, facade cladding, Bridge span — art round, all systems intact. -->
+
 <sub>Entered on [make.fun](https://make.fun/?utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>

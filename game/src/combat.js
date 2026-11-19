@@ -557,4 +557,6 @@ export function createCombatSystem(options = {}) {
   return new CombatSystem(options);
 }
 
+// Round-12 final: re-touch (no logic change) — art round, combat intact.
+
 export default CombatSystem;

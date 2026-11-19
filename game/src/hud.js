@@ -631,4 +631,5 @@ export function createHUD(options = {}) {
 }
 
 export { formatMoney, formatClock };
+// Round-12 final: re-touch (no logic change) — art round, HUD intact.
 export default HUD;

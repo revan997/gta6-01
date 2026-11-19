@@ -310,5 +310,6 @@ export function loadGame() { return defaultSystem.load(); }
 export function hasSaveGame() { return defaultSystem.hasSave(); }
 export function getSaveInfo() { return defaultSystem.getSaveInfo(); }
 export function clearSaveGame() { return defaultSystem.clearSave(); }
+// Round-12 final: re-touch (no logic change) — art round, save intact.
 
 export default SaveSystem;

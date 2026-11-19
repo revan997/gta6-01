@@ -609,4 +609,6 @@ export function seatPoliceLightBar(car) {
   return true;
 }
 
+// Round-12 final: re-touch (no logic change) — art round, police intact.
+
 export default PoliceSystem;

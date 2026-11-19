@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { createRng, weightedChoice } from './random.js';
-import { applyFacadeTint, facadeTintFor, makeBeaconTexture, makeCanvasTexture, makeGlowTexture, makeHaloTexture, makeLitGlassMaterial, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
+import { applyFacadeTint, facadeCladdingFor, facadeTintFor, makeBeaconTexture, makeCanvasTexture, makeCoolGlassMaterial, makeGlowTexture, makeHaloTexture, makeLitGlassMaterial, makeSignTexture, makeSunDiscTexture, makeWaterTexture } from './render.js';
 
 // District lookup: which named district contains (x, z), or null.
 export function districtAt(x, z) {
@@ -226,13 +226,154 @@ export function buildWorld(scene, seedOrRng) {
   // with a few lit windows + a darker ground floor). Each building clones
   // one variant and repeats it by its own dimensions, so windows stay
   // ~6 m apart horizontally and ~3 m vertically on every building.
+  // Round-12 (Lane B): the tile now carries a district cladding
+  // language (brick / glass / metal / stucco / concrete panel seams),
+  // four lit tones incl. cool blue-white, varied frame depths, and a
+  // shopfront ground floor — the flat-brown-box read is the gap this
+  // pass closes. All new painting is deterministic (texHash), so the
+  // rng draw counts — and the city layout — are unchanged.
   // Window grid: 4 columns x 8 floors. Round-5: windows read recessed —
   // a dark frame border around each window, glass with a vertical
   // gradient (warm lit / cool dark), and a thin light sill line at the
   // bottom. The lit ratio varies per FLOOR (some floors mostly lit, some
   // mostly dark) — derived deterministically from floor + base colour so
   // no extra rng is consumed and the round-4 layout stays identical.
-  function makeFacadeTexture(baseHex, rng) {
+  // Round-12 (Lane B, facade materials): deterministic texture helpers.
+  // Pure hashes — NO rng is consumed here, so the seeded layout stream
+  // (and therefore every building footprint / height / position) is
+  // identical to round 11. texHash(a, b) is a stable 0..1 value for a
+  // pair of integers; paintCladding lays the district material language
+  // (brick courses, glass mullions, metal corrugation, stucco blotches,
+  // concrete panel seams) under the window grid; paintGroundFloor paints
+  // a shopfront band (sign strip + glass panes + door) in the bottom
+  // 32 px of the tile, shared by the windowed and plain facades.
+  function texHash(a, b) {
+    let h = (Math.imul((a | 0), 374761393) + Math.imul((b | 0), 668265263)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  function paintCladding(ctx, w, h, cladding, seed) {
+    if (cladding === 'brick') {
+      // Brick courses: mortar lines every 4 px + staggered vertical
+      // joints every 16 px, with a per-course tint shift so courses
+      // read as individual bricks, not stripes.
+      for (let y = 0; y < h - 32; y += 4) {
+        const row = Math.floor(y / 4);
+        ctx.fillStyle = texHash(seed, row) > 0.5 ? 'rgba(255,220,180,0.07)' : 'rgba(60,20,10,0.10)';
+        ctx.fillRect(0, y, w, 4);
+        ctx.fillStyle = 'rgba(40,20,15,0.35)';
+        ctx.fillRect(0, y + 3, w, 1);
+        const off = (row % 2) * 8;
+        for (let x = off; x < w; x += 16) {
+          ctx.fillRect(x, y, 1, 4);
+        }
+      }
+    } else if (cladding === 'glass') {
+      // Glass curtain wall: vertical mullion strips + a diagonal sky
+      // sheen band, so the face reads as reflective glazing, not paint.
+      for (let x = 0; x < w; x += 16) {
+        ctx.fillStyle = 'rgba(10,20,30,0.28)';
+        ctx.fillRect(x, 0, 2, h - 32);
+        ctx.fillStyle = 'rgba(180,220,255,0.10)';
+        ctx.fillRect(x + 2, 0, 3, h - 32);
+      }
+      const sheen = ctx.createLinearGradient(0, 0, w, h);
+      sheen.addColorStop(0, 'rgba(200,230,255,0.14)');
+      sheen.addColorStop(0.45, 'rgba(200,230,255,0.0)');
+      sheen.addColorStop(1, 'rgba(20,40,70,0.12)');
+      ctx.fillStyle = sheen;
+      ctx.fillRect(0, 0, w, h - 32);
+    } else if (cladding === 'metal') {
+      // Corrugated metal: horizontal ribs every 6 px + rivet dots at
+      // the panel corners, so the Docks read as sheet cladding.
+      for (let y = 0; y < h - 32; y += 6) {
+        ctx.fillStyle = 'rgba(255,255,255,0.07)';
+        ctx.fillRect(0, y, w, 2);
+        ctx.fillStyle = 'rgba(0,0,0,0.16)';
+        ctx.fillRect(0, y + 4, w, 2);
+      }
+      for (let py = 8; py < h - 32; py += 32) {
+        for (let px = 8; px < w; px += 32) {
+          ctx.fillStyle = 'rgba(0,0,0,0.35)';
+          ctx.fillRect(px, py, 2, 2);
+        }
+      }
+    } else if (cladding === 'stucco') {
+      // Pale stucco: a few large soft blotches, no hard seams — the
+      // Beachfront stays soft and sun-bleached.
+      for (let i = 0; i < 9; i++) {
+        const bx = texHash(seed, i * 3 + 1) * w;
+        const by = texHash(seed, i * 3 + 2) * (h - 32);
+        const br = 14 + texHash(seed, i * 3 + 3) * 26;
+        const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+        g.addColorStop(0, texHash(seed, i) > 0.5 ? 'rgba(255,250,230,0.10)' : 'rgba(120,90,60,0.08)');
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(bx, by, br, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else {
+      // Concrete (default): vertical panel seams + alternating bay
+      // tones, so the wall reads as precast panels, not one slab.
+      for (let col = 0; col < 4; col++) {
+        const x = col * 32;
+        if (texHash(seed, col + 11) > 0.5) {
+          ctx.fillStyle = 'rgba(255,255,255,0.045)';
+          ctx.fillRect(x, 0, 32, h - 32);
+        } else {
+          ctx.fillStyle = 'rgba(0,0,0,0.05)';
+          ctx.fillRect(x, 0, 32, h - 32);
+        }
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
+        ctx.fillRect(x, 0, 2, h - 32);
+      }
+    }
+    // Top-light / bottom-shade gradient over the whole tile so no two
+    // faces are identically flat, even where the cladding is quiet.
+    const vg = ctx.createLinearGradient(0, 0, 0, h);
+    vg.addColorStop(0, 'rgba(255,255,255,0.08)');
+    vg.addColorStop(0.6, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, 'rgba(0,0,0,0.14)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, w, h);
+  }
+  function paintGroundFloor(ctx, w, h, seed) {
+    // Sign band (dark strip + small lit sign blocks) above a glass
+    // shopfront: two panes with a centre mullion + a framed entrance
+    // door at the right, so the ground floor reads as shops, not a
+    // darker stripe with one door in the middle.
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(0, h - 32, w, 32);
+    ctx.fillStyle = '#10161c';
+    ctx.fillRect(0, h - 32, w, 9);
+    const signTones = ['#ffd319', '#05d9e8', '#ff2a6d', '#ffe9a8'];
+    for (let s = 0; s < 3; s++) {
+      ctx.fillStyle = signTones[Math.floor(texHash(seed, s + 31) * signTones.length)];
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(10 + s * 38, h - 30, 26, 5);
+      ctx.globalAlpha = 1;
+    }
+    // Glass panes: cool dark glass with a warm interior glow at the
+    // base, split by mullions; door frame at the right.
+    const gg = ctx.createLinearGradient(0, h - 23, 0, h);
+    gg.addColorStop(0, '#2a3a4a');
+    gg.addColorStop(1, '#4a3a28');
+    ctx.fillStyle = gg;
+    ctx.fillRect(6, h - 23, 76, 23);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(6 + 25, h - 23, 2, 23);
+    ctx.fillRect(6 + 50, h - 23, 2, 23);
+    ctx.fillStyle = 'rgba(255,233,168,0.35)';
+    ctx.fillRect(6, h - 4, 76, 2);
+    ctx.fillStyle = '#14181d';
+    ctx.fillRect(w - 26, h - 23, 18, 23);
+    ctx.fillStyle = '#1c2733';
+    ctx.fillRect(w - 24, h - 21, 14, 21);
+    ctx.fillStyle = 'rgba(255,233,168,0.6)';
+    ctx.fillRect(w - 12, h - 12, 2, 2);
+  }
+  function makeFacadeTexture(baseHex, rng, cladding = 'concrete') {
     const base = '#' + baseHex.toString(16).padStart(6, '0');
     return makeCanvasTexture(128, 256, (ctx, w, h) => {
       ctx.fillStyle = base;
@@ -243,6 +384,10 @@ export function buildWorld(scene, seedOrRng) {
         ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
         ctx.fillRect(rng.range(0, w), rng.range(0, h), 2, 2);
       }
+      // Round-12 (Lane B): the district cladding language goes under
+      // the windows — same rng stream (paintCladding is deterministic),
+      // so the layout is untouched.
+      paintCladding(ctx, w, h, cladding, baseHex);
       // Window grid: 4 columns x 8 floors, per-floor lit ratio.
       // Round-10 (Lane C): lit ratios raised (0.22/0.42/0.62/0.85, was
       // 0.12/0.30/0.55/0.80) so far more windows glow warm at dusk, and
@@ -262,21 +407,35 @@ export function buildWorld(scene, seedOrRng) {
           const x = 6 + col * 32;
           const y = 6 + floor * 32;
           const lit = rng.next() < floorLitRatio;
-          // Round-10: a warm halo behind lit glass (drawn first, so the
-          // frame covers its edges) — the lit window blooms against
-          // the wall at dusk instead of sitting as a flat bright rect.
+          // Round-12 (Lane B): frame DEPTH varies per window — every
+          // third window (deterministic) gets a deeper 3 px frame with
+          // a drop shadow below it, the rest keep the 2 px recess, so
+          // the grid is not one stamped depth. The halo colour follows
+          // the lit tone (warm gold vs cool blue).
+          const deepFrame = (floor * 4 + col + (baseHex % 7)) % 3 === 0;
+          const litVariant = (floor * 4 + col + (baseHex % 5)) % 4;
+          const coolLit = lit && litVariant === 3;
           if (lit) {
-            ctx.fillStyle = 'rgba(255,170,60,0.28)';
+            ctx.fillStyle = coolLit ? 'rgba(140,180,255,0.25)' : 'rgba(255,170,60,0.28)';
             ctx.fillRect(x - 5, y - 5, 30, 28);
           }
-          // Dark frame border (2 px) — the recess read.
-          ctx.fillStyle = '#14181d';
-          ctx.fillRect(x - 2, y - 2, 24, 22);
+          if (deepFrame) {
+            ctx.fillStyle = 'rgba(0,0,0,0.35)';
+            ctx.fillRect(x - 1, y + 19, 22, 3);
+            ctx.fillStyle = '#0e1114';
+            ctx.fillRect(x - 3, y - 3, 26, 24);
+          } else {
+            // Dark frame border (2 px) — the recess read.
+            ctx.fillStyle = '#14181d';
+            ctx.fillRect(x - 2, y - 2, 24, 22);
+          }
           // Inner glass with a vertical gradient. Round-10: the lit
           // tone varies deterministically per window (pale gold /
           // warm amber / deep orange), so lit floors are not one
-          // uniform yellow.
-          const litVariant = (floor * 4 + col + (baseHex % 5)) % 3;
+          // uniform yellow. Round-12: a fourth tone joins — COOL
+          // blue-white (fluorescent interior) — and a deterministic
+          // subset of DARK panes gets a pale curtain stripe, so dark
+          // windows are not one flat navy either.
           const g = ctx.createLinearGradient(0, y, 0, y + 18);
           if (lit) {
             if (litVariant === 1) {
@@ -285,6 +444,9 @@ export function buildWorld(scene, seedOrRng) {
             } else if (litVariant === 2) {
               g.addColorStop(0, '#ffd98a');
               g.addColorStop(1, '#ff7a1e');
+            } else if (litVariant === 3) {
+              g.addColorStop(0, '#d6e8ff');
+              g.addColorStop(1, '#7fa8d8');
             } else {
               g.addColorStop(0, '#ffe9a8');
               g.addColorStop(1, '#ff9a3c');
@@ -295,6 +457,10 @@ export function buildWorld(scene, seedOrRng) {
           }
           ctx.fillStyle = g;
           ctx.fillRect(x, y, 20, 18);
+          if (!lit && (floor * 4 + col + (baseHex % 11)) % 4 === 0) {
+            ctx.fillStyle = 'rgba(200,210,220,0.16)';
+            ctx.fillRect(x + 3, y, 5, 18);
+          }
           // Round-10: a centre mullion splits each pane in two, so the
           // window grid reads as real divided windows at street level.
           ctx.fillStyle = lit ? 'rgba(60,30,5,0.55)' : 'rgba(0,0,0,0.5)';
@@ -310,18 +476,16 @@ export function buildWorld(scene, seedOrRng) {
       ctx.fillStyle = 'rgba(0,0,0,0.10)';
       ctx.fillRect(0, 0, 5, h);
       ctx.fillRect(w - 5, 0, 5, h);
-      // Ground floor: darker band + a door.
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
-      ctx.fillRect(0, h - 32, w, 32);
-      ctx.fillStyle = '#1c2733';
-      ctx.fillRect(w / 2 - 8, h - 26, 16, 26);
+      // Round-12 (Lane B): ground floor is a shopfront band (sign
+      // strip + glass panes + framed door) — see paintGroundFloor.
+      paintGroundFloor(ctx, w, h, baseHex);
     });
   }
   // Round-5: PLAIN facade (base colour + speckle + ground-floor band, NO
   // painted windows) for buildings that get REAL geometry windows — so
   // texture windows and geometry windows never double up. Painted on the
   // dedicated plainRng stream (see top of buildWorld).
-  function makePlainFacadeTexture(baseHex, rng) {
+  function makePlainFacadeTexture(baseHex, rng, cladding = 'concrete') {
     const base = '#' + baseHex.toString(16).padStart(6, '0');
     return makeCanvasTexture(128, 256, (ctx, w, h) => {
       ctx.fillStyle = base;
@@ -331,6 +495,10 @@ export function buildWorld(scene, seedOrRng) {
         ctx.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
         ctx.fillRect(rng.range(0, w), rng.range(0, h), 2, 2);
       }
+      // Round-12 (Lane B): same district cladding language as the
+      // windowed facade, so geometry-window buildings are not flat
+      // colour beside their painted neighbours.
+      paintCladding(ctx, w, h, cladding, baseHex);
       // Round-10 (Lane C): floor banding + pilaster strips, so the plain
       // facade (geometry-window buildings) is not one flat colour: a
       // dark separator + light edge every floor, and a faint vertical
@@ -348,11 +516,8 @@ export function buildWorld(scene, seedOrRng) {
         ctx.fillStyle = 'rgba(0,0,0,0.08)';
         ctx.fillRect(x - 1, 0, 2, h - 32);
       }
-      // Ground floor: darker band + a door (same as the windowed facade).
-      ctx.fillStyle = 'rgba(0,0,0,0.28)';
-      ctx.fillRect(0, h - 32, w, 32);
-      ctx.fillStyle = '#1c2733';
-      ctx.fillRect(w / 2 - 8, h - 26, 16, 26);
+      // Round-12 (Lane B): ground floor is the shared shopfront band.
+      paintGroundFloor(ctx, w, h, baseHex);
     });
   }
   // Round-4: facades are tinted per district — glassy blue-greys
@@ -362,14 +527,16 @@ export function buildWorld(scene, seedOrRng) {
   const R4 = CONFIG.round4;
   const facadeByDistrict = {};
   for (const [label, colors] of Object.entries(R4.districtFacades)) {
-    facadeByDistrict[label] = colors.map((c) => makeFacadeTexture(c, rng));
+    // Round-12 (Lane B): each district paints in its own cladding
+    // language (glass / brick / stucco / metal / concrete).
+    facadeByDistrict[label] = colors.map((c) => makeFacadeTexture(c, rng, facadeCladdingFor(label)));
   }
   const facadeTextures = facadeByDistrict.Downtown || Object.values(facadeByDistrict)[0];
   // Round-5: plain (windowless) facades per district, for buildings that
   // get real geometry windows instead of painted ones.
   const plainByDistrict = {};
   for (const [label, colors] of Object.entries(R4.districtFacades)) {
-    plainByDistrict[label] = colors.map((c) => makePlainFacadeTexture(c, plainRng));
+    plainByDistrict[label] = colors.map((c) => makePlainFacadeTexture(c, plainRng, facadeCladdingFor(label)));
   }
 
   // Asphalt with a dashed centre line and edge lines. Two orientations:
@@ -716,6 +883,11 @@ export function buildWorld(scene, seedOrRng) {
   let r10Cornices = 0;
   let r10LowParapets = 0;
   let r10GoldLit = 0;
+  // Round-12 (Lane B, facade materials): probe counts for this pass.
+  let r12StringCourses = 0;
+  let r12ParapetCaps = 0;
+  let r12Pilasters = 0;
+  let r12CoolLit = 0;
   const r10FacadeTints = new Set();
   // Round-10: deterministic per-building hash (no rng) for facade
   // decisions that must not disturb the seeded layout stream — the
@@ -759,6 +931,8 @@ export function buildWorld(scene, seedOrRng) {
   // perf reasoning as the round-5 window materials.
   const matGeoGlassLit = makeLitGlassMaterial(0xffe9a8);
   const matGeoGlassLitGold = makeLitGlassMaterial(0xffc46b);
+  // Round-12 (Lane B): cool blue-white lit panes, the third lit tone.
+  const matGeoGlassCool = makeCoolGlassMaterial(0xbfd9ff);
   const matGeoGlassDark = new THREE.MeshBasicMaterial({ color: 0x2a3a4a, side: THREE.DoubleSide });
   // Round-5 perf: ONE ring geometry per window frame instead of 4
   // separate bar planes — the same border (outer rect minus the glass
@@ -784,6 +958,7 @@ export function buildWorld(scene, seedOrRng) {
   const geoWinFrames = [];
   const geoWinGlassLit = [];
   const geoWinGlassLitGold = []; // round-10: deeper-gold lit panes
+  const geoWinGlassCool = []; // round-12: cool blue-white lit panes
   const geoWinGlassDark = [];
   const geoWinAwnings = [];
   let r5GeoBuildings = 0;
@@ -820,9 +995,15 @@ export function buildWorld(scene, seedOrRng) {
         // so more floors glow warm at dusk. Same one rng.pick per
         // floor, so the rng stream is unchanged.
         const floorLitRatio = rng.pick([0.05, 0.2, 0.4, 0.6, 0.75]);
+        // Round-12 (Lane B): a per-BUILDING lit bias from the position
+        // hash (no rng) — one building in four reads notably brighter,
+        // one in four dimmer, the rest as rolled — so lit ratios vary
+        // per building, not just per floor.
+        const bHash = facadeHash(px, pz);
+        const litBias = bHash % 4 === 0 ? 0.18 : (bHash % 4 === 1 ? -0.08 : 0);
         for (let c = 0; c < cols; c++) {
           const u = -span / 2 + c * R5W.colSpacing;
-          const lit = rng.next() < floorLitRatio;
+          const lit = rng.next() < Math.min(0.95, Math.max(0, floorLitRatio + litBias));
           // Window centre (glass face) in world space.
           const cx = px + f.n[0] * f.off + f.t[0] * u;
           const cz = pz + f.n[2] * f.off + f.t[2] * u;
@@ -836,7 +1017,13 @@ export function buildWorld(scene, seedOrRng) {
             // Round-10: every third lit pane (deterministic by floor /
             // column / building x, no rng) goes deeper gold, the rest
             // pale gold — lit floors vary instead of one flat yellow.
-            if ((fl * 7 + c * 3 + Math.abs(Math.floor(px)) % 5) % 3 === 0) {
+            // Round-12: every fifth lit pane goes COOL blue-white
+            // instead, so warm / cool / dark mix across a facade.
+            const litPick = (fl * 7 + c * 3 + Math.abs(Math.floor(px)) % 5);
+            if (litPick % 5 === 0) {
+              geoWinGlassCool.push(glass);
+              r12CoolLit += 1;
+            } else if (litPick % 3 === 0) {
               geoWinGlassLitGold.push(glass);
               r10GoldLit += 1;
             } else geoWinGlassLit.push(glass);
@@ -1111,6 +1298,18 @@ export function buildWorld(scene, seedOrRng) {
               });
               addBox(signMat, aw * 0.8, 0.5, 0.12, 0, 0.6, -0.5, shop);
             }
+            // Round-12 (Lane B): entrance pilasters flanking the glass
+            // on awning shopfronts — a framed doorway read at street
+            // level, not a floating glass slab. Two thin dark strips,
+            // proud of the glass, sharing matRoof / boxGeo (no new
+            // geometry or material). Awning fronts only: the glass-only
+            // fronts already carry a sign board, and the pilaster count
+            // stays inside the perf budget.
+            if (wantsAwning) {
+              addBox(matRoof, 0.3, 2.2, 0.25, -aw / 2 + 0.15, -1.2, -0.35, shop);
+              addBox(matRoof, 0.3, 2.2, 0.25, aw / 2 - 0.15, -1.2, -0.35, shop);
+              r12Pilasters += 2;
+            }
           }
         }
         // Round-4b (coordinator): geometry-level variation — the audit's
@@ -1215,10 +1414,28 @@ export function buildWorld(scene, seedOrRng) {
         // profile; low flat roofs below the parapet minHeight get a
         // thin rim instead of a bare cap. Shared boxGeo / materials,
         // baked at build time, no per-frame cost.
+        // Round-12 (Lane B): the cornice language grows two more
+        // members instead of more of the same slab — STRING COURSES
+        // (two slim ledges at ~35% and ~68% of a tall tower, a
+        // different proportion from the single heavy cornice) and a
+        // PARAPET CAP (a thin slab ringing the roof edge, wider than
+        // the wall by 0.25 m, so the roofline reads in profile). The
+        // hash splits buildings 1/3–1/3–1/3 across cornice / string
+        // courses / cap, so the three profiles never stack on one
+        // tower. All deterministic, shared boxGeo / matBalcony.
         if (!isStepped && height >= 14 && facadeHash(px, pz) % 3 === 0) {
           const corniceY = Math.max(6.4, Math.floor((height * 0.62) / 3.2) * 3.2);
           addBox(matBalcony, bw + 0.7, 0.35, bd + 0.7, 0, corniceY, 0, group);
           r10Cornices += 1;
+        } else if (!isStepped && height >= 24 && facadeHash(px, pz) % 3 === 1) {
+          const scY1 = Math.max(6.4, Math.floor((height * 0.35) / 3.2) * 3.2);
+          const scY2 = Math.max(9.6, Math.floor((height * 0.68) / 3.2) * 3.2);
+          addBox(matBalcony, bw + 0.45, 0.22, bd + 0.45, 0, scY1, 0, group);
+          addBox(matBalcony, bw + 0.45, 0.22, bd + 0.45, 0, scY2, 0, group);
+          r12StringCourses += 2;
+        } else if (!isStepped && !hasPitchedRoof && height >= 14 && facadeHash(px, pz) % 3 === 2) {
+          addBox(matBalcony, bw + 0.5, 0.18, bd + 0.5, 0, height + 0.69, 0, group);
+          r12ParapetCaps += 1;
         }
         if (!isStepped && !hasPitchedRoof && height < R4b.parapet.minHeight && facadeHash(px, pz) % 2 === 0) {
           const lpH = 0.5;
@@ -1295,6 +1512,9 @@ export function buildWorld(scene, seedOrRng) {
     // Round-10: the deeper-gold lit panes bake as their own
     // InstancedMesh (same plane geometry, no shadows, frustumCulled off).
     makeInstanced(geoWinGlassLitGold, matGeoGlassLitGold, false, planeUnit);
+    // Round-12: the cool blue-white lit panes bake as their own
+    // InstancedMesh — one extra draw call for the whole city.
+    makeInstanced(geoWinGlassCool, matGeoGlassCool, false, planeUnit);
     makeInstanced(geoWinGlassDark, matGeoGlassDark, false, planeUnit);
     makeInstanced(geoWinAwnings, matBalcony, false);
   }
@@ -1526,13 +1746,60 @@ export function buildWorld(scene, seedOrRng) {
   // z = -240 from x 150 to x 330. Seven angled deck segments follow a
   // shallow arch (peak ~8 m mid-span), with railings, two support
   // pillars in the water and lamp posts. Purely visual (over water).
+  // Round-12 (Lane C): round 11 read as a thin dark line from N/S/W —
+  // a 1 m slab, 6 m wide, one bare rail bar, no silhouette above the
+  // deck, over near-black water. Now it is a suspension span: a
+  // thicker, wider warm deck with a bright fascia band and a gold
+  // centre line, a real balustrade (top + mid rail, posts), two pylons
+  // over the pillars with a draped main cable + hangers, lamps on BOTH
+  // edges, and a lighter water strip under the span so the bridge
+  // reads against the basin. Arch peak (8 m), x0/x1/z and the deck top
+  // surface are UNCHANGED — no gameplay code reads the deck, so the
+  // crossing behaviour cannot change. Tuning lives in
+  // CONFIG.round12.bridge (config.js), never hardcoded here.
   const bridgeGroup = new THREE.Group();
   scene.add(bridgeGroup);
   const bridgeSpan = bridgeCfg.x1 - bridgeCfg.x0;
   const bridgeSegLen = bridgeSpan / bridgeCfg.spans;
   const bridgeArch = (t) => 8 * Math.sin(Math.PI * t); // peak ~8 m at mid-span
-  const matBridgeDeck = new THREE.MeshStandardMaterial({ color: 0x4a4f58, roughness: 0.8 });
+  const R12B = (CONFIG.round12 && CONFIG.round12.bridge) || {};
+  const bridgeDeckW = R12B.deckWidth ?? 8; // was 6
+  const bridgeDeckT = R12B.deckThickness ?? 1.8; // was 1
+  const bridgeDeckTop = (t) => bridgeArch(t) + bridgeDeckT / 2;
+  const bridgeEdgeZ = bridgeDeckW / 2 - 0.1; // railing / cable line, just inside the deck edge
+  const bridgePylonH = R12B.pylonHeight ?? 12; // pylon rise above the deck top
+  const bridgeCableSag = R12B.cableSag ?? 2; // cable height above deck at mid-span
+  const matBridgeDeck = new THREE.MeshStandardMaterial({ color: R12B.deckColor ?? 0x8a7a62, roughness: 0.85 });
+  const matBridgeFascia = new THREE.MeshStandardMaterial({ color: R12B.fasciaColor ?? 0xd8c9a8, roughness: 0.9 });
+  const matBridgeCentre = new THREE.MeshBasicMaterial({ color: R12B.centreLineColor ?? 0xf5d76e });
+  const matBridgeCable = new THREE.MeshStandardMaterial({ color: R12B.cableColor ?? 0x2e3138, roughness: 0.6, metalness: 0.5 });
+  const matBridgeLampHead = new THREE.MeshStandardMaterial({ color: 0xffe9a0, emissive: 0xffdf80, emissiveIntensity: 1.2, roughness: 0.4 });
+  const matBridgeEdgeLight = new THREE.MeshBasicMaterial({ color: 0xffd98a });
   const matBridgeRail = matPole;
+  // One cable run between two points in the x-y plane at fixed z: a
+  // thin shared-boxGeo bar stretched between the points, rotated
+  // about z. All bridge pieces share boxGeo / a handful of materials,
+  // so the whole span costs meshes, not geometries.
+  const bridgeCableSeg = (x0, y0, x1, y1, z, thick) => {
+    const dx = x1 - x0, dy = y1 - y0;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const seg = new THREE.Mesh(boxGeo, matBridgeCable);
+    seg.scale.set(len, thick, thick);
+    seg.position.set((x0 + x1) / 2, (y0 + y1) / 2, z);
+    seg.rotation.z = Math.atan2(dy, dx);
+    bridgeGroup.add(seg);
+  };
+  // Main-cable curve: a parabola through the two pylon tops, sagging
+  // to cableSag above the deck at mid-span. Pylons are symmetric
+  // about the mid-span, so one top height serves both.
+  const bridgePylonTopY = (px) => bridgeDeckTop((px - bridgeCfg.x0) / bridgeSpan) + bridgePylonH;
+  const bridgeCableY = (x) => {
+    const xm = (bridgeCfg.x0 + bridgeCfg.x1) / 2;
+    const topY = bridgePylonTopY(210);
+    const sagY = bridgeDeckTop(0.5) + bridgeCableSag;
+    const u = (x - xm) / (270 - xm); // -1..1 across the main span
+    return sagY + (topY - sagY) * u * u;
+  };
   for (let i = 0; i < bridgeCfg.spans; i++) {
     const t0 = i / bridgeCfg.spans;
     const t1 = (i + 1) / bridgeCfg.spans;
@@ -1542,20 +1809,56 @@ export function buildWorld(scene, seedOrRng) {
     // Slope of the arch at mid-segment (radians about z).
     const angle = Math.atan2(8 * Math.PI * Math.cos(Math.PI * tc), bridgeSpan);
     const deck = new THREE.Mesh(boxGeo, matBridgeDeck);
-    deck.scale.set(bridgeSegLen + 0.6, 1, 6);
+    deck.scale.set(bridgeSegLen + 0.6, bridgeDeckT, bridgeDeckW);
     deck.position.set(xc, yc, bridgeCfg.z);
     deck.rotation.z = angle;
     deck.receiveShadow = true;
     bridgeGroup.add(deck);
+    // Bright fascia band along both long edges, proud of the deck side,
+    // so the span's side profile reads as a band, not a line.
     for (const side of [-1, 1]) {
-      const rail = new THREE.Mesh(boxGeo, matBridgeRail);
-      rail.scale.set(bridgeSegLen + 0.6, 0.9, 0.25);
-      rail.position.set(xc, yc + 0.9, bridgeCfg.z + side * 2.9);
-      rail.rotation.z = angle;
-      bridgeGroup.add(rail);
+      const fascia = new THREE.Mesh(boxGeo, matBridgeFascia);
+      fascia.scale.set(bridgeSegLen + 0.6, 0.5, 0.3);
+      fascia.position.set(xc, yc - bridgeDeckT / 2 + 0.35, bridgeCfg.z + side * (bridgeDeckW / 2 + 0.05));
+      fascia.rotation.z = angle;
+      bridgeGroup.add(fascia);
+    }
+    // Gold centre line on the deck top — the road over the span.
+    const centre = new THREE.Mesh(boxGeo, matBridgeCentre);
+    centre.scale.set(bridgeSegLen * 0.9, 0.06, 0.35);
+    centre.position.set(xc, yc + bridgeDeckT / 2 + 0.04, bridgeCfg.z);
+    centre.rotation.z = angle;
+    bridgeGroup.add(centre);
+    // Real balustrade per side: top rail + mid rail + 3 posts, all
+    // following the arch slope, so the deck edge reads as a railing
+    // from N/S instead of a bare slab edge.
+    for (const side of [-1, 1]) {
+      const rz = bridgeCfg.z + side * bridgeEdgeZ;
+      const top = new THREE.Mesh(boxGeo, matBridgeRail);
+      top.scale.set(bridgeSegLen + 0.6, 0.28, 0.28);
+      top.position.set(xc, yc + bridgeDeckT / 2 + 1.15, rz);
+      top.rotation.z = angle;
+      bridgeGroup.add(top);
+      const mid = new THREE.Mesh(boxGeo, matBridgeRail);
+      mid.scale.set(bridgeSegLen + 0.6, 0.16, 0.16);
+      mid.position.set(xc, yc + bridgeDeckT / 2 + 0.6, rz);
+      mid.rotation.z = angle;
+      bridgeGroup.add(mid);
+      for (const f of [0.25, 0.5, 0.75]) {
+        const tp = t0 + (t1 - t0) * f;
+        const px = bridgeCfg.x0 + tp * bridgeSpan;
+        const pa = Math.atan2(8 * Math.PI * Math.cos(Math.PI * tp), bridgeSpan);
+        const post = new THREE.Mesh(boxGeo, matBridgeRail);
+        post.scale.set(0.22, 1.2, 0.22);
+        post.position.set(px, bridgeDeckTop(tp) + 0.6, rz);
+        post.rotation.z = pa;
+        bridgeGroup.add(post);
+      }
     }
   }
-  // Support pillars in the water (deck underside ~6.4 m there).
+  // Support pillars in the water (deck underside ~6.0 m there; the
+  // pillar tops tuck 0.9 m into the thicker round-12 deck, never
+  // through its top). Pylons stand over these same two pillars.
   for (const px of [210, 270]) {
     const py = bridgeArch((px - bridgeCfg.x0) / bridgeSpan);
     const pillar = new THREE.Mesh(boxGeo, matRoof);
@@ -1564,21 +1867,115 @@ export function buildWorld(scene, seedOrRng) {
     pillar.receiveShadow = true;
     bridgeGroup.add(pillar);
   }
-  // Lamp posts with glow sprites along the deck.
+  // Lamp posts with glow sprites along the deck — round 12: BOTH
+  // edges (was the south edge only), each with a warm emissive head
+  // so the lamps read as lamps, not bare poles with a sprite.
   const bridgeLampTex = makeGlowTexture('#ffe9a0');
   for (const lx of [180, 240, 300]) {
     const ly = bridgeArch((lx - bridgeCfg.x0) / bridgeSpan);
-    const pole = new THREE.Mesh(boxGeo, matPole);
-    pole.scale.set(0.22, 4, 0.22);
-    pole.position.set(lx, ly + 2, bridgeCfg.z - 2.6);
-    bridgeGroup.add(pole);
-    const lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: bridgeLampTex, transparent: true, depthWrite: false, opacity: 0.7,
-    }));
-    lampGlow.scale.set(4, 4, 1);
-    lampGlow.position.set(lx, ly + 4.2, bridgeCfg.z - 2.6);
-    bridgeGroup.add(lampGlow);
+    for (const side of [-1, 1]) {
+      const lz = bridgeCfg.z + side * 2.6;
+      const pole = new THREE.Mesh(boxGeo, matPole);
+      pole.scale.set(0.22, 4, 0.22);
+      pole.position.set(lx, ly + 2, lz);
+      bridgeGroup.add(pole);
+      const head = new THREE.Mesh(boxGeo, matBridgeLampHead);
+      head.scale.set(0.55, 0.25, 0.3);
+      head.position.set(lx, ly + 4.1, lz);
+      bridgeGroup.add(head);
+      const lampGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: bridgeLampTex, transparent: true, depthWrite: false, opacity: 0.7,
+      }));
+      lampGlow.scale.set(4, 4, 1);
+      lampGlow.position.set(lx, ly + 4.2, lz);
+      bridgeGroup.add(lampGlow);
+    }
   }
+  // Warm marker lights on the fascia, both edges — a dotted gold line
+  // along the span that reads at dusk from N/S/W.
+  const bridgeEdgeStep = R12B.edgeLightSpacing ?? 22.5;
+  for (let lx = bridgeCfg.x0 + bridgeEdgeStep / 2; lx < bridgeCfg.x1; lx += bridgeEdgeStep) {
+    const lt = (lx - bridgeCfg.x0) / bridgeSpan;
+    for (const side of [-1, 1]) {
+      const el = new THREE.Mesh(boxGeo, matBridgeEdgeLight);
+      el.scale.set(0.35, 0.25, 0.15);
+      el.position.set(lx, bridgeArch(lt) - 0.55, bridgeCfg.z + side * (bridgeDeckW / 2 + 0.275));
+      bridgeGroup.add(el);
+    }
+  }
+  // Suspension silhouette: two pylons over the pillars, a main cable
+  // draped between their tops (sagging to 2 m above the deck at
+  // mid-span, anchored at the abutments), and vertical hangers from
+  // the cable to the deck. This is the element that makes the span
+  // read from N/S — a dark cable curve + twin towers against the sky,
+  // where round 11 had nothing above the deck at all.
+  for (const px of [210, 270]) {
+    const pt = (px - bridgeCfg.x0) / bridgeSpan;
+    const pTop = bridgePylonTopY(px);
+    for (const side of [-1, 1]) {
+      const leg = new THREE.Mesh(boxGeo, matBridgeCable);
+      leg.scale.set(0.8, bridgePylonH, 0.8);
+      leg.position.set(px, bridgeDeckTop(pt) + bridgePylonH / 2, bridgeCfg.z + side * bridgeEdgeZ);
+      bridgeGroup.add(leg);
+    }
+    const beam = new THREE.Mesh(boxGeo, matBridgeCable);
+    beam.scale.set(0.8, 0.8, bridgeEdgeZ * 2 + 1.6);
+    beam.position.set(px, pTop, bridgeCfg.z);
+    bridgeGroup.add(beam);
+  }
+  for (const side of [-1, 1]) {
+    const cz = bridgeCfg.z + side * bridgeEdgeZ;
+    const anchorY = bridgeDeckTop(0) + 0.7; // just above the deck at the abutment
+    // Side spans: straight runs, anchor -> pylon top (3 segments each).
+    for (const [sx0, sx1] of [[150, 210], [270, 330]]) {
+      const sy0 = sx0 === 150 ? anchorY : bridgePylonTopY(270);
+      const sy1 = sx0 === 150 ? bridgePylonTopY(210) : anchorY;
+      for (let s = 0; s < 3; s++) {
+        const fx0 = sx0 + ((sx1 - sx0) * s) / 3;
+        const fx1 = sx0 + ((sx1 - sx0) * (s + 1)) / 3;
+        const fy0 = sy0 + ((sy1 - sy0) * s) / 3;
+        const fy1 = sy0 + ((sy1 - sy0) * (s + 1)) / 3;
+        bridgeCableSeg(fx0, fy0, fx1, fy1, cz, 0.18);
+      }
+    }
+    // Main span: the parabola, 8 segments pylon -> pylon.
+    for (let s = 0; s < 8; s++) {
+      const fx0 = 210 + (60 * s) / 8;
+      const fx1 = 210 + (60 * (s + 1)) / 8;
+      bridgeCableSeg(fx0, bridgeCableY(fx0), fx1, bridgeCableY(fx1), cz, 0.18);
+    }
+    // Hangers: vertical drops from the cable to the deck, main span.
+    for (const hx of [222, 231, 240, 249, 258]) {
+      const ht = (hx - bridgeCfg.x0) / bridgeSpan;
+      const hTop = bridgeCableY(hx);
+      const hBot = bridgeDeckTop(ht) + 0.05;
+      const hanger = new THREE.Mesh(boxGeo, matBridgeCable);
+      hanger.scale.set(0.16, hTop - hBot, 0.16);
+      hanger.position.set(hx, (hTop + hBot) / 2, cz);
+      bridgeGroup.add(hanger);
+    }
+  }
+  // Water reflection cue: a lighter blue strip under the span, plus a
+  // narrow warm-gold strip under the deck centreline, both just above
+  // the marina water (y 0.05) so the span reads against the basin
+  // instead of as a line over black. Clipped to the basin x-range
+  // (160..320) so no blue plane ever sits on dry land.
+  const matBridgeReflect = new THREE.MeshBasicMaterial({
+    color: R12B.reflectColor ?? 0x3a8ab0, transparent: true,
+    opacity: R12B.reflectOpacity ?? 0.45, depthWrite: false,
+  });
+  const reflect = new THREE.Mesh(new THREE.PlaneGeometry(160, 14), matBridgeReflect);
+  reflect.rotation.x = -Math.PI / 2;
+  reflect.position.set(240, 0.12, bridgeCfg.z);
+  bridgeGroup.add(reflect);
+  const matBridgeReflectWarm = new THREE.MeshBasicMaterial({
+    color: R12B.reflectWarmColor ?? 0xffb36b, transparent: true,
+    opacity: R12B.reflectWarmOpacity ?? 0.28, depthWrite: false,
+  });
+  const reflectWarm = new THREE.Mesh(new THREE.PlaneGeometry(150, 5), matBridgeReflectWarm);
+  reflectWarm.rotation.x = -Math.PI / 2;
+  reflectWarm.position.set(240, 0.14, bridgeCfg.z);
+  bridgeGroup.add(reflectWarm);
   // (c) Solmar Pyramid — stepped pyramid tower, third skyline
   // silhouette. Four stacked tapering sandstone tiers (18 + 16 + 14 +
   // 12 m = 60 m) with a warm lit ledge at each step and a glowing gold
@@ -2365,7 +2762,7 @@ export function buildWorld(scene, seedOrRng) {
     // Round-5: recessed geometry-window counts — the test harness reads
     // these to prove the pass.
     round5: {
-      geometryWindows: geoWinGlassLit.length + geoWinGlassLitGold.length + geoWinGlassDark.length,
+      geometryWindows: geoWinGlassLit.length + geoWinGlassLitGold.length + geoWinGlassCool.length + geoWinGlassDark.length,
       geometryBuildings: r5GeoBuildings,
       windowFrames: geoWinFrames.length,
       windowAwnings: geoWinAwnings.length,
@@ -2388,6 +2785,22 @@ export function buildWorld(scene, seedOrRng) {
       pitchedRoofs: r4bPitched,
       steppedTowers: r8Stepped,
       newRoofline: r8Crowns + r8Mansards + r8SteppedParapets,
+    },
+    // Round-12 (Lane B, facade materials): probe counts for this pass
+    // — the harness reads these to prove the material pass landed.
+    // claddingVariants is the number of district cladding languages
+    // actually painted (glass / brick / stucco / metal / concrete).
+    round12: {
+      claddingVariants: new Set(Object.keys(facadeByDistrict).map((l) => facadeCladdingFor(l))).size,
+      stringCourses: r12StringCourses,
+      parapetCaps: r12ParapetCaps,
+      pilasters: r12Pilasters,
+      litWindowsCool: r12CoolLit,
+      litWindowsGold: r10GoldLit,
+      litWindows: r5LitWindows,
+      cornices: r10Cornices,
+      geometryBuildings: r5GeoBuildings,
+      buildingCount: buildings.length,
     },
     // Round-11 (Lane B, fill light): the fill-light tuning, read off
     // CONFIG.round11.fill at build time so the harness can gate on the
@@ -2455,5 +2868,7 @@ export function buildWorld(scene, seedOrRng) {
     districtAt,
   };
 }
+
+// Round-12 final: facade cladding variants + Marina Bridge as a suspension span (pylons, cables, fascia lights, water reflection strip).
 
 export default buildWorld;

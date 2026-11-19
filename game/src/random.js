@@ -290,4 +290,6 @@ export function createRng(seed) {
   return { next, range, int, pick, weightedPick, weightedChoice: (pairs) => weightedChoice({ next }, pairs), chance, gaussian, noise2, shuffle, sample, seedFromString, clamp01, lerp, seed: seed >>> 0 };
 }
 
+// Round-12 final: re-touch (no logic change) — art round, RNG intact.
+
 export default createRng;

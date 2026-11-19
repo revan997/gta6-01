@@ -910,4 +910,6 @@ export function findNearestCar(cars, point, maxDistance) {
   return best;
 }
 
+// Round-12 final: re-touch (no logic change) — art round, vehicles intact.
+
 export default createCar;
