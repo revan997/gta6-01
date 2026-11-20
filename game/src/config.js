@@ -782,6 +782,74 @@ export const CONFIG = {
     },
   },
 
+  // Round 19: the cover heli rides fully in frame + a bright sunset
+  // rifle + a lit-up pursuit roadblock + a brighter combat SMG. The
+  // numbers below are the TUNING RECORD for the implementation in
+  // main.js (stageCoverChase / stageSunset / stageCombat) and
+  // police.js (attachRoadblockLightPools) — main.ts validates this
+  // block so a copy that lost it fails loudly instead of shipping
+  // the round-18 top-clipped heli / dark rifle / dark roadblock
+  // while the probe claims the round-19 fixes.
+  round19: {
+    heli: {
+      // Cover-heli re-stage (stageCoverChase): DOWN 4 m (y 15.5 ->
+      // 11.5) and 4 m to the side (x 0 -> 4), so the whole aircraft —
+      // rotor-disc top to skids — sits inside the frame instead of
+      // the disc + fuselage crowding the top edge (round 18: disc
+      // top y -37, fuselage half hidden behind the dialogue box).
+      // The camera is barely farther (the lower height shortens the
+      // camera distance), so nose-tail stays >= 160 px and the rotor
+      // span >= 300 px. Staging only — the gameplay heli is untouched.
+      followOffset: { x: 4, y: 11.5, z: -30 },
+    },
+    // Cover dialogue box (stageCoverChase — the same override
+    // pattern as the round-16 sunset shift): TOP-LEFT, above the
+    // mission panel (bottom ~102 < panel top 118), clear of the heli
+    // zone (right edge 536 < heli bbox left ~580) and of the clock
+    // (x 596-647). The round-18 centred box (x 360-920) overlapped
+    // the heli bbox by ~7,800 px^2.
+    coverDialogue: { left: 16, top: 36, width: 520 },
+    rifle: {
+      // Sunset rifle carry (stageSunset): pale steel barrel + tan
+      // stock so the gun reads BRIGHT against the dark road and
+      // Rico's dark torso (round 18: dark metal on dark asphalt —
+      // lineBrightFrac 0.0, brightPx 0, bgDelta -39.5). The materials
+      // are MeshBasicMaterial (UNLIT, like the heli's silhouette
+      // parts and the shopfront glass): a MeshStandardMaterial with
+      // metalness 0.9 and no environment map renders BLACK in this
+      // scene — the first round-19 build proved it (lineBrightFrac
+      // still 0.0 with "bright steel" standard materials). Longer
+      // barrel + stock and a raised (more horizontal) low-ready carry
+      // so the tip-to-stock span clears 60 px (round 18: 40 px).
+      barrelColor: 0xdde2e8, receiverColor: 0xb9bec6,
+      stockColor: 0xe0aa6a, magColor: 0x8a8f96,
+      barrelLength: 0.7, barrelZ: 0.7, stockLength: 0.3, stockZ: -0.3,
+      tiltX: -0.4, // raise the barrel toward horizontal (low-ready across the body)
+    },
+    pursuit: {
+      // Roadblock light pools (police.js attachRoadblockLightPools):
+      // a warm headlight pool ahead of each crosswise interceptor +
+      // a red wash port + a blue wash starboard on the asphalt around
+      // it — the round-16 fallen-officer light-pool trick, applied
+      // to the roadblock. Baseline (bare asphalt at the anchors,
+      // 12x8 boxes): poolMean 45.9, anchor red/blue 0 px.
+      headlight: { width: 7, length: 3.5, z: 4.0, y: 0.07, color: 0xffe9a8, opacity: 0.75 },
+      redWash: { width: 6.5, length: 4.5, x: -2.2, y: 0.05, color: 0xff2a2a, opacity: 0.75 },
+      blueWash: { width: 6.5, length: 4.5, x: 2.2, y: 0.06, color: 0x2a5aff, opacity: 0.75 },
+    },
+    smg: {
+      // Combat stretch: the SMG's near-black steel (0x1a1a1a, probe
+      // mean 28.8) reads as a dark blob; brighten to pale steel with
+      // LOW metalness — high metalness with no environment map
+      // renders black in this scene (the rifle proved it). Muzzle
+      // halo: a warm glow sprite at the frozen muzzle point (1 draw
+      // call; combat headroom ~279 calls).
+      color: 0x9aa0a8, metalness: 0.15, roughness: 0.35,
+      emissive: 0x1a1a1a, emissiveIntensity: 0.6,
+      muzzleHaloScale: 2.5, muzzleHaloOpacity: 0.9,
+    },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

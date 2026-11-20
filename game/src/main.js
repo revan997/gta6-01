@@ -18,7 +18,7 @@ import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase, a
 import { createRenderContext, boostCarPaintForCar, framingDistanceForHeight, makeGlowTexture, makeSignTexture } from './render.js';
 import { input } from './input.js';
 import { TrafficManager } from './traffic.js';
-import { PoliceSystem } from './police.js';
+import { PoliceSystem, attachRoadblockLightPools } from './police.js';
 import { MissionManager } from './missions.js';
 import { CombatSystem } from './combat.js';
 import { HUD } from './hud.js';
@@ -434,6 +434,19 @@ const muzzle = new THREE.Mesh(
 );
 muzzle.visible = false;
 scene.add(muzzle);
+
+// Round 19 (stretch): the muzzle-flash HALO — a warm glow sprite
+// around the frozen muzzle sphere in the combat shot, so the shot
+// reads as a flash, not a pale dot (1 draw call while visible, 0
+// otherwise; combat headroom ~279 calls). Positioned + made visible
+// by the frozen combat block below, next to the muzzle sphere.
+const muzzleHalo = new THREE.Sprite(new THREE.SpriteMaterial({
+  map: makeGlowTexture('rgba(255,255,255,0.95)'), transparent: true, depthWrite: false,
+  opacity: CONFIG.round19?.smg?.muzzleHaloOpacity ?? 0.9, color: 0xffe9a8,
+}));
+muzzleHalo.scale.set(CONFIG.round19?.smg?.muzzleHaloScale ?? 2.5, CONFIG.round19?.smg?.muzzleHaloScale ?? 2.5, 1);
+muzzleHalo.visible = false;
+scene.add(muzzleHalo);
 
 // Round-3 polish: the hit-impact flash — a brief orange burst at the
 // point a shot or punch lands (combat.consumeImpact).
@@ -1600,6 +1613,9 @@ function update(dt) {
     muzzle.position.set(combatFlash.muzzle.x, combatFlash.muzzle.y, combatFlash.muzzle.z);
     muzzle.visible = true;
     muzzle.scale.setScalar(1.2);
+    // Round 19 (stretch): the halo rides the frozen muzzle point.
+    muzzleHalo.position.set(combatFlash.muzzle.x, combatFlash.muzzle.y, combatFlash.muzzle.z);
+    muzzleHalo.visible = true;
     const pos = tracerGeo.attributes.position;
     pos.setXYZ(0, combatFlash.muzzle.x, combatFlash.muzzle.y, combatFlash.muzzle.z);
     pos.setXYZ(1, combatFlash.target.x, combatFlash.target.y, combatFlash.target.z);
@@ -2479,7 +2495,13 @@ function stageCoverChase() {
   // any text. Scale 2.3 (rotor span ~330 px); the update loop holds
   // it there.
   shotHeli = buildShotHeli(45, 22, -97, CONFIG.round16?.heli?.scale ?? 2.0);
-  if (shotHeli) shotHeli.followOffset = { x: 0, y: 15.5, z: -30 };
+  // Round 19: the heli rides LOWER + to the side (CONFIG.round19.heli
+  // followOffset: y 15.5 -> 11.5, x 0 -> 4) — the round-18 heli
+  // crowded the top edge (rotor-disc top at y -37, fuselage half
+  // hidden behind the centred dialogue box), so the whole aircraft
+  // now sits inside the frame with the rotor disc + skids visible
+  // against the sky. The dialogue box moves out of its way (below).
+  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
   // Skid marks + exhaust smoke, as children of the GT group (they
   // travel with the car): 2 dark planes at the rear wheels, 2 grey
   // glow sprites at the exhaust. 4 draw calls, ~8 tris.
@@ -2530,6 +2552,22 @@ function stageCoverChase() {
   // Round 18: warm shopfront + SOLMAR sign + edge trim on the nearest
   // tower face ahead (staging-only, cover frame only).
   stageCoverShopfront();
+  // Round 19: the cover dialogue box moves TOP-LEFT (CONFIG.round19
+  // coverDialogue — the same override pattern as the round-16 sunset
+  // shift): above the mission panel (bottom ~102 < panel top 118),
+  // clear of the heli zone (right edge 536 < heli bbox left ~580)
+  // and of the clock (x 596-647). The round-18 centred box (x
+  // 360-920) overlapped the heli bbox by ~7,800 px^2.
+  {
+    const dlgCfg = CONFIG.round19?.coverDialogue || {};
+    const dlg = document.getElementById('hud-dialogue');
+    if (dlg && typeof dlgCfg.left === 'number' && typeof dlgCfg.width === 'number') {
+      dlg.style.left = `${dlgCfg.left}px`;
+      dlg.style.top = `${dlgCfg.top ?? 112}px`;
+      dlg.style.transform = 'none';
+      dlg.style.width = `${dlgCfg.width}px`;
+    }
+  }
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('DANTE', 'Wheelman', 'Four stars and a chopper on you, Rico — Marina can wait, lose them first!');
   saveProgress(missions.getCurrentMissionNumber());
@@ -2649,7 +2687,11 @@ function stageCombat() {
   // the SMG never inflates the officers' pistol count) with a
   // magazine hanging below the receiver, 3 draw calls, ~36 tris.
   player.setAim(true);
-  const smgMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.6 });
+  // Round 19 (stretch): the SMG reads BRIGHT now (CONFIG.round19.smg
+  // — pale steel, was near-black 0x1a1a1a, probe mean 28.8) so the gun
+  // in Rico's hands stops being a dark blob against the dark street.
+  const smgCfg = CONFIG.round19?.smg || {};
+  const smgMat = new THREE.MeshStandardMaterial({ color: smgCfg.color ?? 0x9aa0a8, roughness: smgCfg.roughness ?? 0.35, metalness: smgCfg.metalness ?? 0.7, emissive: smgCfg.emissive ?? 0x1a1a1a, emissiveIntensity: smgCfg.emissiveIntensity ?? 0.35 });
   const smg = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.62), smgMat);
   smg.position.set(0, -0.36, 0.10);
   player.foreR.add(smg);
@@ -2764,6 +2806,10 @@ function stagePursuit() {
   // honestly read ROADBLOCK, and the wanted-5 count (4 cars) is
   // exactly the four units fielded.
   shotRoadblock = stageRoadblock();
+  // Round 19: light pools under the roadblock (police.js
+  // attachRoadblockLightPools) — headlight cones + red/blue wash on
+  // the asphalt, the round-16 fallen-officer trick. Pursuit-only.
+  for (const rb of shotRoadblock) attachRoadblockLightPools(rb);
   police.policeCars = [shotRoadblock[0], shotRoadblock[1], ...police.policeCars];
   // Round 14: two race rivals alongside the coupe (sports orange +
   // sedan blue), repositioned every frame by the update loop. They
@@ -2868,23 +2914,38 @@ function stageSunset() {
   combat.unlockWeapon('rifle');
   combat.selectWeapon('rifle');
   {
-    const rifleMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.6 });
-    const stockMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.85, metalness: 0.0 });
+    // Round 19: the rifle reads BRIGHT now (CONFIG.round19.rifle) —
+    // pale steel barrel + tan wooden stock with a warm edge glow, so
+    // it cannot be missed against the dark road and Rico's dark
+    // torso (round 18: dark metal on dark asphalt — lineBrightFrac
+    // 0.0, brightPx 0, bgDelta -39.5). Longer barrel + stock and a
+    // raised (more horizontal) low-ready carry, so the tip-to-stock
+    // span clears 60 px (round 18: 40 px). Still 4 named rifle-*
+    // meshes, still parented to the right forearm, still low-ready.
+    const rc = CONFIG.round19?.rifle || {};
+    // Round 19: MeshBasicMaterial (UNLIT) — a standard material with
+    // high metalness and no environment map renders black here.
+    const rifleMat = new THREE.MeshBasicMaterial({ color: rc.barrelColor ?? 0xdde2e8 });
+    const receiverMat = new THREE.MeshBasicMaterial({ color: rc.receiverColor ?? 0xb9bec6 });
+    const stockMat = new THREE.MeshBasicMaterial({ color: rc.stockColor ?? 0xe0aa6a });
+    const magMat = new THREE.MeshBasicMaterial({ color: rc.magColor ?? 0x8a8f96 });
     const rifle = new THREE.Group();
     rifle.name = 'rifle-carry';
-    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.5), rifleMat);
+    const barrelLen = rc.barrelLength ?? 0.7;
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.5), receiverMat);
     receiver.name = 'rifle-receiver';
     receiver.position.set(0, -0.36, 0.1);
-    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.35), rifleMat);
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, barrelLen), rifleMat);
     barrel.name = 'rifle-barrel';
-    barrel.position.set(0, -0.33, 0.5);
-    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.22), stockMat);
+    barrel.position.set(0, -0.33, rc.barrelZ ?? 0.7);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, rc.stockLength ?? 0.3), stockMat);
     stock.name = 'rifle-stock';
-    stock.position.set(0, -0.36, -0.22);
-    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.1), rifleMat);
+    stock.position.set(0, -0.36, rc.stockZ ?? -0.3);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.1), magMat);
     mag.name = 'rifle-magazine';
     mag.position.set(0, -0.48, 0.15);
     rifle.add(receiver, barrel, stock, mag);
+    rifle.rotation.x = rc.tiltX ?? -0.4; // raise the barrel toward horizontal, across the body
     player.foreR.add(rifle);
     player._aimRifle = rifle;
     player._aimSmg = null;

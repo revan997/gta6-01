@@ -881,6 +881,46 @@ export function seatPoliceLightBar(car) {
   return true;
 }
 
+// Round 19: roadblock light pools — a warm headlight pool ahead of
+// the nose + a red wash port + a blue wash starboard, all flat glow
+// planes on the asphalt as CHILDREN of the staged roadblock car, so
+// they travel with it when the update loop repositions the block
+// every frame. The round-16 fallen-officer trick (one warm pool lifts
+// a dark body off dark asphalt, contrast 24.1 -> 75.7), applied to
+// the pursuit roadblock: the round-18 interceptors read as dark cars
+// on dark asphalt (pool anchors 42.9 lum, 0 red/blue px). 3 planes,
+// 6 tris per car; pursuit headroom is ~1,700 calls. The planes sit
+// at staggered heights (0.05 / 0.06 / 0.07) above the road so the
+// overlapping transparent washes never z-fight, and depthWrite is off
+// so they blend instead of cutting the asphalt. Called only from
+// stagePursuit (main.js), never in live play.
+export function attachRoadblockLightPools(car) {
+  if (!car || !car.group || typeof car.group.add !== 'function') return 0;
+  const cfg = CONFIG.round19?.pursuit || {};
+  const mk = (w, l, x, y, z, color, opacity, name) => {
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, l),
+      new THREE.MeshBasicMaterial({
+        map: sharedGlowTexture(), transparent: true, depthWrite: false,
+        opacity, color,
+      }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, y, z);
+    mesh.name = name;
+    car.group.add(mesh);
+    return mesh;
+  };
+  const hl = cfg.headlight || {};
+  const rw = cfg.redWash || {};
+  const bw = cfg.blueWash || {};
+  let n = 0;
+  if (mk(hl.width ?? 7, hl.length ?? 3.5, 0, hl.y ?? 0.07, hl.z ?? 4.0, hl.color ?? 0xffe9a8, hl.opacity ?? 0.55, 'roadblock-headlight-pool')) n += 1;
+  if (mk(rw.width ?? 5, rw.length ?? 4.5, rw.x ?? -2.2, rw.y ?? 0.05, 0, rw.color ?? 0xff2a2a, rw.opacity ?? 0.5, 'roadblock-red-wash')) n += 1;
+  if (mk(bw.width ?? 5, bw.length ?? 4.5, bw.x ?? 2.2, bw.y ?? 0.06, 0, bw.color ?? 0x2a5aff, bw.opacity ?? 0.5, 'roadblock-blue-wash')) n += 1;
+  return n;
+}
+
 // Round-13 (Lane 2): visible pursuit — closer spawns, bigger light-bar
 // glow + alternating siren halos, and the police helicopter at 3+ stars.
 

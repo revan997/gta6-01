@@ -363,6 +363,61 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 18: rifle ${rifle.damage} dmg / ${rifle.range} m / ${rifle.rate} s / ${rifle.magSize}+${rifle.reserveStart} (mission ${r18.weapons.rifleUnlockMission} reward) + cover shopfront "${r18.cover.signText}" (${r18.cover.windowCount} warm windows)`);
 }
+// Round 19: the cover helicopter must be staged whole (the round-18
+// cover cropped the rotor disc off-frame), the sunset rifle must read
+// BRIGHT (round 18: dark metal on dark asphalt, 0 bright px), and
+// the pursuit roadblock must throw headlight cones + red/blue washes
+// on the asphalt (round 18: bare asphalt, poolMean 45.9). Validate
+// the CONFIG.round19 tuning block in config.js and its consumers:
+//   - heli followOffset y ~11.5 (lower than round 18's 15.5 so the
+//     rotor disc clears the top of the frame) and coverDialogue
+//     moved top-left (left 16, top 36, width 520) so the dialogue
+//     box never overlaps the helicopter;
+//   - rifle colours are the pale unlit palette (barrel 0xdde2e8,
+//     stock 0xe0aa6a) with a longer barrel (0.7) and a raised
+//     low-ready tilt (-0.4);
+//   - pursuit pools carry the brighter opacities (headlight 0.75,
+//     red/blue 0.75) and the wider washes (6.5 m);
+//   - the SMG is pale steel at low metalness (0.15) with a muzzle
+//     halo (scale 2.5) — high metalness with no environment map
+//     renders black in this scene, which is what hid the rifle in
+//     round 18.
+{
+  const configSrc = readFileSync(join(gameDir, 'src', 'config.js'), 'utf-8');
+  const num = (key: string): number | null => {
+    const m = configSrc.match(new RegExp(`${key}:\\s*([-0-9.]+)`));
+    return m ? Number(m[1]) : null;
+  };
+  const hex = (key: string): number | null => {
+    const m = configSrc.match(new RegExp(`${key}:\\s*0x([0-9a-fA-F]+)`));
+    return m ? parseInt(m[1], 16) : null;
+  };
+  const checks: Array<[string, boolean]> = [
+    ['round19.followOffset.y 11.5 (heli staged lower)', configSrc.includes('y: 11.5')],
+    ['round19.coverDialogue left 16 / top 36 / width 520', configSrc.includes('left: 16') && configSrc.includes('top: 36') && configSrc.includes('width: 520')],
+    ['round19.rifle barrel 0xdde2e8 + stock 0xe0aa6a (pale unlit)', hex('barrelColor') === 0xdde2e8 && hex('stockColor') === 0xe0aa6a],
+    ['round19.rifle barrelLength 0.7 / tiltX -0.4', num('barrelLength') === 0.7 && num('tiltX') === -0.4],
+    ['round19.pursuit headlight opacity 0.75', configSrc.includes('opacity: 0.75')],
+    ['round19.pursuit washes 6.5 m wide', configSrc.includes('width: 6.5')],
+    ['round19.smg pale steel at metalness 0.15 + muzzle halo 2.5', configSrc.includes('metalness: 0.15') && configSrc.includes('muzzleHaloScale: 2.5')],
+  ];
+  const failed = checks.filter(([, ok]) => !ok).map(([name]) => name);
+  if (failed.length > 0) {
+    throw new Error(`missing input: CONFIG.round19 incomplete in config.js — ${failed.join('; ')}`);
+  }
+  const mainSrc19 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const policeSrc19 = readFileSync(join(gameDir, 'src', 'police.js'), 'utf-8');
+  const consumersOk =
+    mainSrc19.includes('CONFIG.round19') &&
+    mainSrc19.includes('attachRoadblockLightPools') &&
+    mainSrc19.includes('muzzleHalo') &&
+    mainSrc19.includes('MeshBasicMaterial') &&
+    policeSrc19.includes('export function attachRoadblockLightPools');
+  if (!consumersOk) {
+    throw new Error('missing input: main.js must consume CONFIG.round19 (dialogue shift, rifle, pools, muzzle halo) and police.js must export attachRoadblockLightPools');
+  }
+  console.log('round 19: heli followOffset y 11.5 + dialogue top-left (16,36,520) + rifle 0xdde2e8/0xe0aa6a + pools 0.75 + SMG 0.15 metalness');
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
