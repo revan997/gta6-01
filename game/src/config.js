@@ -748,6 +748,40 @@ export const CONFIG = {
     weapons: { smgUnlockMission: 1, shotgunUnlockMission: 3 },
   },
 
+  // Round 18: the rifle (mission-4 reward) + cover polish tuning.
+  // The rifle numbers are the TUNING RECORD for combat.js WEAPONS
+  // (damage 38 — tuned off the plan's 34 so it is distinct from the
+  // pistol's 34 — range 90, rate 0.14, mag 24, reserve 48); main.js
+  // validates this block so a copy that lost it fails loudly instead
+  // of shipping the round-17 four-gun roster while the probe claims
+  // the rifle. The cover block tunes the staging-only shopfront on
+  // the nearest tower face in the cover frame (main.js
+  // stageCoverChase): warm glass panes + awning + a SOLMAR sign +
+  // edge trim, all deterministic (no rng — the seeded city layout
+  // never shifts) and cover-only, so no other shot pays for them.
+  round18: {
+    weapons: { rifleUnlockMission: 4 },
+    rifle: { damage: 38, range: 90, rate: 0.14, magSize: 24, reserveStart: 48 },
+    cover: {
+      signText: 'SOLMAR',
+      signBg: '#123a5c',
+      signFg: '#ffd94a',
+      glassColor: 0xffd98a, // warm lit shopfront glass (unlit = glows at dusk)
+      frameColor: 0x2a2a22, // dark frame backing behind each pane
+      awningColor: 0xc23a2a, // red shopfront awning
+      trimColor: 0xd8c9a8, // bright sandstone edge trim
+      windowCount: 3,
+      windowW: 4.5,
+      windowH: 2.2,
+      windowY: 1.6,
+      awningY: 3.5,
+      signY: 7.5,
+      signW: 14,
+      signH: 2.6,
+      trimY: 5.6,
+    },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

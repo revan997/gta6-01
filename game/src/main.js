@@ -15,7 +15,7 @@ import { createRng, clamp01, lerp, smoothstep } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
 import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase, attachHeroDetail } from './vehicle.js';
-import { createRenderContext, boostCarPaintForCar, framingDistanceForHeight, makeGlowTexture } from './render.js';
+import { createRenderContext, boostCarPaintForCar, framingDistanceForHeight, makeGlowTexture, makeSignTexture } from './render.js';
 import { input } from './input.js';
 import { TrafficManager } from './traffic.js';
 import { PoliceSystem } from './police.js';
@@ -254,6 +254,15 @@ const missions = new MissionManager({
       if (number === (r17w.shotgunUnlockMission ?? 3) && combat.unlockWeapon('shotgun')) {
         showMessage('Mama Lou: take the shotgun. The Harbour job needs it.');
       }
+      // Round 18: the RIFLE is Mama Lou's reward for finishing mission
+      // 4 (Long Tail) — the long-range precision gun, earned in normal
+      // play before chapter 5, never a cheat. Same hook as the SMG /
+      // shotgun above; unlockWeapon returns false on a re-unlock, so
+      // the toast only ever fires once.
+      const r18w = CONFIG.round18?.weapons || {};
+      if (number === (r18w.rifleUnlockMission ?? 4) && combat.unlockWeapon('rifle')) {
+        showMessage('Mama Lou: the rifle is yours, Rico. Long Tail pays long-range.');
+      }
       showMissionComplete(name, reward);
     },
     onFail: ({ reason }) => {
@@ -322,6 +331,10 @@ let shotDialogue = null;
 let shotRadio = null;
 let shotSunOffset = null;
 let shotHeli = null;
+// Round 18: the cover shopfront placement (stageCoverShopfront) —
+// null until the cover shot stages it; the probe reads the placed
+// window / sign / trim points off it.
+let coverShopfront = null;
 // Round 14 staging state (only ever set by stage*()): the pursuit
 // roadblock pair + race rivals (repositioned every frame relative to
 // the player car), and the combat shot's frozen muzzle flash + aim
@@ -467,6 +480,11 @@ function makePersonMesh(shirtColor, hostile) {
   const matSkin = new THREE.MeshStandardMaterial({ color: 0xc98d64, roughness: 0.8 });
   const matPants = new THREE.MeshStandardMaterial({ color: 0x2a2f3a, roughness: 0.9 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.3), matShirt);
+  // Round 18: the torso mesh is tagged so syncPersonMeshes can
+  // recolour it when a staged shot reassigns the ped's shirt
+  // (cover: three distinct shirt colours, forced deterministically).
+  body.userData.shirtMesh = true;
+  g.userData.shirt = shirtColor || 0x888888;
   body.position.y = 1.12;
   body.castShadow = true;
   const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.34, 0.3), matSkin);
@@ -515,6 +533,18 @@ function syncPersonMeshes(list, meshMap, shirtColor, hostile) {
     mesh.position.set(person.position.x, person.position.y || 0, person.position.z);
     mesh.rotation.y = person.heading || 0;
     mesh.visible = person.alive !== false;
+    // Round 18: a staged shirt reassignment (cover peds) recolours
+    // the live torso material — the mesh is cached by person, so
+    // changing person.shirt alone would never repaint it. Only the
+    // shirt colour moves; skin / pants / markers are untouched.
+    if (person.shirt && mesh.userData.shirt !== person.shirt) {
+      mesh.userData.shirt = person.shirt;
+      mesh.traverse((o) => {
+        if (o.userData && o.userData.shirtMesh && o.material && o.material.color) {
+          o.material.color.set(person.shirt);
+        }
+      });
+    }
     // Round 14: a fallen officer lies on the ground (the combat shot's
     // downed officer). The mesh is a Y-up humanoid, so rotating about
     // X by ~-90° puts it flat; the red hostile marker hides (a downed
@@ -2287,6 +2317,108 @@ function setShotDialogue(speaker, role, line) {
   showMessage(text, 30);
 }
 
+// Round 18: cover shopfront + SOLMAR sign + edge trim — staging-only
+// dressing on the nearest tall tower's south face in the cover frame.
+// Deterministic: the face is DERIVED from the world building boxes
+// (largest maxZ among tall faces ahead of the car, overlapping the
+// road corridor's west side), no rng is consumed, so the seeded city
+// layout never shifts, and no other shot pays for it. 12 draw calls,
+// ~100 tris, against the cover's huge headroom (2.9k / 4.3k calls).
+// The placed points are collected in coverShopfront so the probe can
+// verify them (window clusters, sign, trim) instead of trusting the
+// staging code. If no face qualifies the function skips, never crashes.
+function stageCoverShopfront() {
+  const cfg = CONFIG.round18?.cover || {};
+  const carZ = player.position.z;
+  let target = null;
+  for (const b of world.buildings) {
+    if ((b.height || 0) < 30) continue;
+    if (b.maxZ < -170 || b.maxZ > carZ - 40) continue;
+    if (b.maxX < -20 || b.minX > 30) continue;
+    if (!target || b.maxZ > target.maxZ) target = b;
+  }
+  if (!target) return;
+  const faceZ = target.maxZ;
+  const cx = (target.minX + target.maxX) / 2;
+  const faceW = target.maxX - target.minX;
+  const glassColor = cfg.glassColor ?? 0xffd98a;
+  const frameColor = cfg.frameColor ?? 0x2a2a22;
+  const awningColor = cfg.awningColor ?? 0xc23a2a;
+  const trimColor = cfg.trimColor ?? 0xd8c9a8;
+  const winW = cfg.windowW ?? 4.5, winH = cfg.windowH ?? 2.2, winY = cfg.windowY ?? 1.6;
+  const points = {
+    building: { minX: target.minX, maxX: target.maxX, minZ: target.minZ, maxZ: target.maxZ, height: target.height },
+    windows: [], sign: null, trim: [],
+  };
+  const add = (mesh, name) => { mesh.name = name; scene.add(mesh); return mesh; };
+  // Three warm shopfront windows (dark frame backing + warm glass
+  // proud of it, so each pane reads framed, not pasted on). The row
+  // sits WEST of centre: the police light-bar glow sprites ride
+  // the sightline to the east pane (raycast: red/white sprites at
+  // ~30 m, x 33, in front of the cx+7 pane; even at cx+4 the blue
+  // halo still washed the east pane), so the panes are shifted
+  // west of the glow cluster, clear of it. The west pane stays
+  // inside the face (centre cx-12, half-width 2.25 m, face edge
+  // cx-15).
+  for (const wx of [cx - 12, cx - 5, cx + 2]) {
+    const frame = new THREE.Mesh(
+      new THREE.PlaneGeometry(winW + 0.6, winH + 0.6),
+      new THREE.MeshBasicMaterial({ color: frameColor }),
+    );
+    frame.position.set(wx, winY, faceZ + 0.12);
+    add(frame, 'cover-shopfront-frame');
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(winW, winH),
+      new THREE.MeshBasicMaterial({ color: glassColor }),
+    );
+    glass.position.set(wx, winY, faceZ + 0.2);
+    add(glass, 'cover-shopfront-glass');
+    points.windows.push({ x: wx, y: winY, z: faceZ + 0.2 });
+  }
+  // Red awning above the windows, tilted out over the sidewalk.
+  const awning = new THREE.Mesh(
+    new THREE.BoxGeometry(Math.min(faceW - 4, 26), 0.18, 1.8),
+    new THREE.MeshStandardMaterial({ color: awningColor, roughness: 0.85 }),
+  );
+  awning.position.set(cx, cfg.awningY ?? 3.5, faceZ + 0.9);
+  awning.rotation.x = 0.22;
+  add(awning, 'cover-shopfront-awning');
+  // Edge trim: one horizontal band above the awning + vertical strips
+  // down both face edges, so the tower's ground floor reads framed.
+  const trimBand = new THREE.Mesh(
+    new THREE.BoxGeometry(faceW - 1, 0.35, 0.12),
+    new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.8 }),
+  );
+  trimBand.position.set(cx, cfg.trimY ?? 5.6, faceZ + 0.12);
+  add(trimBand, 'cover-trim-band');
+  points.trim.push({ x: cx, y: cfg.trimY ?? 5.6, z: faceZ + 0.12 });
+  for (const ex of [target.minX + 0.4, target.maxX - 0.4]) {
+    const strip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.35, 11, 0.12),
+      new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.8 }),
+    );
+    strip.position.set(ex, 5.5, faceZ + 0.12);
+    add(strip, 'cover-trim-strip');
+    points.trim.push({ x: ex, y: 5.5, z: faceZ + 0.12 });
+  }
+  // The SOLMAR sign — the game's own name, lit, above the shopfront.
+  const signW = cfg.signW ?? 14, signH = cfg.signH ?? 2.6, signY = cfg.signY ?? 7.5;
+  const sign = new THREE.Mesh(
+    new THREE.PlaneGeometry(signW, signH),
+    new THREE.MeshBasicMaterial({ map: makeSignTexture(cfg.signText ?? 'SOLMAR', cfg.signBg ?? '#123a5c', cfg.signFg ?? '#ffd94a'), transparent: true }),
+  );
+  sign.position.set(cx, signY, faceZ + 0.22);
+  add(sign, 'cover-solmar-sign');
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture('#ffd94a'), transparent: true, depthWrite: false, opacity: 0.35,
+  }));
+  glow.scale.set(signW + 2, signH + 2, 1);
+  glow.position.set(cx, signY, faceZ + 0.4);
+  add(glow, 'cover-solmar-glow');
+  points.sign = { x: cx, y: signY, z: faceZ + 0.22 };
+  coverShopfront = points;
+}
+
 // 1-cover-chase.jpg — golden-hour police chase. Player in the red
 // sports car on the x=40 downtown road (the proven round-12 spot),
 // four stars, two interceptors tight behind, the fallback heli above,
@@ -2374,11 +2506,30 @@ function stageCoverChase() {
   // sidewalk, 11 m on the west, so they hold ~55-75 px tall in the
   // frame at capture instead of drifting far up-frame as dots.
   const coverCarZ = player.position.z;
-  trackStagedPeds(placePeds([
+  const coverPlaced = placePeds([
     { roadX: 40, side: 1, z: coverCarZ - 8, heading: -Math.PI / 2 },
     { roadX: 40, side: 1, z: coverCarZ - 14, heading: -Math.PI / 2 },
     { roadX: 40, side: -1, z: coverCarZ - 11, heading: Math.PI / 2 },
-  ]));
+  ]);
+  trackStagedPeds(coverPlaced);
+  // Round 18: the three staged cover peds wear three DIFFERENT vivid
+  // shirts (red / blue / amber) with varied heights, forced here so
+  // the variety is deterministic, not a lucky rng draw — the mesh
+  // recolour rides on syncPersonMeshes (person.shirt change) and the
+  // scale rides on the cached mesh (sync never resets scale).
+  {
+    const coverShirts = ['#e74c3c', '#3498db', '#f39c12'];
+    const coverScales = [1.07, 0.94, 1.0];
+    coverPlaced.forEach((ped, i) => {
+      if (!ped) return;
+      ped.shirt = coverShirts[i % coverShirts.length];
+      const mesh = pedMeshes.get(ped);
+      if (mesh) mesh.scale.setScalar(coverScales[i % coverScales.length]);
+    });
+  }
+  // Round 18: warm shopfront + SOLMAR sign + edge trim on the nearest
+  // tower face ahead (staging-only, cover frame only).
+  stageCoverShopfront();
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('DANTE', 'Wheelman', 'Four stars and a chopper on you, Rico — Marina can wait, lose them first!');
   saveProgress(missions.getCurrentMissionNumber());
@@ -2701,10 +2852,44 @@ function stageSunset() {
   // fists, so the panel reads FISTS READY while the wheel shows
   // SHOTGUN 6 / 12 in slot 4. The save written below therefore
   // carries both guns, and a fresh load restores them.
+  // Round 18: missions 1–4 are done, so the RIFLE (mission-4 reward)
+  // is owned too — and Rico CARRIES it here, low-ready in his right
+  // hand: the long gun runs FORWARD from the hand (the combat SMG's
+  // pattern — receiver + barrel + wooden stock + magazine, ~1 m
+  // along the forearm's forward axis), NOT vertical along the arm:
+  // a vertical carry hangs behind the torso from the sunset camera
+  // and reads as his jacket, not a gun. Low-ready, the barrel clears
+  // his silhouette over the road. The panel reads WEAPON — RIFLE
+  // 24 / 48, the wheel's slot 5 reads RIFLE 24 / 48, slot 4 still
+  // SHOTGUN 6 / 12.
   attachHeroDetail(car);
   combat.unlockWeapon('smg');
   combat.unlockWeapon('shotgun');
-  combat.selectWeapon('fists');
+  combat.unlockWeapon('rifle');
+  combat.selectWeapon('rifle');
+  {
+    const rifleMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.4, metalness: 0.6 });
+    const stockMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2a, roughness: 0.85, metalness: 0.0 });
+    const rifle = new THREE.Group();
+    rifle.name = 'rifle-carry';
+    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.5), rifleMat);
+    receiver.name = 'rifle-receiver';
+    receiver.position.set(0, -0.36, 0.1);
+    const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.35), rifleMat);
+    barrel.name = 'rifle-barrel';
+    barrel.position.set(0, -0.33, 0.5);
+    const stock = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.12, 0.22), stockMat);
+    stock.name = 'rifle-stock';
+    stock.position.set(0, -0.36, -0.22);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.2, 0.1), rifleMat);
+    mag.name = 'rifle-magazine';
+    mag.position.set(0, -0.48, 0.15);
+    rifle.add(receiver, barrel, stock, mag);
+    player.foreR.add(rifle);
+    player._aimRifle = rifle;
+    player._aimSmg = null;
+    player._aimPistol = null;
+  }
   // Round 15: camera CLOSER + LOWER (was 10 m from Rico, y 2.3) — Rico
   // + the teal coupe + the two patrol cars fill the frame instead of
   // half of it being empty asphalt. Probe-verified: Rico ~130 px,
@@ -3142,7 +3327,11 @@ window.__solmar = {
       // done — the SMG is his reward), and the probe carries the
       // whole arsenal so the harness can gate on owned slots.
       ricoSmg: Boolean(player._aimSmg),
-      ricoGun: player._aimSmg ? 'SMG' : (player._aimPistol ? 'Pistol' : null),
+      // Round 18: Rico carries the rifle in the sunset shot (mission
+      // 4 done — the rifle is his reward), and the probe carries the
+      // cover shopfront placement for the same reason.
+      ricoRifle: Boolean(player._aimRifle),
+      ricoGun: player._aimRifle ? 'Rifle' : (player._aimSmg ? 'SMG' : (player._aimPistol ? 'Pistol' : null)),
       weapons: typeof combat.getWeaponsState === 'function' ? combat.getWeaponsState() : null,
       muzzleVisible: muzzle.visible,
       roadblock: shotRoadblock ? shotRoadblock.length : 0,
@@ -3151,6 +3340,28 @@ window.__solmar = {
       // player) instead of trusting the panel text alone.
       roadblockCars: shotRoadblock ? shotRoadblock.map((c) => ({ x: +c.position.x.toFixed(1), z: +c.position.z.toFixed(1) })) : [],
       rivals: shotRivals ? shotRivals.length : 0,
+    };
+  },
+  // Round 18 probe: the rifle + cover shopfront, read straight off
+  // the live scene (runtime facts, not config claims). cover is null
+  // on every shot but the cover chase; rifleMesh lists the world
+  // positions of the named rifle-* meshes in the sunset shot.
+  get round18() {
+    let rifleMeshes = [];
+    if (player._aimRifle) {
+      scene.updateMatrixWorld(true);
+      player._aimRifle.traverse((o) => {
+        if (!o.isMesh) return;
+        const e = o.matrixWorld.elements;
+        rifleMeshes.push({ name: o.name || null, x: +e[12].toFixed(2), y: +e[13].toFixed(2), z: +e[14].toFixed(2) });
+      });
+    }
+    return {
+      rifleUnlockMission: CONFIG.round18?.weapons?.rifleUnlockMission ?? null,
+      rifleDef: CONFIG.round18?.rifle || null,
+      ricoRifle: Boolean(player._aimRifle),
+      rifleMeshes,
+      coverShopfront: coverShopfront || null,
     };
   },
   // Round 14: project a world point to normalised screen coordinates

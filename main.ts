@@ -231,13 +231,16 @@ if (!existsSync(gameFavicon)) {
 }
 // Round-17: the hero-trim + arsenal + v9-save block must be present —
 // CONFIG.round17 (GT trim / heli detail tuning / weapon unlocks),
-// combat.js WEAPONS with real SMG + shotgun definitions (and NO
-// rifle definition — the wheel's slot 5 stays LOCKED on purpose),
+// combat.js WEAPONS with real SMG + shotgun definitions,
 // vehicle.js attachHeroDetail (the hero-only trim), and save.js
 // SAVE_VERSION 9 (the weapons block). A copy that lost any of them
 // would ship the round-16 plain GT / boxy heli / two-weapon roster /
 // v8 save while the probe claims the round-17 fixes. Fail loudly here
 // instead of at the intake check.
+// Round 18: the round-17 "NO rifle definition" rule is SUPERSEDED —
+// the rifle is a real fifth weapon now (see the round-18 block
+// below); the r17 gate no longer asserts its absence, only that the
+// SMG / shotgun definitions and the unlock missions are intact.
 {
   const configMod = await import(join(gameDir, 'src', 'config.js'));
   const cfg = configMod?.CONFIG;
@@ -265,7 +268,6 @@ if (!existsSync(gameFavicon)) {
     && typeof weapons.smg.reserveStart === 'number' && weapons.smg.reserveStart === 60
     && weapons?.shotgun && typeof weapons.shotgun.magSize === 'number' && weapons.shotgun.magSize === 6
     && typeof weapons.shotgun.reserveStart === 'number' && weapons.shotgun.reserveStart === 12
-    && !weapons?.rifle
     && Array.isArray(order) && order.length === 5 && order[2] === 'smg' && order[3] === 'shotgun' && order[4] === 'rifle'
     && typeof combatMod?.CombatSystem === 'function'
     && typeof combatMod.CombatSystem.prototype.getWeaponsState === 'function'
@@ -307,6 +309,59 @@ if (!existsSync(gameFavicon)) {
     throw new Error('missing input: stagePursuit in game/src/main.js must unlock the SMG (mission-1 reward) before mission 3 starts, without unlocking the shotgun');
   }
   console.log('round 17: pursuit staging unlocks SMG before mission 3 (shotgun stays locked)');
+}
+// Round-18: the rifle + cover-shopfront block must be present —
+// CONFIG.round18 (rifle tuning + mission-4 unlock + cover tuning),
+// combat.js WEAPONS.rifle as a real fifth definition (damage 38 /
+// range 90 / rate 0.14 / mag 24 / reserve 48), the mission-complete
+// hook unlocking it on mission 4, the sunset staging equipping it
+// (Rico carries a rifle mesh in his right hand, panel WEAPON —
+// RIFLE), and the cover staging dressing the nearest tower face
+// (stageCoverShopfront). A copy that lost any of them would ship the
+// round-17 four-gun roster / plain cover while the probe claims the
+// round-18 fixes. Fail loudly here instead of at the intake check.
+{
+  const configMod = await import(join(gameDir, 'src', 'config.js'));
+  const cfg = configMod?.CONFIG;
+  const r18 = cfg?.round18;
+  const r18Ok = r18?.weapons && r18.weapons.rifleUnlockMission === 4
+    && r18?.rifle && r18.rifle.damage === 38 && r18.rifle.range === 90
+    && r18.rifle.rate === 0.14 && r18.rifle.magSize === 24 && r18.rifle.reserveStart === 48
+    && r18?.cover && r18.cover.signText === 'SOLMAR'
+    && typeof r18.cover.glassColor === 'number' && typeof r18.cover.awningColor === 'number'
+    && typeof r18.cover.windowCount === 'number' && r18.cover.windowCount >= 2;
+  if (!r18Ok) {
+    throw new Error('missing input: CONFIG.round18 rifle (mission-4 unlock) / cover shopfront block not found in game/src/config.js');
+  }
+  const combatMod = await import(join(gameDir, 'src', 'combat.js'));
+  const rifle = combatMod?.WEAPONS?.rifle;
+  const rifleOk = rifle && rifle.damage === 38 && rifle.range === 90 && rifle.rate === 0.14
+    && rifle.magSize === 24 && rifle.reserveStart === 48
+    && Array.isArray(combatMod?.WEAPON_ORDER) && combatMod.WEAPON_ORDER[4] === 'rifle'
+    && typeof combatMod?.CombatSystem.prototype.unlockWeapon === 'function'
+    && typeof combatMod?.CombatSystem.prototype.getWeaponsState === 'function';
+  if (!rifleOk) {
+    throw new Error('missing input: combat.js WEAPONS.rifle definition (38 dmg / 90 range / 24 mag) not found');
+  }
+  // main.js imports three, so check source text: the onComplete hook
+  // unlocks the rifle on mission 4, the sunset staging equips it
+  // (with a rifle-* mesh in Rico's right hand) before mission 5
+  // starts, and the cover staging dresses the tower face.
+  const mainSrc18 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf8');
+  const sunsetIdx = mainSrc18.indexOf('function stageSunset()');
+  const sunsetSrc = sunsetIdx >= 0 ? mainSrc18.slice(sunsetIdx) : '';
+  const startM5 = sunsetSrc.indexOf('missions.startMission(5');
+  const rifleIdx = sunsetSrc.indexOf("combat.unlockWeapon('rifle')");
+  const rifleEquipIdx = sunsetSrc.indexOf("combat.selectWeapon('rifle')");
+  const sunsetRifleOk = rifleIdx >= 0 && rifleEquipIdx >= 0 && startM5 > 0 && rifleIdx < startM5 && rifleEquipIdx < startM5
+    && sunsetSrc.includes("'rifle-receiver'") && sunsetSrc.includes("'rifle-barrel'");
+  const coverOk = mainSrc18.includes('function stageCoverShopfront()')
+    && mainSrc18.includes('stageCoverShopfront()')
+    && mainSrc18.includes("'cover-solmar-sign'") && mainSrc18.includes("'cover-shopfront-glass'");
+  if (!sunsetRifleOk || !coverOk) {
+    throw new Error('missing input: main.js must equip the rifle in stageSunset before mission 5 (with a rifle mesh) and dress the cover tower face via stageCoverShopfront');
+  }
+  console.log(`round 18: rifle ${rifle.damage} dmg / ${rifle.range} m / ${rifle.rate} s / ${rifle.magSize}+${rifle.reserveStart} (mission ${r18.weapons.rifleUnlockMission} reward) + cover shopfront "${r18.cover.signText}" (${r18.cover.windowCount} warm windows)`);
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
@@ -411,3 +466,8 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
 // detail, SMG/shotgun definitions, save v9), build entrypoint intact.
 // Round 17 (re-touch): pursuit staging gate — SMG unlocked in
 // stagePursuit before mission 3 starts, shotgun stays locked there.
+// Round 18: revision — round-18 config gate (rifle definition +
+// mission-4 unlock + cover shopfront tuning), the sunset staging
+// gate (rifle equipped + rifle mesh before mission 5), the cover
+// staging gate (stageCoverShopfront + SOLMAR sign), and the round-17
+// "no rifle" rule superseded (the rifle is a real fifth weapon now).

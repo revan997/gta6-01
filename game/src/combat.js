@@ -9,6 +9,8 @@
 // armour model for the player. Round 17: the arsenal is fists, pistol,
 // SMG (fast, 30-round mag) and shotgun (heavy, 6-shell mag) — all four
 // are real definitions in WEAPONS, unlocked by finishing missions 1 / 3.
+// Round 18: the rifle joins them (mission 4's reward, 38 dmg / 90 m
+// range / 24-round mag) — all five wheel slots are real guns now.
 // All randomness comes from the seeded
 // generator passed in (an object with next()/range()/pick(), or a factory
 // taking a numeric seed). Never uses Math.random.
@@ -62,15 +64,22 @@ export const WEAPONS = {
   // hits, short range, tiny mag (mission 3's reward). Both are
   // full combat definitions (damage / range / rate / magSize /
   // reserveStart) — shoot() / reload() / equip() read them, never a
-  // hardcoded pistol value. The rifle (slot 5) has NO definition
-  // here on purpose: the HUD must keep showing it LOCKED rather than
-  // inventing a gun with no code behind it.
+  // hardcoded pistol value. Round 18: the rifle (slot 5) joins them
+  // the same way — mission 4's reward, a real definition below.
   smg: { name: 'SMG', damage: 18, range: 55, rate: 0.09, magSize: 30, reserveStart: 60 },
   shotgun: { name: 'Shotgun', damage: 55, range: 28, rate: 0.9, magSize: 6, reserveStart: 12 },
+  // Round 18: the RIFLE is real now — the long-range precision gun
+  // (Mama Lou's reward for finishing mission 4, Long Tail). Damage
+  // 38 (tuned off the plan's 34 so it is distinct from the pistol's
+  // 34), range 90 (the longest in the arsenal), slow-ish rate 0.14,
+  // 24-round mag, 48 in reserve. shoot() / reload() / equip() read
+  // it like every other gun; the wheel's slot 5 is LOCKED only until
+  // mission 4 is done, never because the gun has no code.
+  rifle: { name: 'Rifle', damage: 38, range: 90, rate: 0.14, magSize: 24, reserveStart: 48 },
 };
-// Round 17: wheel order — the HUD renders these five slots; only the
-// four WEAPONS keys can ever be owned (rifle is listed here so the
-// wheel can name its LOCKED slot, never an open one).
+// Round 18: wheel order — the HUD renders these five slots; all five
+// WEAPONS keys can now be owned (the rifle joins fists / pistol /
+// SMG / shotgun once mission 4 is finished).
 export const WEAPON_ORDER = ['fists', 'pistol', 'smg', 'shotgun', 'rifle'];
 
 export class CombatSystem {
@@ -88,8 +97,8 @@ export class CombatSystem {
     // A fresh profile owns fists + pistol; SMG / shotgun arrive via
     // unlockWeapon() (mission 1 / mission 3 rewards).
     this.owned = new Set(['fists', 'pistol']);
-    this.ammoByWeapon = { fists: 0, pistol: options.ammo ?? 24, smg: 0, shotgun: 0 };
-    this.magByWeapon = { fists: 0, pistol: options.mag ?? WEAPONS.pistol.magSize, smg: 0, shotgun: 0 };
+    this.ammoByWeapon = { fists: 0, pistol: options.ammo ?? 24, smg: 0, shotgun: 0, rifle: 0 };
+    this.magByWeapon = { fists: 0, pistol: options.mag ?? WEAPONS.pistol.magSize, smg: 0, shotgun: 0, rifle: 0 };
     this.ammo = this.ammoByWeapon.pistol;
     this.mag = this.magByWeapon.pistol;
     this.weapon = 'fists';
@@ -292,8 +301,9 @@ export class CombatSystem {
   // Round 17: the HUD / probe shape — the five wheel slots in order,
   // each with its live mag/reserve, plus the owned list and the
   // equipped weapon. The HUD wheel, the round13 probe and the
-  // save/restore probe read this, never the raw maps. The rifle has
-  // no WEAPONS definition on purpose — its slot is always LOCKED.
+  // save/restore probe read this, never the raw maps. Round 18: the
+  // rifle slot is real now — it reads LOCKED only while unowned,
+  // exactly like the SMG / shotgun did before their unlocks.
   getWeaponsState() {
     const st = this.getWeaponState();
     return {
@@ -533,9 +543,11 @@ export class CombatSystem {
         (to.x - dir.x * along) ** 2 + (to.y - dir.y * along) ** 2 + (to.z - dir.z * along) ** 2;
       // Seeded spread: wider at long range, so a given seed reproduces hits.
       // Round 17: the shotgun spreads wide (short-range scatter gun),
-      // the SMG / pistol stay tight.
-      const spreadBase = this.weapon === 'shotgun' ? 0.6 : 0.35;
-      const spreadSlope = this.weapon === 'shotgun' ? 0.03 : 0.012;
+      // the SMG / pistol stay tight. Round 18: the rifle is the
+      // tightest of all (a precision long gun — the spread barely
+      // grows with distance).
+      const spreadBase = this.weapon === 'shotgun' ? 0.6 : this.weapon === 'rifle' ? 0.22 : 0.35;
+      const spreadSlope = this.weapon === 'shotgun' ? 0.03 : this.weapon === 'rifle' ? 0.006 : 0.012;
       const spread = spreadBase + along * spreadSlope;
       if (perpSq > spread * spread) continue;
       if (along < bestAlong) { bestAlong = along; best = target; }
@@ -709,10 +721,10 @@ export class CombatSystem {
     this.health = this.maxHealth;
     this.armour = 0;
     // Round 17: a fresh profile owns fists + pistol only, with the
-    // pistol's starting load; the SMG / shotgun are earned again.
+    // pistol's starting load; the SMG / shotgun / rifle are earned again.
     this.owned = new Set(['fists', 'pistol']);
-    this.ammoByWeapon = { fists: 0, pistol: 24, smg: 0, shotgun: 0 };
-    this.magByWeapon = { fists: 0, pistol: WEAPONS.pistol.magSize, smg: 0, shotgun: 0 };
+    this.ammoByWeapon = { fists: 0, pistol: 24, smg: 0, shotgun: 0, rifle: 0 };
+    this.magByWeapon = { fists: 0, pistol: WEAPONS.pistol.magSize, smg: 0, shotgun: 0, rifle: 0 };
     this.ammo = 24;
     this.mag = WEAPONS.pistol.magSize;
     this.weapon = 'fists';
@@ -737,10 +749,10 @@ export function createCombatSystem(options = {}) {
   return new CombatSystem(options);
 }
 
-// Round-17: re-touch — the weapon wheel reads the equipped weapon
-// name from combat.getWeapon() (main.js passes it to hud.update) and
-// the owned/ammo table from combat.getWeaponState(); the roster is
-// fists + pistol + SMG + shotgun, all real, and the rifle slot stays
-// LOCKED because no rifle code exists.
+// Round-18: re-touch — the arsenal is fists + pistol + SMG +
+// shotgun + RIFLE, all real; the rifle (mission-4 reward, 38 dmg /
+// 90 range / 24-round mag) is the fifth wheel slot, LOCKED only
+// until mission 4 is finished, and the save round-trips it like
+// every other gun.
 
 export default CombatSystem;
