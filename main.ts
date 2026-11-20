@@ -437,6 +437,50 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 19 (re-touch): heli followOffset (${fo19.x}, ${fo19.y}, ${fo19.z}) + dialogue right edge ${dlg19.left + dlg19.width} < heli bbox 580`);
 }
+// Round 20: the cover left stack must clear the legacy OBJECTIVE block
+// (round 19: the dialogue box at top 36 covered it — the "OBJECTIVE"
+// title half cut, the "1/2 · ..." line fully hidden), and the cover
+// road must carry staged traffic + a crossing ped (round 19: mostly
+// empty asphalt). Validate the CONFIG.round20 tuning block in
+// config.js and its consumers, with REAL parsed values:
+//   - coverStack drops the whole stack 72 px (dialogue 108, mission
+//     190, radio 364, respect 428): dialogue top clears the objective
+//     block bottom (99) with a 9 px gap, the inter-panel gaps match
+//     round 19 (9 / 44 / 1 px), and respect still ends (428 + 73 =
+//     501) above the minimap (top 526);
+//   - traffic far/near sit one per lane (|dx| <= 7 m, 10-40 m out),
+//     far rear-to-camera (heading PI, tail lights) and near
+//     front-to-camera (heading 0, headlights);
+//   - main.js defines stageCoverTraffic, tracks it in shotTraffic,
+//     and consumes CONFIG.round20 (stack + traffic + peds + lights).
+{
+  const cfg20 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round20;
+  const stack = cfg20?.coverStack;
+  const stackOk = stack?.dialogueTop === 108 && stack?.missionTop === 190
+    && stack?.radioTop === 364 && stack?.respectTop === 428
+    && stack.dialogueTop > 99 && stack.missionTop - (stack.dialogueTop + 73) === 9
+    && stack.radioTop - (stack.missionTop + 130) === 44
+    && stack.respectTop - (stack.radioTop + 63) === 1
+    && stack.respectTop + 73 < 526;
+  const tf = cfg20?.traffic?.far, tn = cfg20?.traffic?.near;
+  const trafficOk = tf && tn
+    && Math.abs(tf.dx) <= 7 && tf.dz <= -10 && tf.dz >= -40 && tf.heading === Math.PI && tf.lights === 'tail'
+    && Math.abs(tn.dx) <= 7 && tn.dz <= -10 && tn.dz >= -40 && tn.heading === 0 && tn.lights === 'head';
+  const pedsOk = cfg20?.peds?.cross?.side === 0
+    && Array.isArray(cfg20?.peds?.westExtra) && cfg20.peds.westExtra.length === 2;
+  if (!stackOk || !trafficOk || !pedsOk) {
+    throw new Error('missing input: CONFIG.round20 incomplete in config.js — coverStack must be 108/190/364/428 (dialogue clears OBJECTIVE bottom 99, respect ends 501 < minimap 526), traffic far/near must sit one per lane with tail/head lights, peds must hold 1 crossing + 2 west-extra');
+  }
+  const mainSrc20 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const consumersOk = mainSrc20.includes('CONFIG.round20')
+    && mainSrc20.includes('function stageCoverTraffic')
+    && mainSrc20.includes('shotTraffic')
+    && mainSrc20.includes('stageCoverTraffic()');
+  if (!consumersOk) {
+    throw new Error('missing input: main.js must consume CONFIG.round20 — define stageCoverTraffic, track it in shotTraffic, and call it from stageCoverChase');
+  }
+  console.log(`round 20: cover stack ${stack.dialogueTop}/${stack.missionTop}/${stack.radioTop}/${stack.respectTop} (respect ends ${stack.respectTop + 73} < minimap 526) + traffic far (${tf.dx}, ${tf.dz}, tail) / near (${tn.dx}, ${tn.dz}, head) + crossing ped + 2 west peds`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

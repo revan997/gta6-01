@@ -341,6 +341,11 @@ let coverShopfront = null;
 // target (re-asserted every frame while the shot is staged).
 let shotRoadblock = [];
 let shotRivals = [];
+// Round 20: staged cover traffic (stageCoverTraffic) — { car, dx, dz,
+// heading, key } offsets from the player car, re-asserted every frame
+// like the pursuit roadblock, so the two cars hold their framing at
+// any capture moment while the GT drives on.
+let shotTraffic = [];
 // Round 15: staged pedestrians that TRACK the player car (cover +
 // pursuit) — { ped, dx, dz } offsets from the car, re-asserted every
 // frame in the update loop. The car drives on during the HUD
@@ -1550,6 +1555,21 @@ function update(dt) {
     }
   }
 
+  // Round 20: staged cover traffic tracks the player car (same pattern
+  // as the roadblock above — the GT drives on during the HUD
+  // convergence wait, so fixed world spots would drift up-frame and
+  // shrink to dots by capture time). Staged cars are NOT in
+  // traffic.getCars() and NOT police cars, so nothing else moves them;
+  // the re-assertion is belt-and-braces against any drift.
+  if (SHOT === 'cover-chase' && player.currentCar && shotTraffic.length) {
+    const pc = player.currentCar;
+    for (const st of shotTraffic) {
+      if (!st.car) continue;
+      st.car.position.set(pc.position.x + st.dx, 0, pc.position.z + st.dz);
+      st.car.group.rotation.y = st.heading;
+    }
+  }
+
   // 5. missions.
   missions.update(dt, world, player, systems());
 
@@ -2448,6 +2468,47 @@ function stageCoverShopfront() {
 // exhaust smoke on the GT, peds TRACKED relative to the car (8 / 14 m
 // beyond it on the east sidewalk, 11 m on the west) so they hold their
 // size at capture instead of drifting up-frame as dots.
+// Round 20: two staged traffic cars on the road ahead of the GT (one
+// per lane, different depths) + their lights — the cover road read as
+// mostly empty asphalt with one far interceptor + one red car. The cars
+// are real sculpted sedans from the shared factory (createCar via
+// makeCar, the same factory traffic.js uses), staged like the pursuit
+// rivals and tracked in shotTraffic; the far car shows its BRAKE lights
+// (rear to the camera), the near car its HEADLIGHTS (front to the
+// camera) — the same dusk values traffic.js applies to its own cars.
+// Cover-only: shotTraffic is empty on every other shot, and the cars
+// are never added to traffic.getCars() or police.policeCars, so no
+// gameplay system, panel count or other shot sees them.
+function stageCoverTraffic() {
+  const cfg = CONFIG.round20?.traffic || {};
+  const lc = CONFIG.round20?.lights || {};
+  const car = player.currentCar;
+  if (!car) return [];
+  const made = [];
+  for (const key of ['far', 'near']) {
+    const t = cfg[key];
+    if (!t) continue;
+    const c = makeCar({
+      position: { x: car.position.x + t.dx, y: 0, z: car.position.z + t.dz },
+      heading: t.heading ?? 0, model: t.model || 'sedan',
+      colour: t.colour ?? 0xc23a2a, driver: 'ai',
+    });
+    c.kind = 'cover-traffic';
+    c.speed = 0;
+    c.staged = true;
+    if (t.lights === 'head') {
+      if (c.headMat) c.headMat.emissiveIntensity = lc.headEmissive ?? 1.8;
+      if (Array.isArray(c.headGlows)) for (const g of c.headGlows) if (g) g.opacity = lc.headGlowOpacity ?? 0.95;
+      if (Array.isArray(c.headGlowSprites)) for (const s of c.headGlowSprites) if (s && s.scale) s.scale.setScalar(lc.headGlowScale ?? 1.8);
+    } else if (t.lights === 'tail') {
+      if (c.tailMat) c.tailMat.emissiveIntensity = lc.tailEmissive ?? 2.0;
+      if (Array.isArray(c.tailGlows)) for (const g of c.tailGlows) if (g) g.opacity = lc.tailGlowOpacity ?? 0.95;
+    }
+    shotTraffic.push({ car: c, dx: t.dx, dz: t.dz, heading: t.heading ?? 0, key });
+    made.push(c);
+  }
+  return made;
+}
 function stageCoverChase() {
   state = 'playing';
   showOnly(null);
@@ -2532,6 +2593,15 @@ function stageCoverChase() {
     { roadX: 40, side: 1, z: coverCarZ - 8, heading: -Math.PI / 2 },
     { roadX: 40, side: 1, z: coverCarZ - 14, heading: -Math.PI / 2 },
     { roadX: 40, side: -1, z: coverCarZ - 11, heading: Math.PI / 2 },
+    // Round 20: one ped CROSSING the road mid-frame (side 0 = road
+    // centre, heading across it) + two extra on the west sidewalk
+    // (1 -> 3 there) — the road's left side balances the right, and
+    // the crossing ped puts a person ON the road, not just beside it.
+    // All three ride the same trackStagedPeds offsets as the original
+    // three, so they hold their framing at capture.
+    { roadX: 40, side: 0, z: coverCarZ - 18, heading: Math.PI / 2 },
+    { roadX: 40, side: -1, z: coverCarZ - 20, heading: Math.PI / 2 },
+    { roadX: 40, side: -1, z: coverCarZ - 26, heading: Math.PI / 2 },
   ]);
   trackStagedPeds(coverPlaced);
   // Round 18: the three staged cover peds wear three DIFFERENT vivid
@@ -2539,9 +2609,11 @@ function stageCoverChase() {
   // the variety is deterministic, not a lucky rng draw — the mesh
   // recolour rides on syncPersonMeshes (person.shirt change) and the
   // scale rides on the cached mesh (sync never resets scale).
+  // Round 20: the three new peds get vivid shirts too (green / purple
+  // / red) with varied heights, same mechanism.
   {
-    const coverShirts = ['#e74c3c', '#3498db', '#f39c12'];
-    const coverScales = [1.07, 0.94, 1.0];
+    const coverShirts = ['#e74c3c', '#3498db', '#f39c12', '#2ecc71', '#9b59b6', '#e74c3c'];
+    const coverScales = [1.07, 0.94, 1.0, 1.02, 0.96, 1.05];
     coverPlaced.forEach((ped, i) => {
       if (!ped) return;
       ped.shirt = coverShirts[i % coverShirts.length];
@@ -2549,6 +2621,9 @@ function stageCoverChase() {
       if (mesh) mesh.scale.setScalar(coverScales[i % coverScales.length]);
     });
   }
+  // Round 20: the two staged traffic cars on the road ahead of the GT
+  // (stageCoverTraffic — one per lane, different depths, lights on).
+  stageCoverTraffic();
   // Round 18: warm shopfront + SOLMAR sign + edge trim on the nearest
   // tower face ahead (staging-only, cover frame only).
   stageCoverShopfront();
@@ -2558,15 +2633,31 @@ function stageCoverChase() {
   // clear of the heli zone (right edge 536 < heli bbox left ~580)
   // and of the clock (x 596-647). The round-18 centred box (x
   // 360-920) overlapped the heli bbox by ~7,800 px^2.
+  // Round 20: the WHOLE cover left stack drops 72 px (CONFIG.round20
+  // coverStack) — the round-19 dialogue box (top 36) covered the
+  // legacy OBJECTIVE block (bottom 99): the "OBJECTIVE" title was half
+  // cut and the "1/2 · ..." line fully hidden. Dialogue top 108
+  // clears it; mission/radio/respect shift by the same 72 px, so no
+  // new overlap appears and respect still ends above the minimap.
+  // Cover-only inline styles — hud.js defaults and every other shot
+  // are untouched.
   {
     const dlgCfg = CONFIG.round19?.coverDialogue || {};
+    const stackCfg = CONFIG.round20?.coverStack || {};
     const dlg = document.getElementById('hud-dialogue');
     if (dlg && typeof dlgCfg.left === 'number' && typeof dlgCfg.width === 'number') {
       dlg.style.left = `${dlgCfg.left}px`;
-      dlg.style.top = `${dlgCfg.top ?? 112}px`;
+      dlg.style.top = `${stackCfg.dialogueTop ?? dlgCfg.top ?? 112}px`;
       dlg.style.transform = 'none';
       dlg.style.width = `${dlgCfg.width}px`;
     }
+    const setTop = (id, top) => {
+      const el = document.getElementById(id);
+      if (el && typeof top === 'number') el.style.top = `${top}px`;
+    };
+    setTop('hud-mission-panel', stackCfg.missionTop);
+    setTop('hud-radio', stackCfg.radioTop);
+    setTop('hud-respect', stackCfg.respectTop);
   }
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('DANTE', 'Wheelman', 'Four stars and a chopper on you, Rico — Marina can wait, lose them first!');
@@ -3423,6 +3514,23 @@ window.__solmar = {
       ricoRifle: Boolean(player._aimRifle),
       rifleMeshes,
       coverShopfront: coverShopfront || null,
+    };
+  },
+  // Round 20 probe: the cover stack shift + staged cover traffic +
+  // staged cover peds, read straight off the live scene (runtime
+  // facts, not config claims). coverTraffic is empty on every shot
+  // but the cover chase; stagedPeds is the tracked-ped list (cover +
+  // pursuit) with world positions + shirt colours.
+  get round20() {
+    return {
+      coverStack: CONFIG.round20?.coverStack || null,
+      coverTraffic: shotTraffic.map((st) => ({
+        key: st.key, x: +st.car.position.x.toFixed(1), z: +st.car.position.z.toFixed(1),
+        heading: +(st.heading || 0).toFixed(2),
+      })),
+      stagedPeds: shotPeds.map((tp) => ({
+        x: +tp.ped.position.x.toFixed(1), z: +tp.ped.position.z.toFixed(1), shirt: tp.ped.shirt,
+      })),
     };
   },
   // Round 14: project a world point to normalised screen coordinates

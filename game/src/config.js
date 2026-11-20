@@ -849,6 +849,45 @@ export const CONFIG = {
       muzzleHaloScale: 2.5, muzzleHaloOpacity: 0.9,
     },
   },
+  round20: {
+    // Cover left-stack shift (stageCoverChase, cover-only inline
+    // styles — hud.js defaults and every other shot are untouched):
+    // the round-19 dialogue box (top 36) covered the legacy OBJECTIVE
+    // block (top 14, bottom 99 — measured on the round-19 build): the
+    // "OBJECTIVE" title (y 31-48) was half cut and the "1/2 · Pick up
+    // the package at the Marina" line (y 51-68) fully hidden behind it.
+    // The whole stack drops 72 px so the dialogue (top 108) clears the
+    // objective with a 9 px gap, the inter-panel gaps stay exactly as
+    // round 19 (dialogue->mission 9 px, mission->radio 44 px,
+    // radio->respect 1 px), and respect still ends at 501, above the
+    // minimap (top 526). Panel heights (round 19): dialogue 73,
+    // mission 130, radio 63, respect 73.
+    coverStack: { dialogueTop: 108, missionTop: 190, radioTop: 364, respectTop: 428 },
+    // Cover traffic (stageCoverTraffic): two staged cars on the road
+    // ahead of the GT, one per lane at different depths, tracked
+    // relative to the player car every frame like the pursuit
+    // roadblock. dx/dz are metres from the GT (picture-ahead is -z).
+    // far: opposite lane, 30 m out, rear to the camera (heading PI) —
+    // its BRAKE lights face the camera. near: right lane, 14 m out,
+    // front to the camera (heading 0) — its HEADLIGHTS face the camera.
+    traffic: {
+      far: { dx: -3.5, dz: -30, heading: Math.PI, model: 'sedan', colour: 0xe67e22, lights: 'tail' },
+      near: { dx: 3.5, dz: -14, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
+    },
+    // Cover peds (stageCoverChase placePeds, on top of the 3 staged in
+    // round 18/19): one CROSSING the road mid-frame (side 0 = road
+    // centre, heading across) + two extra on the west sidewalk
+    // (1 -> 3 there), so the left side of the frame balances the
+    // right. dz is metres beyond the GT at staging time.
+    peds: {
+      cross: { side: 0, dz: -18, heading: Math.PI / 2 },
+      westExtra: [{ side: -1, dz: -20, heading: Math.PI / 2 }, { side: -1, dz: -26, heading: Math.PI / 2 }],
+    },
+    // Staged-traffic lights: the same dusk values traffic.js applies
+    // to its own cars (_applyDuskHeadlights), plus a brake-light flare
+    // for the far car's tail (tailMat emissive + tail-glow opacity).
+    lights: { headEmissive: 1.8, headGlowOpacity: 0.95, headGlowScale: 1.8, tailEmissive: 2.0, tailGlowOpacity: 0.95 },
+  },
 
   // ---- Player movement (metres / second) ----
   player: {
