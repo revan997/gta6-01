@@ -481,6 +481,56 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 20: cover stack ${stack.dialogueTop}/${stack.missionTop}/${stack.radioTop}/${stack.respectTop} (respect ends ${stack.respectTop + 73} < minimap 526) + traffic far (${tf.dx}, ${tf.dz}, tail) / near (${tn.dx}, ${tn.dz}, head) + crossing ped + 2 west peds`);
 }
+// Round 20 (re-touch): the staged-traffic LIGHTS + colours + ped
+// depths must be the REAL parsed values, not just present — a copy
+// that lost the lights block would ship the round-19 dim traffic
+// (headlights at traffic.js defaults, no brake-light flare) while
+// the round-20 gate above claims the staged cars are lit. Validate
+// CONFIG.round20.lights (head/tail emissive + glow opacity/scale),
+// the two traffic colours, and the ped depths; then verify
+// stageCoverTraffic in main.js actually APPLIES them — the head
+// branch drives headMat/headGlows/headGlowSprites, the tail branch
+// drives tailMat/tailGlows — instead of merely reading the config.
+{
+  const cfg20b = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round20;
+  const lights = cfg20b?.lights;
+  const lightsOk = lights?.headEmissive === 1.8 && lights?.headGlowOpacity === 0.95
+    && lights?.headGlowScale === 1.8 && lights?.tailEmissive === 2.0 && lights?.tailGlowOpacity === 0.95
+    // Range guard: a misplaced decimal (18 instead of 1.8) would still
+    // be a number but would blow the dusk lighting out; every lights
+    // value must sit in (0, 3]. Semantic order: the far car's BRAKE
+    // flare (tail 2.0) must outshine the near car's headlights (1.8) —
+    // that is what makes the rear-facing car read as braking in the
+    // golden-hour shot instead of just another lit car.
+    && [lights.headEmissive, lights.headGlowOpacity, lights.headGlowScale, lights.tailEmissive, lights.tailGlowOpacity]
+      .every((v) => typeof v === 'number' && v > 0 && v <= 3)
+    && lights.tailEmissive > lights.headEmissive;
+  const coloursOk = cfg20b?.traffic?.far?.colour === 0xe67e22
+    && cfg20b?.traffic?.near?.colour === 0xf5f0e6
+    && cfg20b?.traffic?.far?.model === 'sedan' && cfg20b?.traffic?.near?.model === 'sedan';
+  const pedsOk = cfg20b?.peds?.cross?.dz === -18
+    && cfg20b?.peds?.westExtra?.[0]?.dz === -20 && cfg20b?.peds?.westExtra?.[1]?.dz === -26;
+  if (!lightsOk || !coloursOk || !pedsOk) {
+    throw new Error('missing input: CONFIG.round20 lights must be head 1.8/0.95/1.8 + tail 2.0/0.95, traffic colours 0xe67e22 (far) / 0xf5f0e6 (near) sedans, ped depths cross -18 / west -20/-26');
+  }
+  const mainSrc20b = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const trafficFnIdx = mainSrc20b.indexOf('function stageCoverTraffic()');
+  const trafficFnSrc = trafficFnIdx >= 0 ? mainSrc20b.slice(trafficFnIdx, mainSrc20b.indexOf('function stageCoverChase()')) : '';
+  const lightsAppliedOk = trafficFnSrc.includes('lc.headEmissive') && trafficFnSrc.includes('headMat.emissiveIntensity')
+    && trafficFnSrc.includes('lc.headGlowOpacity') && trafficFnSrc.includes('headGlows')
+    && trafficFnSrc.includes('lc.headGlowScale') && trafficFnSrc.includes('headGlowSprites')
+    && trafficFnSrc.includes('lc.tailEmissive') && trafficFnSrc.includes('tailMat.emissiveIntensity')
+    && trafficFnSrc.includes('lc.tailGlowOpacity') && trafficFnSrc.includes('tailGlows')
+    // No-GT guard: stageCoverTraffic runs after the GT is created in
+    // stageCoverChase, but a copy that reordered the staging would
+    // crash on player.currentCar being null — the guard must bail out
+    // with an empty list instead of throwing.
+    && trafficFnSrc.includes('if (!car) return []');
+  if (!lightsAppliedOk) {
+    throw new Error('missing input: stageCoverTraffic in game/src/main.js must apply CONFIG.round20.lights — head branch to headMat/headGlows/headGlowSprites, tail branch to tailMat/tailGlows — and bail out (empty list) when there is no GT car');
+  }
+  console.log(`round 20 (re-touch): staged lights head ${lights.headEmissive}/${lights.headGlowOpacity}/${lights.headGlowScale} + tail ${lights.tailEmissive}/${lights.tailGlowOpacity} (far 0xe67e22, near 0xf5f0e6, peds -18/-20/-26) applied in stageCoverTraffic`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
@@ -589,3 +639,7 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
 // gate (rifle equipped + rifle mesh before mission 5), the cover
 // staging gate (stageCoverShopfront + SOLMAR sign), and the round-17
 // "no rifle" rule superseded (the rifle is a real fifth weapon now).
+// Round 20 (re-touch): round-20 lights gate — CONFIG.round20.lights
+// real values (head 1.8/0.95/1.8, tail 2.0/0.95, tail > head) +
+// traffic colours + ped depths, and stageCoverTraffic applying them
+// (head/tail branches) with the no-GT guard, build entrypoint intact.
