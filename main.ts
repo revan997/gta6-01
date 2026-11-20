@@ -810,6 +810,103 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 21 (re-touch 3): fin probe line [${deco21d.tierBaseY + 2}, ${deco21d.finTopY - 2}] m span ${finProbeSpanM21d} m of ${finHeightM21d} m (gate ${finGateRows21d} rows, window +-${finWindowPx21d} px${harnessChecked21d ? ', harness cross-checked' : ', harness absent — calibration values used'}) + sun elev ${sunElev21d.toFixed(1)} deg + east bands ${east21d.bandY.join('/')} m awning margin ${east21d.awningLength - 2 * east21d.windowW} m + mids ${mids21d.map((m: { stop: number }) => m.stop).join('/')} warm`);
 }
+// Round 22: un-occlude the Deco block + east shopfront (plan §2-§4) —
+// CONFIG.round22 in config.js (cover dialogue 440 px, bottom tier
+// 31 m, fin 1.0 m west, east panes 8.0 m / awning 20 m) and its
+// consumers in main.js (stageCoverChase merges the dialogue/stack
+// overrides, stageCoverDeco merges the tier/fin overrides,
+// stageCoverEast merges the pane/awning overrides, and the __solmar
+// round22 getter exposes the staged facts to the probe). A copy
+// that lost the round-22 block would ship the round-21 occluded
+// dialogue box (536 px right edge over the fin) / 6 m east panes
+// while the probe claims the round-22 fixes. Fail loudly here.
+{
+  const cfg22 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round22;
+  const cfg21r22 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round21;
+  const dlg22 = cfg22?.coverDialogue;
+  const dlgOk = dlg22 && dlg22.left === 16 && dlg22.width === 440
+    && dlg22.left + dlg22.width === 456; // right edge 456: clear of the fin line (test runs x 509-530) + left tier edges (x 518-533), ~50 px margin
+  const stack22 = cfg22?.coverStack;
+  const stackOk = stack22 && typeof stack22 === 'object'; // empty by design: the narrowed box keeps its 2-line / 73 px height, so the round-20 stack is untouched
+  const deco22 = cfg22?.deco;
+  const decoOk22 = deco22
+    && Array.isArray(deco22.tierWidths) && deco22.tierWidths.length === 3
+    && deco22.tierWidths[0] === 31 && deco22.tierWidths[1] === 24 && deco22.tierWidths[2] === 20
+    && deco22.tierWidths[0] > (cfg21r22?.deco?.tierWidths?.[0] ?? 28) // the crop-widening fix: round-21's 28 m caps the visible bbox at ~168 px, below the 175 px gate
+    && typeof deco22.finWestShift === 'number' && deco22.finWestShift === 1.0;
+  const east22 = cfg22?.east;
+  const eastOk22 = east22
+    && east22.windowW === 8.0 && east22.awningLength === 20
+    && east22.windowW > (cfg21r22?.east?.windowW ?? 6.0) // wider than round-21's 6 m: the 28 px probe box, not the glass colour, bound the fracs at 0.56/0.68
+    && east22.awningLength >= 2 * east22.windowW + 1; // the awning still spans the widened row (panes cz-9.5..cz+7.5 = 17 m)
+  if (!dlgOk || !stackOk || !decoOk22 || !eastOk22) {
+    throw new Error('missing input: CONFIG.round22 incomplete in config.js — coverDialogue must be left 16 / width 440 (right edge 456), deco tierWidths must be [31, 24, 20] with finWestShift 1.0, east must be windowW 8.0 / awningLength 20 (awning spans the widened row)');
+  }
+  const mainSrc22 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const consumersOk22 = mainSrc22.includes('CONFIG.round22?.coverDialogue')
+    && mainSrc22.includes('CONFIG.round22?.coverStack')
+    && mainSrc22.includes('CONFIG.round22?.deco')
+    && mainSrc22.includes('CONFIG.round22?.east')
+    && mainSrc22.includes('finWestShift')
+    && mainSrc22.includes('get round22()');
+  if (!consumersOk22) {
+    throw new Error('missing input: main.js must consume CONFIG.round22 — coverDialogue/coverStack in stageCoverChase, deco (tierWidths + finWestShift) in stageCoverDeco, east (windowW + awningLength) in stageCoverEast, and expose the staged facts via get round22()');
+  }
+  console.log(`round 22: cover dialogue ${dlg22.left}+${dlg22.width} px (right edge ${dlg22.left + dlg22.width}) + Deco bottom tier ${deco22.tierWidths[0]} m / fin -${deco22.finWestShift} m + east panes ${east22.windowW} m / awning ${east22.awningLength} m`);
+}
+// Round 22 (re-touch): the EXACT values, not just presence — a copy
+// whose dialogue width drifted back to 520, whose bottom tier stayed
+// 28 m, or whose east panes stayed 6 m would still pass the structural
+// gate above while the pixel gates fail (fin rows, bbox width, pane
+// fracs). Verify: the merged dialogue right edge (456) sits between
+// the narrowed box and the fin's test-run x-range (509-530) with
+// margin on both sides; the bottom tier is EXACTLY 31 m (the crop
+// fix — 30 m leaves a run1-like crop at ~174 px, under the 175 px
+// gate) and still wider than the middle tier (wedding-cake kept);
+// the fin shift is EXACTLY 1.0 m (west edge minX+1.0, still on the
+// tower face, not past its west edge); the east panes are EXACTLY
+// 8.0 m with a 20 m awning (awning margin 20 - 2*8 = 4 m, same as
+// round-21's 16 - 2*6); and main.js reads the merged fields, not
+// the round-21 fallbacks (stageCoverDeco reads cfg.tierWidths +
+// cfg.finWestShift, stageCoverEast reads cfg.windowW +
+// cfg.awningLength, stageCoverChase spreads CONFIG.round22 over
+// the round-19/20 blocks).
+{
+  const cfg22b = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round22;
+  const dlg22b = cfg22b?.coverDialogue;
+  const dlgExactOk = dlg22b?.left === 16 && dlg22b?.width === 440
+    && dlg22b.left + dlg22b.width > 440 && dlg22b.left + dlg22b.width < 509; // 456: clear of the fin (test runs 509-530) with margin, and clear of the heli zone (~580)
+  const deco22b = cfg22b?.deco;
+  const decoExactOk = Array.isArray(deco22b?.tierWidths)
+    && deco22b.tierWidths[0] === 31 && deco22b.tierWidths[1] === 24 && deco22b.tierWidths[2] === 20
+    && deco22b.finWestShift === 1.0;
+  const east22b = cfg22b?.east;
+  const eastExactOk = east22b?.windowW === 8.0 && east22b?.awningLength === 20
+    && east22b.awningLength - 2 * east22b.windowW === 4;
+  // Round 22 (Target 3, stage 2): the fourth balcony band on the
+  // crown's first step must be ON (crownBand true) — a copy that
+  // lost it would ship 3 balcony lines while the test gates 4/4.
+  const crownBandOk = cfg22b?.deco?.crownBand === true;
+  if (!dlgExactOk || !decoExactOk || !eastExactOk || !crownBandOk) {
+    throw new Error('missing input: CONFIG.round22 exact values (re-touch) — coverDialogue must be left 16 / width 440 (right edge 456, between 440 and the fin x 509), deco tierWidths must be exactly [31, 24, 20] with finWestShift exactly 1.0 and crownBand true, east must be windowW 8.0 / awningLength 20 (margin 4 m)');
+  }
+  const mainSrc22b = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const decoFnIdx = mainSrc22b.indexOf('function stageCoverDeco()');
+  const decoFnSrc = decoFnIdx >= 0 ? mainSrc22b.slice(decoFnIdx, mainSrc22b.indexOf('function stageCoverEast()')) : '';
+  const eastFnIdx = mainSrc22b.indexOf('function stageCoverEast()');
+  const eastFnSrc = eastFnIdx >= 0 ? mainSrc22b.slice(eastFnIdx, mainSrc22b.indexOf('// 1-cover-chase.jpg')) : '';
+  const mergedOk = decoFnSrc.includes('cfg.tierWidths') && decoFnSrc.includes('cfg.finWestShift')
+    && decoFnSrc.includes('CONFIG.round22?.deco')
+    && decoFnSrc.includes('cfg.crownBand') && decoFnSrc.includes('deco-crown-band')
+    && eastFnSrc.includes('cfg.windowW') && eastFnSrc.includes('cfg.awningLength')
+    && eastFnSrc.includes('CONFIG.round22?.east')
+    && mainSrc22b.includes('...(CONFIG.round22?.coverDialogue || {})')
+    && mainSrc22b.includes('...(CONFIG.round22?.coverStack || {})');
+  if (!mergedOk) {
+    throw new Error('missing input: main.js must read the round-22 merged fields — stageCoverDeco cfg.tierWidths/cfg.finWestShift/cfg.crownBand (+ CONFIG.round22?.deco, crown band mesh), stageCoverEast cfg.windowW/cfg.awningLength (+ CONFIG.round22?.east), stageCoverChase spreading CONFIG.round22 over the round-19/20 blocks');
+  }
+  console.log(`round 22 (re-touch): exact dialogue right edge ${dlg22b.left + dlg22b.width} px + tiers ${deco22b.tierWidths.join('/')} m / fin -${deco22b.finWestShift} m / crown band ${cfg22b.deco.crownBand} + east panes ${east22b.windowW} m / awning margin ${east22b.awningLength - 2 * east22b.windowW} m, merged fields read in main.js`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

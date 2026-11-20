@@ -972,6 +972,70 @@ export const CONFIG = {
     },
   },
 
+  // Round 22: un-occlude the Deco block + east shopfront (plan §2-§4,
+  // Haiku's one change from the round-21 review). Three real changes,
+  // all cover-only, all staging (no gameplay system touched):
+  //   (1) the cover dialogue box narrows 520 -> 440 px (left stays 16,
+  //       so its right edge moves 536 -> 456): the fin line sits at
+  //       screen x ~509-530 in the test runs and the left tier edges
+  //       at x ~518-533, so the narrowed box clears both with ~50 px
+  //       to spare; the Dante line is 78 chars, ~53 chars/line at the
+  //       new text width, so it still wraps to 2 lines and the box
+  //       keeps its 73 px height (bottom 181, mission top stays 190);
+  //       if a run ever measures 3 lines, coverStack below must shift
+  //       the stack down instead — the test's dialogue-mission gate
+  //       (0 px^2) catches it either way.
+  //   (2) the east panes widen 6.0 -> 8.0 m (awning 16 -> 20 m to
+  //       keep covering the row): on the run-21 PNG each pane reads
+  //       only ~16-20 px wide against the 28 px probe box (fracs
+  //       0.56/0.68 — the box, not the colour, is the binding
+  //       constraint; the glass is already fully warm where it shows),
+  //       so +2 m buys ~+6 px per pane and both fracs should clear
+  //       0.7; the panes stay 1 m apart and below the police panel.
+  //   (3) the Deco block itself widens so the visible-bbox gate can
+  //       actually move: the round-21 visible bbox (159-167 px) is
+  //       already the full projected crop (fin top-left 518 to tier
+  //       right edge 678) — no panel move can widen it past ~168 px,
+  //       so the bottom tier goes 28 -> 31 m (0.77 m cornice lip per
+  //       side, a projecting Deco cornice) and the fin shifts 1.0 m
+  //       west (still fully on the tower face, west edge minX+1.0),
+  //       which together should put the crop at ~180-186 px.
+  //   Target 3 (optional, stage 2): a fourth balcony band on the
+  //   crown step (see crownBand below) — only added if §2+§3 pass.
+  round22: {
+    // Cover dialogue (stageCoverChase merges over round19): same
+    // left edge, 80 px narrower. Right edge 456 clears the fin
+    // (x ~509-530) and the left tier edges (x ~518-533).
+    coverDialogue: { left: 16, width: 440 },
+    // Cover stack (stageCoverChase merges over round20): EMPTY by
+    // design — the narrowed box keeps its 2-line / 73 px height, so
+    // the round-20 stack (dialogue 108, mission 190, radio 364,
+    // respect 428, respect ends 501 < minimap 526) is untouched.
+    // A non-empty entry here would shift the whole left stack down.
+    coverStack: {},
+    // Deco geometry (stageCoverDeco merges over round21.deco):
+    // bottom tier 28 -> 31 m (the crop-widening fix for gate §2b);
+    // middle/top tiers unchanged (wedding-cake shrinking kept);
+    // fin 1.0 m west (finWestShift), still on-face.
+    deco: {
+      tierWidths: [31, 24, 20],
+      finWestShift: 1.0,
+      // Target 3 (stage 2, added once §2+§3 passed run1 with margin):
+      // a fourth balcony band + rail on the crown's first step
+      // (y 33-35, width 12 m), band at y 34.6. Adds 2 draw calls /
+      // ~4 tris, cover-only. Gate: balconyReadable 3/3 -> 4/4.
+      crownBand: true,
+    },
+    // East shopfront (stageCoverEast merges over round21.east):
+    // panes 6.0 -> 8.0 m wide, awning 16 -> 20 m. Same glass
+    // (0xffd98a), same frame, same awning colour — the SOLMAR
+    // shopfront is untouched.
+    east: {
+      windowW: 8.0,
+      awningLength: 20,
+    },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,

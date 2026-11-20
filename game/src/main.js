@@ -2479,7 +2479,11 @@ function stageCoverShopfront() {
 // trusting the staging code. If no face qualifies the function
 // skips, never crashes.
 function stageCoverDeco() {
-  const cfg = CONFIG.round21?.deco || {};
+  // Round 22: the round-22 deco overrides (wider bottom tier +
+  // fin shifted west, plan §2b) merge over the round-21 block — the
+  // round-21 values stay the fallback, so a copy that lost the
+  // round-22 block still stages the round-21 block.
+  const cfg = { ...(CONFIG.round21?.deco || {}), ...(CONFIG.round22?.deco || {}) };
   const carZ = player.position.z;
   let target = null;
   for (const b of world.buildings) {
@@ -2550,13 +2554,38 @@ function stageCoverDeco() {
     );
     y += ch;
   }
+  // Round 22 (Target 3, stage 2): a FOURTH balcony band + rail on
+  // the crown's first step (y 33-35, width 12 m) — the same dark
+  // band + brass rail as the three tier bands, so the Deco block
+  // reads 4 balcony lines instead of 3. Band at step-1 top - 0.4
+  // (y 34.6), rail 0.55 above the step-1 top (y 35.55, crossing the
+  // second step's face exactly like the tier rails cross the next
+  // tier). Cover-only, +2 draw calls / ~4 tris. The band is dark,
+  // so it cannot lift the heli-contrast ring or the pastel counts.
+  if (cfg.crownBand) {
+    const crownBandY = y - crownHeights[1] - 0.4; // step-1 top (35) - 0.4 = 34.6
+    const crownBand = new THREE.Mesh(new THREE.BoxGeometry(crownWidths[0], 0.5, 0.35), basic(bandColor));
+    crownBand.position.set(cx, crownBandY, faceZ + crownDepth + 0.175);
+    add(crownBand, 'deco-crown-band');
+    const crownRail = new THREE.Mesh(new THREE.BoxGeometry(crownWidths[0], 0.12, 0.12), basic(railColor));
+    crownRail.position.set(cx, crownBandY + 0.95, faceZ + crownDepth + 0.3);
+    add(crownRail, 'deco-crown-rail');
+    points.balcony.push({
+      a: { x: cx - crownWidths[0] / 2, y: crownBandY, z: faceZ + crownDepth + 0.35 },
+      b: { x: cx + crownWidths[0] / 2, y: crownBandY, z: faceZ + crownDepth + 0.35 },
+    });
+  }
   // Vertical fin on the WEST edge of the block (x = minX + 2, so it
   // stands clear of the heli, which rides the east half of the
   // face) — the Art Deco silhouette, readable from the street.
+  // Round 22: finWestShift moves it 1.0 m further west (west edge
+  // minX+1.0, still fully on the tower face) so the block's
+  // projected crop — and the visible pastel bbox — widens; the fin
+  // stays ~50 px clear of the narrowed dialogue box (right edge 456).
   const finW = cfg.finWidth ?? 2.0;
   const finTopY = cfg.finTopY ?? 36;
   const finDepth = cfg.finDepth ?? 1.2;
-  const finX = target.minX + finW;
+  const finX = target.minX + finW - (cfg.finWestShift ?? 0);
   const fin = new THREE.Mesh(new THREE.BoxGeometry(finW, finTopY - baseY, finDepth), basic(finColor));
   fin.position.set(finX, (baseY + finTopY) / 2, faceZ + finDepth / 2);
   add(fin, 'deco-fin');
@@ -2584,7 +2613,11 @@ function stageCoverDeco() {
 // skips, never crashes; the test treats an absent east staging as
 // "skipped", not as a failure (Target 2 is optional by plan).
 function stageCoverEast() {
-  const cfg = CONFIG.round21?.east || {};
+  // Round 22: the round-22 east overrides (wider panes + longer
+  // awning, plan §3) merge over the round-21 block — the round-21
+  // values stay the fallback, so a copy that lost the round-22
+  // block still stages the round-21 panes.
+  const cfg = { ...(CONFIG.round21?.east || {}), ...(CONFIG.round22?.east || {}) };
   const carZ = player.position.z;
   let target = null;
   for (const b of world.buildings) {
@@ -2869,9 +2902,16 @@ function stageCoverChase() {
   // new overlap appears and respect still ends above the minimap.
   // Cover-only inline styles — hud.js defaults and every other shot
   // are untouched.
+  // Round 22: the round-22 cover overrides merge over the round-19
+  // dialogue box (narrower: 520 -> 440 px, right edge 536 -> 456,
+  // clear of the fin line at x ~509-530 and the left tier edges)
+  // and the round-20 left stack (empty in round 22 — the narrowed
+  // box keeps its 2-line / 73 px height, so the stack is untouched).
+  // The round-19/20 values stay the fallback, so a copy that lost
+  // the round-22 block still stages the round-20 left stack.
   {
-    const dlgCfg = CONFIG.round19?.coverDialogue || {};
-    const stackCfg = CONFIG.round20?.coverStack || {};
+    const dlgCfg = { ...(CONFIG.round19?.coverDialogue || {}), ...(CONFIG.round22?.coverDialogue || {}) };
+    const stackCfg = { ...(CONFIG.round20?.coverStack || {}), ...(CONFIG.round22?.coverStack || {}) };
     const dlg = document.getElementById('hud-dialogue');
     if (dlg && typeof dlgCfg.left === 'number' && typeof dlgCfg.width === 'number') {
       dlg.style.left = `${dlgCfg.left}px`;
@@ -3767,6 +3807,18 @@ window.__solmar = {
   // every shot but the cover chase; coverLight is the tuning record
   // for the sun-soaked cover pass in stageCoverChase.
   get round21() {
+    return {
+      coverLight: CONFIG.round21?.coverLight || null,
+      coverDeco: coverDeco || null,
+      coverEast: coverEast || null,
+    };
+  },
+  // Round 22 probe: the same staging facts as round21 above, under
+  // the round-22 key (the round-22 probe/test read s.round22, and
+  // the values are the round-22 overrides merged in stageCoverDeco /
+  // stageCoverEast — tier widths, fin position, east pane width —
+  // not the round-21 config claims).
+  get round22() {
     return {
       coverLight: CONFIG.round21?.coverLight || null,
       coverDeco: coverDeco || null,
