@@ -717,6 +717,99 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 21 (re-touch 2): exact deco (tiers ${deco21c.tierColors.map((c: number) => `0x${c.toString(16)}`).join('/')}, rendered pastel ${[...deco21c.tierColors, deco21c.finColor].map((c: number) => Math.round(lum21c(c) + 27)).join('/')}, crown top ${crownTop21c} m, fin to ${deco21c.finTopY} m) + east glass 0x${east21c.glassColor.toString(16)} (round-18 glass, blue awning) + cover light sun [${cl21c.sunOffset.join(', ')}] applied in main.js`);
 }
+// Round 21 (re-touch 3): the FIN PROBE-LINE calibration — the
+// pixel gate does not measure the fin mesh, it measures the
+// projected finLine (round21-pixels.py scans +-14 px around the
+// line, counting rows with >= 4 pastel px, gate >= 30 rows), so
+// the line itself must be built from the CONFIG values it was
+// calibrated for. The earlier blocks pin the exact CONFIG hexes
+// and that stageCoverDeco READS the fin fields, but none of them
+// pins the LINE: its endpoints, its span against the gate
+// threshold, or the harness constants it was calibrated against.
+// Pin all three here: (a) stageCoverDeco builds the fin mesh
+// `finTopY - baseY` tall centred at `(baseY + finTopY) / 2` and
+// sets finLine a/b at `baseY + 2` / `finTopY - 2` — the 2 m
+// insets keep the probe off the tier-base edge and the fin's top
+// edge, so the probe span is the fin height minus 4 m;
+// (b) the fin height (finTopY - tierBaseY = 30 m) must be at
+// least the gate threshold in rows (30) — at a worst-case ~1
+// screen row per metre a shorter fin could never pass the gate,
+// and the measured ~1.6 rows/m is what turns 30 m into the
+// observed 47-49 rows; the fin top must clear the 36 m crown
+// top by exactly 4 m, the margin above the dialogue box;
+// (c) the harness constants the probe was calibrated for —
+// window +-14 px (range(-14, 15) in round21-pixels.py) and
+// threshold >= 30 rows (round21-test.mjs) — read from the
+// sibling harness files when they sit beside the repo (local
+// dev); in the kit intake context they are absent and this
+// sub-check is skipped, never fatal. Plus the two round-21
+// values no earlier block derives: the lowered-sun elevation
+// from sunOffset [165, 38, 85] (~11.6 deg, must be 10-13 deg,
+// y 38 < the default 50) and the east band geometry (bands
+// [21, 26] exactly 5 m apart, both >= 20 m up, awning 16 m
+// spanning both 6 m panes with 4 m total margin).
+{
+  const cfg21d = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round21;
+  const deco21d = cfg21d?.deco;
+  const east21d = cfg21d?.east;
+  const cl21d = cfg21d?.coverLight;
+  const mainSrc21d = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const decoFn21d = mainSrc21d.slice(mainSrc21d.indexOf('function stageCoverDeco()'), mainSrc21d.indexOf('function stageCoverEast()'));
+  const finLineIdx21d = decoFn21d.indexOf('points.finLine = {');
+  const finLineSrc21d = finLineIdx21d >= 0 ? decoFn21d.slice(finLineIdx21d, decoFn21d.indexOf('coverDeco = points;', finLineIdx21d)) : '';
+  const finLineOk = decoFn21d.includes('new THREE.BoxGeometry(finW, finTopY - baseY, finDepth)')
+    && decoFn21d.includes('fin.position.set(finX, (baseY + finTopY) / 2, faceZ + finDepth / 2)')
+    && finLineSrc21d.includes('y: baseY + 2') && finLineSrc21d.includes('y: finTopY - 2')
+    && (finLineSrc21d.match(/x: finX/g) || []).length === 2;
+  const finHeightM21d = deco21d ? deco21d.finTopY - deco21d.tierBaseY : -1;
+  const finProbeSpanM21d = deco21d ? (deco21d.finTopY - 2) - (deco21d.tierBaseY + 2) : -1;
+  const crownTop21d = deco21d
+    ? deco21d.tierBaseY + deco21d.tierHeights.reduce((s: number, h: number) => s + h, 0)
+      + deco21d.crownHeights.reduce((s: number, h: number) => s + h, 0)
+    : -1;
+  // Harness constants, read live when the harness sits beside the
+  // repo; the documented calibration values are the fallback, and
+  // a missing harness only skips the cross-check.
+  let finGateRows21d = 30, finWindowPx21d = 14, harnessChecked21d = false;
+  const testPath21d = join(repoRoot, '..', 'round21-test.mjs');
+  const pixelsPath21d = join(repoRoot, '..', 'round21-pixels.py');
+  if (existsSync(testPath21d) && existsSync(pixelsPath21d)) {
+    const testSrc21d = readFileSync(testPath21d, 'utf-8');
+    const pixelsSrc21d = readFileSync(pixelsPath21d, 'utf-8');
+    const gateMatch21d = testSrc21d.match(/finPastelRows >= (\d+)/);
+    if (gateMatch21d) finGateRows21d = Number(gateMatch21d[1]);
+    finWindowPx21d = pixelsSrc21d.includes('range(-14, 15)') ? 14 : -1;
+    harnessChecked21d = true;
+  }
+  const finCalibOk = finLineOk && deco21d?.finWidth === 3.0 && deco21d?.finTopY === 40
+    && finHeightM21d === 30 && finProbeSpanM21d === finHeightM21d - 4
+    && finHeightM21d >= finGateRows21d && deco21d.finTopY - crownTop21d === 4
+    && finWindowPx21d === 14 && finGateRows21d === 30;
+  // Lowered sun: elevation from the sun offset must be the ~11.5
+  // deg the config comment claims (global golden hour sits at
+  // y 50, ~15 deg) — a sun that was never lowered would read ~15
+  // deg here and fail this guard.
+  const sunElev21d = cl21d
+    ? Math.atan2(cl21d.sunOffset[1], Math.hypot(cl21d.sunOffset[0], cl21d.sunOffset[2])) * 180 / Math.PI
+    : -1;
+  const sunOk21d = !!(cl21d && cl21d.sunOffset[1] === 38 && cl21d.sunOffset[1] < 50
+    && sunElev21d >= 10 && sunElev21d <= 13);
+  // East bands: exactly 5 m apart, both high above the
+  // ground-floor shopfront, awning spanning both panes + margin.
+  const eastGeomOk21d = !!(east21d && east21d.bandY[1] - east21d.bandY[0] === 5
+    && east21d.bandY[0] >= 20 && east21d.awningLength - 2 * east21d.windowW === 4);
+  // Cover-light mids: 4 stops, strictly increasing, every hex
+  // warm (R > B) — the structural counterpart to the exact-hex
+  // pin in re-touch 2.
+  const mids21d = cl21d?.mids || [];
+  const midsOk21d = mids21d.length === 4
+    && mids21d.every((m: { stop: number }, i: number) => i === 0 || m.stop > mids21d[i - 1].stop)
+    && mids21d.every((m: { hex: number }) => ((m.hex >> 16) & 255) > (m.hex & 255));
+  if (!finCalibOk || !sunOk21d || !eastGeomOk21d || !midsOk21d) {
+    throw new Error('missing input: CONFIG.round21 probe calibration (re-touch 3) — stageCoverDeco must build the fin (finTopY - baseY) tall with finLine a/b at baseY + 2 / finTopY - 2, fin 3.0 m wide to 40 m (height 30 m >= fin gate 30 rows, probe span 26 m, top 4 m above the 36 m crown), harness window +-14 px / threshold 30 rows, sun elevation 10-13 deg from sunOffset y 38, east bands [21, 26] 5 m apart with awning 16 m over 2x6 m panes, coverLight 4 strictly-increasing warm mids');
+  }
+  console.log(`round 21 (re-touch 3): fin probe line [${deco21d.tierBaseY + 2}, ${deco21d.finTopY - 2}] m span ${finProbeSpanM21d} m of ${finHeightM21d} m (gate ${finGateRows21d} rows, window +-${finWindowPx21d} px${harnessChecked21d ? ', harness cross-checked' : ', harness absent — calibration values used'}) + sun elev ${sunElev21d.toFixed(1)} deg + east bands ${east21d.bandY.join('/')} m awning margin ${east21d.awningLength - 2 * east21d.windowW} m + mids ${mids21d.map((m: { stop: number }) => m.stop).join('/')} warm`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
