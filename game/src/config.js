@@ -888,6 +888,89 @@ export const CONFIG = {
     // for the far car's tail (tailMat emissive + tail-glow opacity).
     lights: { headEmissive: 1.8, headGlowOpacity: 0.95, headGlowScale: 1.8, tailEmissive: 2.0, tailGlowOpacity: 0.95 },
   },
+  round21: {
+    // Art Deco block on the SOLMAR tower's south face, ABOVE the
+    // round-18 shopfront (stageCoverDeco in main.js, cover-only):
+    // 3 wedding-cake tiers stepping out 0.8 m each as they rise
+    // (y 10-18 / 18-26 / 26-33, widths 24 / 20 / 16 m) + a 2-step
+    // crown (y 33-36) + a vertical fin on the west edge (y 10-36)
+    // + a dark balcony band + thin rail at each tier top. All faces
+    // MeshBasicMaterial (UNLIT, like the shopfront glass) so the
+    // pastel reads at its hex luminance, not at the mercy of the low
+    // sun. Pastel hexes are MUTED (config luminance 117-155, never
+    // above 160): terracotta / dusty rose / sage / pale cream — a
+    // bright white block would lift the heli-contrast ring mean
+    // (guardrail §5: heli contrast >= 50) and read as a pasted
+    // billboard, not architecture.
+    deco: {
+      tierColors: [0xa86a52, 0x9a6a5e, 0x678252], // terracotta / dusty rose / sage — hex lum ~117/115/121; MeshBasicMaterial renders ~+27 brighter under ACES (exposure 1.12), so the on-screen pastel lands ~142-152, inside the 110-160 gate (the round-21a build used 0xb57f74/0x87a06e and rendered 169/178 — OVER the cap)
+      finColor: 0x8a7a5e, // pale cream fin (hex lum ~123, renders ~150)
+      crownColor: 0x678252, // sage crown steps (same as the top tier)
+      bandColor: 0x2e2a26, // near-black warm balcony band
+      railColor: 0x6a5a44, // muted brass balcony rail
+      tierBaseY: 10, // ABOVE the shopfront: sign top is 8.8, trim 5.6, awning 3.5, windows 1.6
+      tierHeights: [8, 8, 7],
+      tierWidths: [28, 24, 20],
+      tierDepths: [0.8, 1.6, 2.4], // each tier steps 0.8 m proud of the one below
+      crownWidths: [12, 8],
+      crownHeights: [2, 1],
+      crownDepth: 1.6,
+      finWidth: 3.0, // 3 m — a 2 m fin is only ~12 px wide on screen, and the chase drifts ~13 px between the capture and the post-capture probe, so its bottom rows read 3 px in the +-14 px window (test run2: 30 rows, zero margin); 3 m puts ~10 px in the window at the same drift
+      finTopY: 40, // the fin rises above the crown (33-36) — the extra 4 m buy ~15 screen rows ABOVE the dialogue box (the round-21 test run1 read only 29 fin rows: the dialogue box eats the middle, so the margin has to come from the top, not the middle)
+      finDepth: 1.2,
+    },
+    // Shaded shopfront + balcony bands on the WEST face of the
+    // nearest east tower (stageCoverEast in main.js, cover-only):
+    // 2 warm glass panes + awning at ground level (the y 265-325
+    // lane, below the police panel) + 2 dark balcony bands at
+    // y 21 / 26 (the y 90-140 lane, above the police panel, clear
+    // of the heli). Same warm glass as the round-18 shopfront.
+    east: {
+      glassColor: 0xffd98a,
+      frameColor: 0x2a2a22,
+      awningColor: 0x2e86c1, // shaded blue awning (not the SOLMAR red)
+      windowW: 6.0, // the west face is seen at a grazing angle (~4 px/m along z), so a 4.5 m pane covers only ~18 px of the 28 px sample box (round-21 test run1: one pane read 0.43) — 6 m covers ~25 px
+      windowH: 2.2,
+      windowY: 1.6,
+      awningY: 3.5,
+      awningLength: 16, // spans both panes (15 m row) with a margin
+      bandColor: 0x2e2a26,
+      railColor: 0x6a5a44,
+      bandY: [21, 26],
+      bandLength: 14,
+    },
+    // Sun-soaked cover light (stageCoverChase, AFTER applyGoldenHour
+    // — the global golden-hour grade is untouched, so combat /
+    // pursuit / sunset keep their own palettes): the sky gradient
+    // warms at every stop (top + mids + horizon, B pulled down so
+    // the measured R-B rises), the fog warms with it, and the
+    // directional sun drops from ~15 deg to ~11.5 deg elevation
+    // (sunOffset y 50 -> 38) for longer shadows. Measured baseline
+    // (round-20 cover PNG, pure-sky box x 720-920 / y 10-40 —
+    // right of the SOLMAR tower, left of the far tower, above the
+    // heli disc): mean R-B 185.6 (run1 = run2, deterministic) —
+    // the gate needs +10 (≥ 195.6) on the round-21 build. The
+    // round-21a build measured +10.7 on that box with milder mids;
+    // the mids here are warmed further (G cut at 0.18 / 0.30 /
+    // 0.40, where ACES already saturates R) for margin. NOTE: the
+    // first gate box tried (x 950-1100 / y 15-55, R-B 91.1) is NOT
+    // pure sky — its lower half catches the far tower's top
+    // floors, whose shading moves with the lower sun and swamps
+    // the sky signal (r21a: -3.6 there while the pure sky warmed
+    // +10.7).
+    coverLight: {
+      skyTop: 0x641c0a,
+      skyHorizon: 0xff8c1a,
+      fog: 0xe07028,
+      mids: [
+        { stop: 0.18, hex: 0x981e08 },
+        { stop: 0.30, hex: 0xc21402 },
+        { stop: 0.40, hex: 0xdb2604 },
+        { stop: 0.47, hex: 0xffc46b },
+      ],
+      sunOffset: [165, 38, 85],
+    },
+  },
 
   // ---- Player movement (metres / second) ----
   player: {

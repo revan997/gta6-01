@@ -531,6 +531,93 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 20 (re-touch): staged lights head ${lights.headEmissive}/${lights.headGlowOpacity}/${lights.headGlowScale} + tail ${lights.tailEmissive}/${lights.tailGlowOpacity} (far 0xe67e22, near 0xf5f0e6, peds -18/-20/-26) applied in stageCoverTraffic`);
 }
+// Round 21: the Art Deco block + east-tower shopfront + sun-soaked
+// cover light must be present — CONFIG.round21 (deco tiers / fin /
+// east panes / coverLight sky) in config.js and its consumers in
+// main.js (stageCoverDeco + stageCoverEast called from
+// stageCoverChase, coverLight applied AFTER applyGoldenHour()).
+// A copy that lost any of them would ship the round-20 plain tower
+// face / flat sunset while the probe claims the round-21 fixes.
+// Fail loudly here instead of at the intake check.
+{
+  const cfg21 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round21;
+  const lum21 = (hex: number): number => {
+    const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const deco = cfg21?.deco;
+  const decoOk = deco
+    && Array.isArray(deco.tierColors) && deco.tierColors.length === 3
+    && deco.tierColors.every((c: number) => typeof c === 'number' && lum21(c) >= 100 && lum21(c) <= 170)
+    && typeof deco.finColor === 'number' && lum21(deco.finColor) >= 100 && lum21(deco.finColor) <= 180
+    && typeof deco.tierBaseY === 'number' && deco.tierBaseY >= 9 // above the shopfront sign top (8.8)
+    && Array.isArray(deco.tierWidths) && deco.tierWidths.length === 3
+    && deco.tierWidths[0] > deco.tierWidths[1] && deco.tierWidths[1] > deco.tierWidths[2] // wedding-cake: shrinking
+    && Array.isArray(deco.tierDepths) && deco.tierDepths.length === 3
+    && deco.tierDepths[0] < deco.tierDepths[1] && deco.tierDepths[1] < deco.tierDepths[2] // stepping proud
+    && typeof deco.finTopY === 'number' && deco.finTopY > 30 && deco.finTopY <= 40;
+  const east = cfg21?.east;
+  const eastOk = east
+    && typeof east.glassColor === 'number' && typeof east.awningColor === 'number'
+    && Array.isArray(east.bandY) && east.bandY.length === 2;
+  const cl = cfg21?.coverLight;
+  const lightOk = cl
+    && typeof cl.skyTop === 'number' && typeof cl.skyHorizon === 'number' && typeof cl.fog === 'number'
+    && Array.isArray(cl.mids) && cl.mids.length === 4
+    && cl.mids.every((m: { stop: number; hex: number }) => typeof m.stop === 'number' && m.stop > 0 && m.stop < 0.5 && typeof m.hex === 'number')
+    && Array.isArray(cl.sunOffset) && cl.sunOffset.length === 3
+    && typeof cl.sunOffset[1] === 'number' && cl.sunOffset[1] < 50; // sun lower than the default 50 (~15 deg)
+  if (!decoOk || !eastOk || !lightOk) {
+    throw new Error('missing input: CONFIG.round21 incomplete in config.js — deco needs 3 muted pastel tiers (lum 100-170, shrinking widths, stepping depths, base y >= 9, fin top 30-40), east needs warm glass + 2 balcony bands, coverLight needs a warm sky (4 mids below 0.5) + a lowered sun (y < 50)');
+  }
+  const mainSrc21 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const chaseIdx = mainSrc21.indexOf('function stageCoverChase()');
+  const chaseSrc = chaseIdx >= 0 ? mainSrc21.slice(chaseIdx) : '';
+  const goldenIdx = chaseSrc.indexOf('applyGoldenHour()');
+  const lightIdx = chaseSrc.indexOf('CONFIG.round21');
+  const consumersOk = mainSrc21.includes('function stageCoverDeco()')
+    && mainSrc21.includes('function stageCoverEast()')
+    && chaseSrc.includes('stageCoverDeco()') && chaseSrc.includes('stageCoverEast()')
+    && goldenIdx >= 0 && lightIdx > goldenIdx; // coverLight AFTER the global golden-hour grade
+  if (!consumersOk) {
+    throw new Error('missing input: main.js must define stageCoverDeco + stageCoverEast, call both from stageCoverChase, and apply CONFIG.round21.coverLight AFTER applyGoldenHour()');
+  }
+  console.log(`round 21: Art Deco block (3 pastel tiers lum ${deco.tierColors.map((c: number) => Math.round(lum21(c))).join('/')}, fin to ${deco.finTopY} m) + east shopfront (2 bands) + cover light (skyTop 0x${cl.skyTop.toString(16)}, sun y ${cl.sunOffset[1]})`);
+}
+// Round 21 (re-touch): the pastel + sky-warming SEMANTICS must be
+// the REAL parsed values, not just present — a copy whose tier
+// hexes drifted bright (the round-21a build rendered 169/178,
+// over the 160 pastel cap) or whose sky mids were not actually
+// warmer than the round-5 sunset would still pass the structural
+// gate above while the pixel gates fail. Verify: every tier colour
+// is warm (R-B >= 15 — the tower's own glass, R-B -64, is not
+// pastel) and the fin is cream, not orange (R-B <= 80 — the west
+// neighbour tower's face reads R-B ~150 and must not count as
+// fin); the cover-light skyTop is warmer than the global sunset
+// top (0x4a2a20, R-B 42); and the first three cover-light mids are
+// strictly warmer (higher R-B) than the round-5 mids at the same
+// stops (the 0.47 gold stop is shared, so it need only match).
+{
+  const cfg21b = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round21;
+  const rb21 = (hex: number): number => ((hex >> 16) & 255) - (hex & 255);
+  const tiers21 = cfg21b?.deco?.tierColors;
+  const warmOk = Array.isArray(tiers21) && tiers21.length === 3
+    && tiers21.every((c: number) => rb21(c) >= 15)
+    && typeof cfg21b?.deco?.finColor === 'number'
+    && rb21(cfg21b.deco.finColor) >= 15 && rb21(cfg21b.deco.finColor) <= 80;
+  const cl21 = cfg21b?.coverLight;
+  const topOk = typeof cl21?.skyTop === 'number' && rb21(cl21.skyTop) > rb21(0x4a2a20);
+  const mids5 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round5?.sky?.mids;
+  const midsWarmerOk = Array.isArray(cl21?.mids) && Array.isArray(mids5)
+    && cl21.mids.length === 4 && mids5.length === 4
+    && cl21.mids[0].hex !== undefined && mids5[0].hex !== undefined
+    && [0, 1, 2].every((i) => rb21(cl21.mids[i].hex) > rb21(mids5[i].hex))
+    && rb21(cl21.mids[3].hex) >= rb21(mids5[3].hex);
+  if (!warmOk || !topOk || !midsWarmerOk) {
+    throw new Error('missing input: CONFIG.round21 semantics — deco tiers must be warm (R-B >= 15), fin cream (R-B 15-80), coverLight skyTop warmer than the global sunset top (R-B > 42), and coverLight mids 0-2 strictly warmer than the round-5 mids at the same stops');
+  }
+  console.log(`round 21 (re-touch): pastel warmth (tiers R-B ${tiers21.map((c: number) => rb21(c)).join('/')}, fin R-B ${rb21(cfg21b.deco.finColor)}) + skyTop R-B ${rb21(cl21.skyTop)} > sunset 42 + mids 0-2 warmer than round-5`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

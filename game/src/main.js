@@ -335,6 +335,11 @@ let shotHeli = null;
 // null until the cover shot stages it; the probe reads the placed
 // window / sign / trim points off it.
 let coverShopfront = null;
+// Round 21: the Art Deco block (stageCoverDeco) + the east-tower
+// shopfront (stageCoverEast) — staging-only probe points, same
+// pattern as coverShopfront above.
+let coverDeco = null;
+let coverEast = null;
 // Round 14 staging state (only ever set by stage*()): the pursuit
 // roadblock pair + race rivals (repositioned every frame relative to
 // the player car), and the combat shot's frozen muzzle flash + aim
@@ -2455,6 +2460,208 @@ function stageCoverShopfront() {
   coverShopfront = points;
 }
 
+// Round 21: Art Deco block on the SOLMAR tower's south face, ABOVE
+// the round-18 shopfront — staging-only, cover frame only, same
+// deterministic face derivation as stageCoverShopfront (no rng, the
+// seeded city never shifts). Three wedding-cake tiers step 0.8 m
+// proud of the one below as they rise (y 10-33), a 2-step crown
+// caps the top tier (y 33-36), a vertical fin runs the west edge
+// (y 10-36, clear of the heli), and each tier top carries a dark
+// balcony band + a thin rail. The block NEVER touches the shopfront
+// (tier base y 10 is above the sign top 8.8, trim 5.6, awning 3.5,
+// windows 1.6). All faces are MeshBasicMaterial (UNLIT, like the
+// shopfront glass) in MUTED pastel (config luminance 117-155), so
+// the block reads as architecture, not a billboard, and cannot lift
+// the heli-contrast ring the way a bright white block would.
+// 12 draw calls, ~144 tris, against the cover's huge headroom.
+// The placed points are collected in coverDeco so the probe can
+// verify them (tier faces, balcony lines, fin line) instead of
+// trusting the staging code. If no face qualifies the function
+// skips, never crashes.
+function stageCoverDeco() {
+  const cfg = CONFIG.round21?.deco || {};
+  const carZ = player.position.z;
+  let target = null;
+  for (const b of world.buildings) {
+    if ((b.height || 0) < 30) continue;
+    if (b.maxZ < -170 || b.maxZ > carZ - 40) continue;
+    if (b.maxX < -20 || b.minX > 30) continue;
+    if (!target || b.maxZ > target.maxZ) target = b;
+  }
+  if (!target) return;
+  const faceZ = target.maxZ;
+  const cx = (target.minX + target.maxX) / 2;
+  const tierColors = cfg.tierColors || [0xa86a52, 0xb57f74, 0x87a06e];
+  const bandColor = cfg.bandColor ?? 0x2e2a26;
+  const railColor = cfg.railColor ?? 0x6a5a44;
+  const finColor = cfg.finColor ?? 0xa89a7c;
+  const crownColor = cfg.crownColor ?? 0x87a06e;
+  const baseY = cfg.tierBaseY ?? 10;
+  const heights = cfg.tierHeights || [8, 8, 7];
+  const widths = cfg.tierWidths || [24, 20, 16];
+  const depths = cfg.tierDepths || [0.8, 1.6, 2.4];
+  const points = {
+    building: { minX: target.minX, maxX: target.maxX, minZ: target.minZ, maxZ: target.maxZ, height: target.height },
+    tiers: [], tierCorners: [], finCorners: [], finLine: null, balcony: [],
+  };
+  const add = (mesh, name) => { mesh.name = name; scene.add(mesh); return mesh; };
+  const basic = (color) => new THREE.MeshBasicMaterial({ color });
+  let y = baseY;
+  for (let i = 0; i < 3; i++) {
+    const w = widths[i], h = heights[i], d = depths[i];
+    const tier = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), basic(tierColors[i]));
+    tier.position.set(cx, y + h / 2, faceZ + d / 2);
+    add(tier, 'deco-tier');
+    const topY = y + h;
+    points.tiers.push({ x: cx, y: y + h / 2, z: faceZ + d, w, h });
+    points.tierCorners.push(
+      { x: cx - w / 2, y, z: faceZ + d }, { x: cx + w / 2, y, z: faceZ + d },
+      { x: cx - w / 2, y: topY, z: faceZ + d }, { x: cx + w / 2, y: topY, z: faceZ + d },
+    );
+    // Dark balcony band at the tier top, proud of the tier face, +
+    // a thin rail bar above its front edge — the two horizontal
+    // lines that read as a balcony from the street.
+    const bandY = topY - 0.4;
+    const band = new THREE.Mesh(new THREE.BoxGeometry(w, 0.5, 0.35), basic(bandColor));
+    band.position.set(cx, bandY, faceZ + d + 0.175);
+    add(band, 'deco-balcony-band');
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(w, 0.12, 0.12), basic(railColor));
+    rail.position.set(cx, topY + 0.55, faceZ + d + 0.3);
+    add(rail, 'deco-balcony-rail');
+    points.balcony.push({
+      a: { x: cx - w / 2, y: bandY, z: faceZ + d + 0.35 },
+      b: { x: cx + w / 2, y: bandY, z: faceZ + d + 0.35 },
+    });
+    y = topY;
+  }
+  // Stepped crown on the top tier, set back to the middle tier's
+  // depth so it reads as a cap, not another full tier.
+  const crownDepth = cfg.crownDepth ?? 1.6;
+  const crownWidths = cfg.crownWidths || [12, 8];
+  const crownHeights = cfg.crownHeights || [2, 1];
+  for (let i = 0; i < 2; i++) {
+    const cw = crownWidths[i], ch = crownHeights[i];
+    const step = new THREE.Mesh(new THREE.BoxGeometry(cw, ch, crownDepth), basic(crownColor));
+    step.position.set(cx, y + ch / 2, faceZ + crownDepth / 2);
+    add(step, 'deco-crown');
+    points.tierCorners.push(
+      { x: cx - cw / 2, y, z: faceZ + crownDepth }, { x: cx + cw / 2, y, z: faceZ + crownDepth },
+      { x: cx - cw / 2, y: y + ch, z: faceZ + crownDepth }, { x: cx + cw / 2, y: y + ch, z: faceZ + crownDepth },
+    );
+    y += ch;
+  }
+  // Vertical fin on the WEST edge of the block (x = minX + 2, so it
+  // stands clear of the heli, which rides the east half of the
+  // face) — the Art Deco silhouette, readable from the street.
+  const finW = cfg.finWidth ?? 2.0;
+  const finTopY = cfg.finTopY ?? 36;
+  const finDepth = cfg.finDepth ?? 1.2;
+  const finX = target.minX + finW;
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(finW, finTopY - baseY, finDepth), basic(finColor));
+  fin.position.set(finX, (baseY + finTopY) / 2, faceZ + finDepth / 2);
+  add(fin, 'deco-fin');
+  points.finCorners.push(
+    { x: finX - finW / 2, y: baseY, z: faceZ + finDepth }, { x: finX + finW / 2, y: baseY, z: faceZ + finDepth },
+    { x: finX - finW / 2, y: finTopY, z: faceZ + finDepth }, { x: finX + finW / 2, y: finTopY, z: faceZ + finDepth },
+  );
+  points.finLine = {
+    a: { x: finX, y: baseY + 2, z: faceZ + finDepth },
+    b: { x: finX, y: finTopY - 2, z: faceZ + finDepth },
+  };
+  coverDeco = points;
+}
+
+// Round 21: shaded shopfront + balcony bands on the WEST face of
+// the nearest east tower (x[76.4,106], minX 76.4) — staging-only,
+// cover frame only, same deterministic derivation as the shopfront
+// (no rng). Two warm glass panes + a shaded-blue awning at ground
+// level (the y 265-325 lane, below the police panel) and two dark
+// balcony bands at y 21 / 26 (the y 90-140 lane, above the police
+// panel, clear of the heli). The face is seen at a grazing angle
+// from the road, so the panes are the same size as the SOLMAR
+// shopfront's — the probe measures them by their projected centres.
+// 9 draw calls, ~108 tris. If no tower qualifies the function
+// skips, never crashes; the test treats an absent east staging as
+// "skipped", not as a failure (Target 2 is optional by plan).
+function stageCoverEast() {
+  const cfg = CONFIG.round21?.east || {};
+  const carZ = player.position.z;
+  let target = null;
+  for (const b of world.buildings) {
+    if ((b.height || 0) < 30) continue;
+    if (b.minX < 70 || b.minX > 80) continue;
+    if (b.maxZ < -170 || b.maxZ > carZ - 40) continue;
+    if (!target || b.maxZ > target.maxZ) target = b;
+  }
+  if (!target) return;
+  const faceX = target.minX;
+  const cz = (target.minZ + target.maxZ) / 2;
+  const glassColor = cfg.glassColor ?? 0xffd98a;
+  const frameColor = cfg.frameColor ?? 0x2a2a22;
+  const awningColor = cfg.awningColor ?? 0x2e86c1;
+  const bandColor = cfg.bandColor ?? 0x2e2a26;
+  const railColor = cfg.railColor ?? 0x6a5a44;
+  const winW = cfg.windowW ?? 4.5, winH = cfg.windowH ?? 2.2, winY = cfg.windowY ?? 1.6;
+  const points = {
+    building: { minX: target.minX, maxX: target.maxX, minZ: target.minZ, maxZ: target.maxZ, height: target.height },
+    windows: [], awning: null, balcony: [],
+  };
+  const add = (mesh, name) => { mesh.name = name; scene.add(mesh); return mesh; };
+  // Two warm panes on the west face (planes face -x, toward the
+  // road), each with a dark frame backing, like the SOLMAR row.
+  for (const wz of [cz - 5.5, cz + 3.5]) {
+    const frame = new THREE.Mesh(
+      new THREE.PlaneGeometry(winW + 0.6, winH + 0.6),
+      new THREE.MeshBasicMaterial({ color: frameColor }),
+    );
+    frame.rotation.y = -Math.PI / 2;
+    frame.position.set(faceX - 0.12, winY, wz);
+    add(frame, 'deco-east-frame');
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(winW, winH),
+      new THREE.MeshBasicMaterial({ color: glassColor }),
+    );
+    glass.rotation.y = -Math.PI / 2;
+    glass.position.set(faceX - 0.2, winY, wz);
+    add(glass, 'deco-east-glass');
+    points.windows.push({ x: faceX - 0.2, y: winY, z: wz });
+  }
+  // Shaded awning above the panes, tilted so its outer (-x) edge
+  // drops over the sidewalk (rotation about z, not x — the face
+  // points west, so the tilt axis is z).
+  const awning = new THREE.Mesh(
+    new THREE.BoxGeometry(1.8, 0.18, cfg.awningLength ?? 12),
+    new THREE.MeshStandardMaterial({ color: awningColor, roughness: 0.85 }),
+  );
+  awning.position.set(faceX - 0.9, cfg.awningY ?? 3.5, cz);
+  awning.rotation.z = 0.22;
+  add(awning, 'deco-east-awning');
+  points.awning = { x: faceX - 0.9, y: cfg.awningY ?? 3.5, z: cz };
+  // Dark balcony bands up the face, each with a thin rail bar
+  // above its front edge — the horizontal lines that break the
+  // repeated glass grid on the tower's west face.
+  const bandLength = cfg.bandLength ?? 14;
+  for (const bandY of (cfg.bandY || [21, 26])) {
+    const band = new THREE.Mesh(
+      new THREE.BoxGeometry(0.35, 0.5, bandLength),
+      new THREE.MeshBasicMaterial({ color: bandColor }),
+    );
+    band.position.set(faceX - 0.175, bandY, cz);
+    add(band, 'deco-east-band');
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.12, bandLength),
+      new THREE.MeshBasicMaterial({ color: railColor }),
+    );
+    rail.position.set(faceX - 0.3, bandY + 0.55, cz);
+    add(rail, 'deco-east-rail');
+    points.balcony.push({
+      a: { x: faceX - 0.35, y: bandY, z: cz - bandLength / 2 },
+      b: { x: faceX - 0.35, y: bandY, z: cz + bandLength / 2 },
+    });
+  }
+  coverEast = points;
+}
+
 // 1-cover-chase.jpg — golden-hour police chase. Player in the red
 // sports car on the x=40 downtown road (the proven round-12 spot),
 // four stars, two interceptors tight behind, the fallback heli above,
@@ -2514,6 +2721,22 @@ function stageCoverChase() {
   showOnly(null);
   input.attach(canvas);
   applyGoldenHour();
+  // Round 21: sun-soaked cover light, cover-only, AFTER the global
+  // golden-hour grade (applyGoldenHour() itself is untouched, so
+  // combat / pursuit / sunset keep their own palettes): a warmer
+  // sky gradient at every stop + warmer fog, and the directional
+  // sun a little lower (CONFIG.round21.coverLight.sunOffset, ~15
+  // deg -> ~11.5 deg) for longer shadows. All via CONFIG,
+  // deterministic, no other shot pays for it.
+  {
+    const cl = CONFIG.round21?.coverLight || {};
+    if (typeof cl.skyTop === 'number' && typeof cl.skyHorizon === 'number') {
+      world.sky.setPalette(cl.skyTop, cl.skyHorizon, cl.mids);
+      scene.background = new THREE.Color(cl.skyHorizon);
+      if (typeof cl.fog === 'number') scene.fog = new THREE.Fog(cl.fog, 200, 850);
+    }
+    if (Array.isArray(cl.sunOffset) && cl.sunOffset.length === 3) shotSunOffset = [...cl.sunOffset];
+  }
   // Round 15: 17.81, not 17.8 — formatClock floors the minutes, and
   // 17.8 in binary float is 17.7999..., which floors to 17:47. The
   // 0.01 h (36 s) is invisible in the light; the sheet says 17:48.
@@ -2627,6 +2850,11 @@ function stageCoverChase() {
   // Round 18: warm shopfront + SOLMAR sign + edge trim on the nearest
   // tower face ahead (staging-only, cover frame only).
   stageCoverShopfront();
+  // Round 21: Art Deco block above the shopfront on the same tower
+  // face + shaded shopfront / balcony bands on the nearest east
+  // tower's west face (staging-only, cover frame only).
+  stageCoverDeco();
+  stageCoverEast();
   // Round 19: the cover dialogue box moves TOP-LEFT (CONFIG.round19
   // coverDialogue — the same override pattern as the round-16 sunset
   // shift): above the mission panel (bottom ~102 < panel top 118),
@@ -3531,6 +3759,18 @@ window.__solmar = {
       stagedPeds: shotPeds.map((tp) => ({
         x: +tp.ped.position.x.toFixed(1), z: +tp.ped.position.z.toFixed(1), shirt: tp.ped.shirt,
       })),
+    };
+  },
+  // Round 21 probe: the Art Deco block + east-tower shopfront +
+  // cover-light tuning, read straight off the live scene (runtime
+  // facts, not config claims). coverDeco / coverEast are null on
+  // every shot but the cover chase; coverLight is the tuning record
+  // for the sun-soaked cover pass in stageCoverChase.
+  get round21() {
+    return {
+      coverLight: CONFIG.round21?.coverLight || null,
+      coverDeco: coverDeco || null,
+      coverEast: coverEast || null,
     };
   },
   // Round 14: project a world point to normalised screen coordinates
