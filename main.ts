@@ -417,6 +417,25 @@ if (!existsSync(gameFavicon)) {
     throw new Error('missing input: main.js must consume CONFIG.round19 (dialogue shift, rifle, pools, muzzle halo) and police.js must export attachRoadblockLightPools');
   }
   console.log('round 19: heli followOffset y 11.5 + dialogue top-left (16,36,520) + rifle 0xdde2e8/0xe0aa6a + pools 0.75 + SMG 0.15 metalness');
+  // Round 19 (re-touch): the heli re-stage numbers must be the REAL
+  // parsed values, not just substrings — a copy whose followOffset was
+  // re-tuned (or whose dialogue box was widened back toward the heli)
+  // would still pass the substring checks above. followOffset must be
+  // exactly x 4 / y 11.5 / z -30 (down 4 m and 4 m to the side from
+  // round 18's 0 / 15.5), and the cover dialogue's right edge
+  // (left + width = 536) must stay left of the heli bbox left edge
+  // (~580, per the config comment), otherwise the box overlaps the
+  // helicopter again as it did in round 18 (~7,800 px^2).
+  const cfg19 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round19;
+  const fo19 = cfg19?.heli?.followOffset;
+  const dlg19 = cfg19?.coverDialogue;
+  const followOk = fo19?.x === 4 && fo19?.y === 11.5 && fo19?.z === -30;
+  const dialogueClearOk = typeof dlg19?.left === 'number' && typeof dlg19?.width === 'number'
+    && dlg19.left + dlg19.width === 536 && dlg19.left + dlg19.width < 580;
+  if (!followOk || !dialogueClearOk) {
+    throw new Error('missing input: CONFIG.round19 followOffset must be x 4 / y 11.5 / z -30 and coverDialogue right edge (left + width = 536) must stay left of the heli bbox (~580)');
+  }
+  console.log(`round 19 (re-touch): heli followOffset (${fo19.x}, ${fo19.y}, ${fo19.z}) + dialogue right edge ${dlg19.left + dlg19.width} < heli bbox 580`);
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
