@@ -962,14 +962,27 @@ function updateCamera(dt) {
         (car.position.y || 0) + height,
         car.position.z + fz * ahead + rz * shotCam.side,
       );
-      // Round 23: cover-only lookAt — 8 m beyond the car (the proven round-12 value) (CONFIG.
-      // round23.coverCam.lookAhead) instead of 8 m, so the view axis
-      // stays ~20 deg west of south and the nearer Deco
-      // block recentres while the east tower stays in frame. Every
-      // other front-mode shot keeps the proven 8 m lookAt.
-      const lookBack = (SHOT === 'cover-chase' && typeof CONFIG.round23?.coverCam?.lookAhead === 'number')
-        ? CONFIG.round23.coverCam.lookAhead : 8;
-      camera.lookAt(car.position.x - fx * lookBack, 1.5, car.position.z - fz * lookBack);
+      // Round 24 (elevated wide): the cover lookAt takes the
+      // round-24 lookAhead (30 m past the GT) plus the round-24
+      // lookEast (22 m east, applied along the camera-right axis),
+      // rotating the view axis ~17 deg east of north so the Deco
+      // tower centres as a landmark and the Marina basin enters
+      // the top-right. Every other front-mode shot keeps the
+      // proven 8 m lookAt with no east offset.
+      const r24cam = (SHOT === 'cover-chase') ? (CONFIG.round24?.coverCam || null) : null;
+      const lookBack = r24cam && typeof r24cam.lookAhead === 'number'
+        ? r24cam.lookAhead
+        : ((SHOT === 'cover-chase' && typeof CONFIG.round23?.coverCam?.lookAhead === 'number')
+          ? CONFIG.round23.coverCam.lookAhead : 8);
+      const lookEast = (r24cam && typeof r24cam.lookEast === 'number') ? r24cam.lookEast : 0;
+      camera.lookAt(car.position.x - fx * lookBack + rx * lookEast, 1.5, car.position.z - fz * lookBack + rz * lookEast);
+      // Round 24: cover-only FOV 62 -> 72 (horizontal field
+      // ~90 -> ~105 deg). The staged-shot branch returns before
+      // the chase-camera FOV lerp, so this value holds at capture.
+      if (r24cam && typeof r24cam.fov === 'number' && camera.fov !== r24cam.fov) {
+        camera.fov = r24cam.fov;
+        camera.updateProjectionMatrix();
+      }
       followSun(car.position.x, car.position.z);
       return;
     }
@@ -1575,6 +1588,18 @@ function update(dt) {
   // the re-assertion is belt-and-braces against any drift.
   if (SHOT === 'cover-chase' && player.currentCar && shotTraffic.length) {
     const pc = player.currentCar;
+    // Round 24 (v6): PIN the GT — holdSpeed 0 does not stop the
+    // interceptors shoving it during the ~250 s convergence wait
+    // (run 5: (40,-72) -> (51.5,-66)), and the staged traffic is
+    // pinned to GT + (dx,dz), so a drifting GT drags the whole
+    // frame (camera, heli, traffic) into the interceptor cluster.
+    // Cover-only staging (SHOT === 'cover-chase'); live play is
+    // untouched, and the pin runs after police.update, so the
+    // ramming is absorbed, not fought.
+    pc.position.set(40, 0, CONFIG.round24?.coverSpawn?.carZ ?? CONFIG.round23?.coverSpawn?.carZ ?? -72);
+    pc.heading = 0;
+    pc.speed = 0;
+    if (pc.group) pc.group.rotation.y = 0;
     for (const st of shotTraffic) {
       if (!st.car) continue;
       st.car.position.set(pc.position.x + st.dx, 0, pc.position.z + st.dz);
@@ -2490,7 +2515,7 @@ function stageCoverDeco() {
   // fin shifted west, plan §2b) merge over the round-21 block — the
   // round-21 values stay the fallback, so a copy that lost the
   // round-22 block still stages the round-21 block.
-  const cfg = { ...(CONFIG.round21?.deco || {}), ...(CONFIG.round22?.deco || {}) };
+  const cfg = { ...(CONFIG.round21?.deco || {}), ...(CONFIG.round22?.deco || {}), ...(CONFIG.round24?.deco || {}) };
   const carZ = player.position.z;
   let target = null;
   for (const b of world.buildings) {
@@ -2592,7 +2617,12 @@ function stageCoverDeco() {
   const finW = cfg.finWidth ?? 2.0;
   const finTopY = cfg.finTopY ?? 36;
   const finDepth = cfg.finDepth ?? 1.2;
-  const finX = target.minX + finW - (cfg.finWestShift ?? 0);
+  // Round 24 (v4, finEast): the fin rides the EAST edge of the
+  // block (target.maxX - finW) instead of the west edge — from
+  // the east-side elevated camera the west-edge fin is grazed
+  // by the tier boxes (their fronts stand proud of the fin),
+  // while on the east edge no tier overhangs it from the camera.
+  const finX = cfg.finEast ? target.maxX - finW : target.minX + finW - (cfg.finWestShift ?? 0);
   const fin = new THREE.Mesh(new THREE.BoxGeometry(finW, finTopY - baseY, finDepth), basic(finColor));
   fin.position.set(finX, (baseY + finTopY) / 2, faceZ + finDepth / 2);
   add(fin, 'deco-fin');
@@ -2624,7 +2654,7 @@ function stageCoverEast() {
   // awning, plan §3) merge over the round-21 block — the round-21
   // values stay the fallback, so a copy that lost the round-22
   // block still stages the round-21 panes.
-  const cfg = { ...(CONFIG.round21?.east || {}), ...(CONFIG.round22?.east || {}) };
+  const cfg = { ...(CONFIG.round21?.east || {}), ...(CONFIG.round22?.east || {}), ...(CONFIG.round24?.east || {}) };
   const carZ = player.position.z;
   let target = null;
   for (const b of world.buildings) {
@@ -2649,7 +2679,10 @@ function stageCoverEast() {
   const add = (mesh, name) => { mesh.name = name; scene.add(mesh); return mesh; };
   // Two warm panes on the west face (planes face -x, toward the
   // road), each with a dark frame backing, like the SOLMAR row.
-  for (const wz of [cz - 5.5, cz + 3.5]) {
+  // Round 24 (v4): panes re-centre to cz-4 / cz+4 (was cz-5.5 /
+  // cz+3.5) so both sit fully on the 19 m face with the wider
+  // 13 m panes (was 12 m) and no overlap between them.
+  for (const wz of [cz - 4, cz + 4]) {
     const frame = new THREE.Mesh(
       new THREE.PlaneGeometry(winW + 0.6, winH + 0.6),
       new THREE.MeshBasicMaterial({ color: frameColor }),
@@ -2727,7 +2760,11 @@ function stageCoverEast() {
 // are never added to traffic.getCars() or police.policeCars, so no
 // gameplay system, panel count or other shot sees them.
 function stageCoverTraffic() {
-  const cfg = CONFIG.round20?.traffic || {};
+  // Round 24 (v3): the far car angles 25 deg off the road axis
+  // (heading PI -> 2.6) — end-on from the elevated camera its
+  // projected bbox collapsed to a 2 px sliver (non-road 56 px),
+  // so no gate could pass; angled, its length reads on screen.
+  const cfg = { ...(CONFIG.round20?.traffic || {}), ...(CONFIG.round24?.traffic || {}) };
   const lc = CONFIG.round20?.lights || {};
   const car = player.currentCar;
   if (!car) return [];
@@ -2782,16 +2819,15 @@ function stageCoverChase() {
   // 0.01 h (36 s) is invisible in the light; the sheet says 17:48.
   timeOfDay = 17.81;
   money = 1200;
-  // Round 23: the whole cover staging moves 8 m north toward the
-  // round-22 capture point (CONFIG.round23.coverSpawn.carZ -72)
-  // and the GT is held still (holdSpeed 0): at capture the camera
-  // sits ~70 m from the tower face instead of ~83 m,
-  // deterministically (see config.js for the failed closer tries).
-  const coverSpawnZ = CONFIG.round23?.coverSpawn?.carZ ?? -80;
+  // Round 24 (elevated wide): spawn + holdSpeed keep the
+  // round-23 deterministic values via CONFIG.round24.coverSpawn
+  // (same numbers, so the staging geometry is unchanged — only
+  // the camera moves).
+  const coverSpawnZ = CONFIG.round24?.coverSpawn?.carZ ?? CONFIG.round23?.coverSpawn?.carZ ?? -80;
   const car = createCar(scene, 'sports', 0xd7263d, 40, coverSpawnZ, 0);
   spawnedCars.add(car);
-  // Round 23: holdSpeed 0 — the GT stands still (see config).
-  car.speed = CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
+  // Round 24: holdSpeed 0 — the GT stands still (see config).
+  car.speed = CONFIG.round24?.coverSpawn?.holdSpeed ?? CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
   // Round 17: the hero trim — taillight bar, exhausts, rear glass,
   // flank stripes, rim discs, mirrors, grille, headlight lenses —
   // on the GT ONLY (the hero car). The shared sports model is never
@@ -2800,22 +2836,22 @@ function stageCoverChase() {
   player.teleport(40, coverSpawnZ, 0);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
-  // Round 23: cover camera from CONFIG.round23.coverCam (side /
-  // ahead / height keep the proven round-12 values; the re-frame is
-  // the spawn shift + the lookAt below, not the camera offsets).
+  // Round 24 (elevated wide): cover camera from
+  // CONFIG.round24.coverCam — height 11 / ahead 16 / side 8,
+  // lookAhead 30 + lookEast 22 + fov 72 applied in the front-mode
+  // camera branch. The re-frame is the camera, not the staging.
   {
-    const cc = CONFIG.round23?.coverCam || {};
+    const cc = CONFIG.round24?.coverCam || CONFIG.round23?.coverCam || {};
     shotCam = { mode: 'front', side: cc.side ?? 6, ahead: cc.ahead ?? 8.5, height: cc.height ?? 4 };
   }
-  shotHoldSpeed = CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
+  shotHoldSpeed = CONFIG.round24?.coverSpawn?.holdSpeed ?? CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
   police.maxPoliceCars = 2;
   police.maxOfficers = 0;
   police.addWanted(4);
-  // Round 23: pursuit spawns shift 6 m south (-98/-110 ->
-  // -104/-116), so the interceptors end ~13/23 m behind the GT
-  // instead of ramming it at 1 m (see config.js).
+  // Round 24: pursuit spawns keep the round-23 values via
+  // CONFIG.round24.coverSpawn.pursuitZ (same -104/-116).
   {
-    const pz = CONFIG.round23?.coverSpawn?.pursuitZ || [-98, -110];
+    const pz = CONFIG.round24?.coverSpawn?.pursuitZ || CONFIG.round23?.coverSpawn?.pursuitZ || [-98, -110];
     stagePursuitCars(40, pz[0], pz[1], 0);
   }
   // Round 14: the interceptors FLANK the GT (one each side of the
@@ -2827,8 +2863,12 @@ function stageCoverChase() {
   // held still the interceptors steer toward its x as they close
   // in, collapsing the flank below the 8 m gate (run1: 37.1/44.4);
   // 2 m outside the road edge buys the margin back.
-  police.policeCars[0].position.x = 31;
-  police.policeCars[1].position.x = 49;
+  // Round 24 (v4): flank wider again (31/49 -> 29/51) — the
+  // interceptors steer toward the GT as they close in, and at
+  // 31/49 their screen grounds merged with the traffic cars
+  // (distinct vehicles 3, not 4, in run 3).
+  police.policeCars[0].position.x = 29;
+  police.policeCars[1].position.x = 51;
   // Round 14: NO lane-2 heli — the police._scene wiring used to spawn
   // a second heli at altitude 38 whose dark body hung at the top edge
   // of the frame (the ambiguous dark blob in 13B). The fallback heli
@@ -2848,7 +2888,10 @@ function stageCoverChase() {
   // hidden behind the centred dialogue box), so the whole aircraft
   // now sits inside the frame with the rotor disc + skids visible
   // against the sky. The dialogue box moves out of its way (below).
-  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
+  // Round 24: heli followOffset keeps the round-19 values via
+  // CONFIG.round24.heli (same x 4 / y 11.5 / z -30) — it now
+  // rides near the elevated lookAt point, near frame centre.
+  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round24?.heli?.followOffset ?? CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
   // Skid marks + exhaust smoke, as children of the GT group (they
   // travel with the car): 2 dark planes at the rear wheels, 2 grey
   // glow sprites at the exhaust. 4 draw calls, ~8 tris.
@@ -2932,16 +2975,14 @@ function stageCoverChase() {
   // new overlap appears and respect still ends above the minimap.
   // Cover-only inline styles — hud.js defaults and every other shot
   // are untouched.
-  // Round 22: the round-22 cover overrides merge over the round-19
-  // dialogue box (narrower: 520 -> 440 px, right edge 536 -> 456,
-  // clear of the fin line at x ~509-530 and the left tier edges)
-  // and the round-20 left stack (empty in round 22 — the narrowed
-  // box keeps its 2-line / 73 px height, so the stack is untouched).
-  // The round-19/20 values stay the fallback, so a copy that lost
-  // the round-22 block still stages the round-20 left stack.
+  // Round 24: the round-24 cover overrides merge over the
+  // round-22 dialogue box (narrower again: 440 -> 320 px, right
+  // edge 456 -> 336, freeing the widened city on the left) and
+  // the mission panel narrows 330 -> 280 px (round24
+  // missionWidth). The round-20 left stack tops are untouched.
   {
-    const dlgCfg = { ...(CONFIG.round19?.coverDialogue || {}), ...(CONFIG.round22?.coverDialogue || {}) };
-    const stackCfg = { ...(CONFIG.round20?.coverStack || {}), ...(CONFIG.round22?.coverStack || {}) };
+    const dlgCfg = { ...(CONFIG.round19?.coverDialogue || {}), ...(CONFIG.round22?.coverDialogue || {}), ...(CONFIG.round24?.coverDialogue || {}) };
+    const stackCfg = { ...(CONFIG.round20?.coverStack || {}), ...(CONFIG.round22?.coverStack || {}), ...(CONFIG.round24?.coverStack || {}) };
     const dlg = document.getElementById('hud-dialogue');
     if (dlg && typeof dlgCfg.left === 'number' && typeof dlgCfg.width === 'number') {
       dlg.style.left = `${dlgCfg.left}px`;
@@ -2949,6 +2990,8 @@ function stageCoverChase() {
       dlg.style.transform = 'none';
       dlg.style.width = `${dlgCfg.width}px`;
     }
+    const missionEl = document.getElementById('hud-mission-panel');
+    if (missionEl && typeof CONFIG.round24?.missionWidth === 'number') missionEl.style.width = `${CONFIG.round24.missionWidth}px`;
     const setTop = (id, top) => {
       const el = document.getElementById(id);
       if (el && typeof top === 'number') el.style.top = `${top}px`;

@@ -1014,6 +1014,76 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 23 (re-frame, part 2): consumers locked — main.js reads CONFIG.round23 (spawn/holdSpeed/lookAt/shotCam) + get round23()${harnessChecked23 ? `, harness cross-checked (downscale Deco >= ${dsDecoGate23} px, fin >= ${dsFinGate23} rows)` : ', harness absent — consumers used'}`);
 }
+// Round 24 (elevated wide): lock the round-24 COVER RE-FRAME
+// values — the street-level framing capped at ~129 px Deco on the
+// sheet, so the cover shows the WORLD instead of one landmark:
+// the front camera rises (height 4 -> 10) and pulls back (ahead
+// 8.5 -> 14, side 6 -> 6), the FOV opens 62 -> 84, the lookAt
+// pushes 26 m past the GT and 8 m east so the view axis sits
+// ~3 deg east of north (Deco left-of-centre as a landmark, Marina
+// basin top-right as the coastline), and the dialogue box narrows
+// 440 -> 280 px (v2 — v1 lookEast 22 / fov 72 pushed the fin
+// off-frame left and the heli over the tower; see config.js). v5: the heli moves closer + lower (followOffset x 12 / y 15 /
+// z -17) so fin-to-nose clears 200 px, the east panes widen to 15 m with the awning raised to 5.5 m, and the near traffic car
+// moves to the west lane (dx -8) so it reads as a distinct vehicle. The old Deco-bbox gate is REMOVED (Deco drops
+// below 120 px by design); the round-24 gates are districts >= 3,
+// coastline run >= 40 px, HUD area <= 20%, fin >= 30 rows on the
+// 768x480 sheet, driven by round24-downscale.mjs.
+{
+  const cfg24 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round24;
+  if (!cfg24?.coverCam || !cfg24?.coverSpawn) {
+    throw new Error('missing input: CONFIG.round24 missing in config.js — coverCam (side/ahead/height/lookAhead/lookEast/fov) and coverSpawn (carZ/pursuitZ/holdSpeed) are required for the round-24 elevated-wide cover');
+  }
+  const camOk24 = cfg24.coverCam.side === 6 && cfg24.coverCam.ahead === 12 && cfg24.coverCam.height === 10
+    && cfg24.coverCam.lookAhead === 26 && cfg24.coverCam.lookEast === 8 && cfg24.coverCam.fov === 84;
+  const spawnOk24 = cfg24.coverSpawn.carZ === -72 && cfg24.coverSpawn.holdSpeed === 0
+    && Array.isArray(cfg24.coverSpawn.pursuitZ) && cfg24.coverSpawn.pursuitZ[0] === -104
+    && cfg24.coverSpawn.pursuitZ[1] === -116;
+  const dlgOk24 = cfg24.coverDialogue && cfg24.coverDialogue.width === 280 && cfg24.missionWidth === 280;
+  if (!camOk24 || !spawnOk24 || !dlgOk24) {
+    throw new Error('missing input: CONFIG.round24 exact values — coverCam must be side 6 / ahead 12 / height 10 / lookAhead 26 / lookEast 8 / fov 84, coverSpawn carZ -72 / pursuitZ [-104, -116] / holdSpeed 0, coverDialogue width 280 / missionWidth 280');
+  }
+  console.log(`round 24 (elevated wide): config locked — coverCam side ${cfg24.coverCam.side} / ahead ${cfg24.coverCam.ahead} / height ${cfg24.coverCam.height} / lookAhead ${cfg24.coverCam.lookAhead} / lookEast ${cfg24.coverCam.lookEast} / fov ${cfg24.coverCam.fov}, coverSpawn carZ ${cfg24.coverSpawn.carZ} / holdSpeed ${cfg24.coverSpawn.holdSpeed}, dialogue width ${cfg24.coverDialogue.width}`);
+}
+// Round 24 (elevated wide, part 2): the consumers + the new
+// downscale gates. main.js must actually USE the round-24 values —
+// the cover spawn and holdSpeed in stageCoverChase, the cover-only
+// lookAt (lookAhead + lookEast) and FOV in the front-mode camera
+// branch, the coverCam in the cover shotCam, the narrowed dialogue
+// box — and the sibling harness (round24-test.mjs) must carry the
+// round-24 downscale gates (districts >= 3, coastline run >= 40 px,
+// HUD area <= 20%, fin >= 30 rows on the 768x480 sheet) driven by
+// round24-downscale.mjs, with NO Deco-bbox >= 120 px gate left
+// (removed by design — Deco drops below 120 px in the wide shot).
+{
+  const mainSrc24 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const consumersOk24 = mainSrc24.includes('CONFIG.round24?.coverSpawn?.carZ')
+    && mainSrc24.includes('CONFIG.round24?.coverSpawn?.holdSpeed')
+    && mainSrc24.includes('CONFIG.round24?.coverCam?.lookAhead')
+    && mainSrc24.includes('CONFIG.round24?.coverCam?.lookEast')
+    && mainSrc24.includes('CONFIG.round24?.coverCam?.fov')
+    && mainSrc24.includes('CONFIG.round24?.coverCam')
+    && mainSrc24.includes('CONFIG.round24?.coverDialogue');
+  if (!consumersOk24) {
+    throw new Error('missing input: main.js must consume CONFIG.round24 — coverSpawn carZ/holdSpeed in stageCoverChase, coverCam lookAhead/lookEast/fov in the front-mode camera branch, coverCam in the cover shotCam, coverDialogue in the cover HUD block');
+  }
+  let finGate24 = 30, harnessChecked24 = false;
+  const testPath24 = join(repoRoot, '..', 'round24-test.mjs');
+  const dsPath24 = join(repoRoot, '..', 'round24-downscale.mjs');
+  if (existsSync(testPath24) && existsSync(dsPath24)) {
+    const testSrc24 = readFileSync(testPath24, 'utf-8');
+    const finM24 = testSrc24.match(/d\.finRows >= (\d+)/);
+    const dsUse24 = testSrc24.includes('round24-downscale.mjs') && testSrc24.includes('DOWNSCALE')
+      && testSrc24.includes('coastlineRun') && !testSrc24.includes('d.decoWH[0] >= 120');
+    if (finM24) finGate24 = Number(finM24[1]);
+    harnessChecked24 = dsUse24;
+  }
+  const gatesOk24 = finGate24 === 30;
+  if (!gatesOk24 || (existsSync(testPath24) && !harnessChecked24)) {
+    throw new Error('missing input: round-24 downscale gates — fin gate must be 30 rows and the harness must carry coastlineRun/districts/HUD-area gates with no Deco >= 120 px gate in round24-test.mjs, driven by round24-downscale.mjs');
+  }
+  console.log(`round 24 (elevated wide, part 2): consumers locked — main.js reads CONFIG.round24 (spawn/holdSpeed/lookAt/lookEast/fov/shotCam/dialogue)${harnessChecked24 ? `, harness cross-checked (fin >= ${finGate24} rows, districts/coastline/HUD gates present)` : ', harness absent — consumers used'}`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))

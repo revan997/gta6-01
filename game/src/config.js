@@ -872,7 +872,7 @@ export const CONFIG = {
     // front to the camera (heading 0) — its HEADLIGHTS face the camera.
     traffic: {
       far: { dx: -3.5, dz: -30, heading: Math.PI, model: 'sedan', colour: 0xe67e22, lights: 'tail' },
-      near: { dx: 3.5, dz: -14, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
+      near: { dx: -8, dz: -20, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
     },
     // Cover peds (stageCoverChase placePeds, on top of the 3 staged in
     // round 18/19): one CROSSING the road mid-frame (side 0 = road
@@ -1085,6 +1085,113 @@ export const CONFIG = {
   round23: {
     coverCam: { side: 6, ahead: 8.5, height: 4, lookAhead: 8 },
     coverSpawn: { carZ: -72, pursuitZ: [-104, -116], holdSpeed: 0 },
+  },
+
+  // Round 24: ELEVATED WIDE cover (Haiku's one change from the
+  // round-23 review — the street-level framing is capped at ~129 px
+  // Deco on the sheet, so the cover stops chasing one landmark and
+  // shows the WORLD instead). Camera / composition ONLY, no city
+  // geometry touched (Deco tiers, east panes, shopfront, traffic,
+  // peds all keep their round-22/23 values; the spawn + holdSpeed
+  // keep the round-23 deterministic values):
+  //   (1) the front camera rises and pulls back (height 4 -> 10,
+  //       ahead 8.5 -> 14, side 6 -> 6) and the FOV opens 62 -> 84,
+  //       so the horizontal field grows ~90 -> ~116 deg: more
+  //       towers, more road, more sky in one frame. The lookAt
+  //       pushes 8 -> 26 m past the GT and 8 m EAST (lookEast),
+  //       so the view axis sits ~3 deg east of north: the Deco
+  //       tower settles left-of-centre as a LANDMARK (not the
+  //       hero) with its fin clear of the dialogue panel, while
+  //       the Marina basin (x 160-320, z -320..-160) enters the
+  //       frame's top-right as a water/coastline segment — the sea
+  //       itself is south (+z, behind this camera) and can never
+  //       appear in a north-looking cover, so the marina is the
+  //       coastline this shot can honestly show.
+  //       RUN-1 LESSON (v1: lookEast 22 / fov 72): the axis swung
+  //       37 deg east of round 23, so the Deco fin projected
+  //       OFF-FRAME left (fin line x -28 -> -94), the heli sat
+  //       over the tower (body-sky contrast 29), the east panes
+  //       read 0.40/0.48 and the sky box sampled the tower.
+  //       v2 pulls the axis back to ~3 deg east of north and
+  //       opens the FOV to 84 instead, so the fin, the marina
+  //       and the sky all fit at once.
+  //   (2) the dialogue box narrows 440 -> 280 px (right edge 296)
+  //       and the mission panel 330 -> 280 px, so the left HUD
+  //       stack covers less of the widened city; at 280 px the
+  //       dialogue wraps to 3 lines (93 px tall), so the mission
+  //       panel drops 190 -> 208 px (run-1 overlap was 3,080 px^2).
+  //   (3) the heli (followOffset x 2 / y 26 / z -33, ~48 m from
+  //       the camera) sits IN the bright horizon glow (screen
+  //       ~(580,110), hub elevation ~20 deg once the camera's
+  //       -12 deg look-down pitch is counted — v3 forgot the
+  //       pitch and put the heli at y 35, fully off-frame top).
+  //       Its near-white body reads against the bright sky
+  //       (contrast was 21 at the dark-red frame top in v2 and
+  //       29 against the tower face in v1); the rotor disc fits
+  //       (top margin ~28 px at 48 m) and the silhouette spans
+  //       ~220 px fin-to-nose. Camera ahead 14 -> 12 (v3): the
+  //       GT grows 48 -> ~51 px, the near traffic car clears
+  //       1,000 non-road px.
+  //   (6) v6: heli x offset 12 -> 3 — the side-on yaw is
+  //       atan2(carX-heliX, carZ-heliZ) + 90 deg, so at x 12 the
+  //       bearing to the car is -35 deg and the yaw is 54.8 (gate
+  //       80-100; contrast fell to 37 and the tail nav light
+  //       vanished with it). At x 3 the bearing is -6.8 deg, yaw
+  //       83.2, hub screen ~(587,214), disc top margin ~153 px,
+  //       fin-to-nose ~213 px. The GT is PINNED each frame in the
+  //       cover re-assert block (main.js) — in run 5 the
+  //       interceptors shoved it from (40,-72) to (51.5,-66)
+  //       during the convergence wait, dragging the staged
+  //       traffic (pinned to GT + dx/dz) into the interceptor
+  //       cluster, so only 3 distinct vehicles were counted.
+  //   (5) v5: the heli moves CLOSER and LOWER (followOffset x 12 /
+  //       y 15 / z -17, ~30 m from the camera, hub screen ~(700,200)):
+  //       at ~48 m in v4 its fin-to-nose was only 166 px (gate 200)
+  //       and it sat in the sky box's brightest spot (rbA 95); at
+  //       30 m the silhouette spans ~265 px fin-to-nose, the rotor
+  //       disc keeps a ~103 px top margin, the hub sits against
+  //       the tower fronts (its sunlit white body, lum ~185, still
+  //       contrasts >= 50 against them), the disc clears the Deco
+  //       block (left edge ~515 vs Deco right edge ~472) and the
+  //       sky box (500,60,740,100) reads pure sky again. East
+  //       panes widen 13 -> 15 m and the awning rises 3.5 -> 5.5 m
+  //       (the awning crossed the panes' middle and capped the
+  //       warm area at 0.68; the sample box now sits fully below
+  //       it). The near traffic car moves to the west lane
+  //       (dx 3.5 -> -8, dz -14 -> -20) — at 3.5/-14 its screen
+  //       ground merged with the second interceptor's, so only
+  //       3 distinct vehicles were counted.
+  //   (4) v4: the Deco fin moves to the EAST edge of the block
+  //       (finEast) — from the east-side camera the west-edge fin
+  //       is grazed by the tier boxes (fin rows 59 -> 41 as the
+  //       camera moved south); on the east edge no tier overhangs
+  //       it from the camera side. East panes widen 12 -> 13 m,
+  //       rise 4.0 -> 5.0 m and re-centre (cz-4 / cz+4) so their
+  //       downscale projection comfortably exceeds the 17x10
+  //       sample box (run-3 ds fracs 0.49/0.67).
+  //       East panes widen 8 -> 12 m and rise 2.2 -> 3.0 m, so
+  //       the warm panes fill their sample boxes at the wider FOV.
+  //   Price, accepted by design: every subject shrinks — Deco
+  //   drops below 120 px on the sheet (the old gate is REMOVED,
+  //   replaced by districts/coastline/HUD-area gates), the GT
+  //   drops below its old 108 px and the heli below its old
+  //   300 px rotor span. The round-24 gates therefore read GT
+  //   >= 50 px, rotor >= 120 px, nose-tail >= 60 px ("readable",
+  //   not "hero-sized"). Fin >= 30 rows and both east panes
+  //   >= 0.7 on the downscale are KEPT.
+  round24: {
+    coverCam: { side: 6, ahead: 12, height: 10, lookAhead: 26, lookEast: 8, fov: 84 },
+    coverSpawn: { carZ: -72, pursuitZ: [-104, -116], holdSpeed: 0 },
+    coverDialogue: { left: 16, width: 280 },
+    coverStack: { missionTop: 208 },
+    missionWidth: 280,
+    heli: { followOffset: { x: 3, y: 15, z: -25 } },
+    east: { windowW: 15, windowH: 5.0, windowY: 2.5, awningY: 5.5 },
+    deco: { finEast: true },
+    traffic: {
+      far: { dx: -3.5, dz: -30, heading: 2.6, model: 'sedan', colour: 0xe67e22, lights: 'tail' },
+      near: { dx: 3.5, dz: -14, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
+    },
   },
 
   // ---- Player movement (metres / second) ----
