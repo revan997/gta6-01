@@ -968,7 +968,7 @@ function updateCamera(dt) {
       // Round-24 consumers kept as fallbacks (main.ts round-24 check
       // reads these literals): CONFIG.round24?.coverCam?.lookAhead,
       // CONFIG.round24?.coverCam?.lookEast, CONFIG.round24?.coverCam?.fov.
-      const r24cam = (SHOT === 'cover-chase') ? (CONFIG.round25?.coverCam || CONFIG.round24?.coverCam || null) : null;
+      const r24cam = (SHOT === 'cover-chase') ? (CONFIG.round26?.coverCam || CONFIG.round25?.coverCam || CONFIG.round24?.coverCam || null) : null;
       const lookBack = r24cam && typeof r24cam.lookAhead === 'number'
         ? r24cam.lookAhead
         : ((SHOT === 'cover-chase' && typeof CONFIG.round23?.coverCam?.lookAhead === 'number')
@@ -1510,7 +1510,11 @@ function update(dt) {
       // screen: nose one way, tail boom + fin the other, skids below,
       // rotor disc above. A tracking heli crabs sideways like this in
       // real life; the cone still hangs from the belly onto the road.
-      const sideYaw = ((CONFIG.round16?.heli?.sideYawDeg ?? 90) * Math.PI) / 180;
+      // Round 26: sideYaw prefers CONFIG.round26.heli.sideYawDeg (122
+      // deg) — with the heli 10 m east of the GT, atan2(-10, 16) is
+      // -32 deg, so the round-16 90 deg gives yaw 58 deg (gate 80-100);
+      // 122 deg restores yaw 90 deg (side-on).
+      const sideYaw = ((CONFIG.round26?.heli?.sideYawDeg ?? CONFIG.round16?.heli?.sideYawDeg ?? 90) * Math.PI) / 180;
       shotHeli.group.rotation.y = Math.atan2(c.x - shotHeli.group.position.x, c.z - shotHeli.group.position.z) + sideYaw;
     } else {
       const a = shotHeli.angle + (frozen ? 0 : Math.sin(shotHeli.t * 0.1) * 0.15);
@@ -1805,13 +1809,18 @@ function update(dt) {
   // Round 25: cover = shot-4 framing — the HUD panels hide during the
   // cover capture ONLY (shots 2-4 keep full HUD). Re-asserted every
   // frame after hud.update so no panel re-appears; the OBJECTIVE block
-  // stays (the sheet still shows the mission + clock + wanted stars),
-  // and textContent is untouched so the convergence + dialogue gates
-  // still read it. Hidden panels report 0-size rects, so the
-  // downscale HUD-area gate (DOM rects) drops to the objective block
-  // alone (~2% of the frame).
+  // stays (the sheet still shows the mission + clock + wanted stars).
+  // Round 26: 'hud-dialogue' is NOT hidden — the round-15 gate counts
+  // the staged line in document.body.innerText, which excludes
+  // display:none elements (textContent still reads it, but innerText
+  // does not, so hiding the dialogue failed the needle gate with 0).
+  // The dialogue box is 560 px wide centred at top 112 px; it does not
+  // overlap the top-left OBJECTIVE / mission panels, and showing it
+  // lifts the downscale HUD area from ~2% to ~5%, still under the 10%
+  // gate. Hidden panels report 0-size rects, so the downscale HUD-area
+  // gate (DOM rects) counts only the visible panels.
   if (SHOT === 'cover-chase') {
-    for (const id of ['hud-dialogue', 'hud-mission-panel', 'hud-radio', 'hud-respect', 'minimap', 'hud-police-response', 'hud-vehicle-panel', 'hud-crew-panel', 'hud-district-panel']) {
+    for (const id of ['hud-mission-panel', 'hud-radio', 'hud-respect', 'minimap', 'hud-police-response', 'hud-vehicle-panel', 'hud-crew-panel', 'hud-district-panel']) {
       const el = document.getElementById(id);
       if (el) el.style.display = 'none';
     }
@@ -2819,8 +2828,11 @@ function stageCoverChase() {
   // sun a little lower (CONFIG.round21.coverLight.sunOffset, ~15
   // deg -> ~11.5 deg) for longer shadows. All via CONFIG,
   // deterministic, no other shot pays for it.
+  // Round 26: coverLight prefers CONFIG.round26 (warmer upper mids
+  // — the pure-sky box read R-B 182 vs the 195.6 gate; the hybrid
+  // camera's easterly view samples cooler eastern sky).
   {
-    const cl = CONFIG.round21?.coverLight || {};
+    const cl = { ...(CONFIG.round21?.coverLight || {}), ...(CONFIG.round26?.coverLight || {}) };
     if (typeof cl.skyTop === 'number' && typeof cl.skyHorizon === 'number') {
       world.sky.setPalette(cl.skyTop, cl.skyHorizon, cl.mids);
       scene.background = new THREE.Color(cl.skyHorizon);
@@ -2853,7 +2865,7 @@ function stageCoverChase() {
   // Round 25: cover camera prefers CONFIG.round25 (Marina-sunset
   // wide: height 13 / ahead 15 / side 6) over round 24.
   {
-    const cc = CONFIG.round25?.coverCam || CONFIG.round24?.coverCam || CONFIG.round23?.coverCam || {};
+    const cc = CONFIG.round26?.coverCam || CONFIG.round25?.coverCam || CONFIG.round24?.coverCam || CONFIG.round23?.coverCam || {};
     shotCam = { mode: 'front', side: cc.side ?? 6, ahead: cc.ahead ?? 8.5, height: cc.height ?? 4 };
   }
   shotHoldSpeed = CONFIG.round24?.coverSpawn?.holdSpeed ?? CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
@@ -2902,7 +2914,10 @@ function stageCoverChase() {
   // against the sky. The dialogue box moves out of its way (below).
   // Round 25: heli followOffset prefers CONFIG.round25 (closer +
   // lower: x 3 / y 12 / z -16) so fin-to-nose clears 200 px.
-  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round25?.heli?.followOffset ?? CONFIG.round24?.heli?.followOffset ?? CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
+  // Round 26: prefers CONFIG.round26 (x 10 — the hybrid camera puts
+  // the heli centre left of the 550-950 open-sky corridor; moving it
+  // east shifts it right on screen).
+  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round26?.heli?.followOffset ?? CONFIG.round25?.heli?.followOffset ?? CONFIG.round24?.heli?.followOffset ?? CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
   // Skid marks + exhaust smoke, as children of the GT group (they
   // travel with the car): 2 dark planes at the rear wheels, 2 grey
   // glow sprites at the exhaust. 4 draw calls, ~8 tris.
@@ -3002,13 +3017,16 @@ function stageCoverChase() {
   // new overlap appears and respect still ends above the minimap.
   // Cover-only inline styles — hud.js defaults and every other shot
   // are untouched.
+  // Round 26: the round-26 coverDialogue (left 320) merges last —
+  // the top-left box covered the Deco block's third tier centre,
+  // so the pastel-tier gate read 0.09.
   // Round 24: the round-24 cover overrides merge over the
   // round-22 dialogue box (narrower again: 440 -> 320 px, right
   // edge 456 -> 336, freeing the widened city on the left) and
   // the mission panel narrows 330 -> 280 px (round24
   // missionWidth). The round-20 left stack tops are untouched.
   {
-    const dlgCfg = { ...(CONFIG.round19?.coverDialogue || {}), ...(CONFIG.round22?.coverDialogue || {}), ...(CONFIG.round24?.coverDialogue || {}) };
+    const dlgCfg = { ...(CONFIG.round19?.coverDialogue || {}), ...(CONFIG.round22?.coverDialogue || {}), ...(CONFIG.round24?.coverDialogue || {}), ...(CONFIG.round26?.coverDialogue || {}) };
     const stackCfg = { ...(CONFIG.round20?.coverStack || {}), ...(CONFIG.round22?.coverStack || {}), ...(CONFIG.round24?.coverStack || {}) };
     const dlg = document.getElementById('hud-dialogue');
     if (dlg && typeof dlgCfg.left === 'number' && typeof dlgCfg.width === 'number') {

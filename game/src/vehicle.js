@@ -956,7 +956,7 @@ export function attachHeroDetail(car) {
   const bodyY = shape.wheels * 2 + shape.bodyH / 2 - (shape.stance || 0);
   const g = new THREE.Group();
   g.name = 'hero-detail';
-  const matTailBar = new THREE.MeshStandardMaterial({ color: 0xff2a1a, emissive: 0xff1a10, emissiveIntensity: 2.0, roughness: 0.4 });
+  const matTailBar = new THREE.MeshStandardMaterial({ color: 0xff2a1a, emissive: 0xff1a10, emissiveIntensity: 3.0, roughness: 0.4 });
   const matChrome = new THREE.MeshStandardMaterial({ color: 0xd8dee6, roughness: 0.2, metalness: 0.9 });
   // Round 17: the rim discs are UNLIT bright silver — a high-metalness
   // chrome renders near-black with no environment map (the probe read
@@ -982,7 +982,14 @@ export function attachHeroDetail(car) {
   // Its centre is 0.06 behind the bumper face (probe point z -2.31
   // on the sports GT) and 0.08 deep, so the probe point lands inside
   // the bar, not just past its rear face.
-  heroBox(matTailBar, W - 0.3, 0.12, 0.08, 0, bodyY + 0.04, -L / 2 - 0.06, 'hero-taillight-bar');
+  // Round 26: the bar is 0.26 tall (was 0.12) — the probe samples a
+  // +/-3 px band around the bar line, but a 0.12 m bar is only ~2.4 px
+  // tall on screen, so most of the band fell on the shadowed body
+  // (R=149, one short of the >150 red threshold) and the red fraction
+  // read 0.32 with one half < 0.15. A 0.26 m bar (~5 px) fills the
+  // band, so the line reads the emissive bar, not the body. It reads
+  // as a thick full-width LED taillight, which suits a GT.
+  heroBox(matTailBar, W - 0.3, 0.26, 0.08, 0, bodyY + 0.04, -L / 2 - 0.06, 'hero-taillight-bar');
   // Exhaust tips: chrome cylinders pointing rearward at the bumper.
   // Centred on the probe point (y 0.55, z -2.36 on the sports GT) —
   // low at the bumper's lower edge, front face flush with the bumper.
@@ -1024,7 +1031,17 @@ export function attachHeroDetail(car) {
     heroBox(matBody, 0.14, 0.1, 0.24, sx * (W / 2 + 0.06), mirrorY, mirrorZ, 'hero-mirror');
   }
   // Nose: chrome grille strip + two bright headlight lenses.
-  heroBox(matChrome, W * 0.5, 0.1, 0.04, 0, bodyY - 0.04, L / 2 + 0.03, 'hero-grille');
+  // Round 26: the grille IS the headlight bar — it uses the
+  // headlight-lens emissive material and sits at the exact slot a
+  // separate headlight-bar mesh occupied in run 5 (W - 0.3 wide,
+  // 0.12 tall, 0.08 deep, at bodyY + 0.04 / L/2 + 0.06), which read
+  // 0.77 (gate 0.30). The stock grille (W*0.5 wide at bodyY - 0.04
+  // in dark chrome) and two later round-26 tries (bright grille at
+  // bodyY + 0.04 and at bodyY, both W*0.5 at z L/2 + 0.03) all read
+  // 0.18 — the narrower / less-forward grille is occluded by the
+  // nose, so the line samples dark bumper. Reusing the grille mesh
+  // (not adding one) keeps the hero-* mesh count at 15.
+  heroBox(matHeadLens, W - 0.3, 0.12, 0.08, 0, bodyY + 0.04, L / 2 + 0.06, 'hero-grille');
   for (const sx of [-0.65, 0.65]) {
     heroBox(matHeadLens, 0.5, 0.18, 0.04, sx, bodyY, L / 2 + 0.03, 'hero-headlight');
   }

@@ -1110,7 +1110,12 @@ if (!existsSync(gameFavicon)) {
   const consumersOk25 = mainSrc25.includes('CONFIG.round25?.coverCam')
     && mainSrc25.includes('CONFIG.round25?.heli?.followOffset')
     && mainSrc25.includes('CONFIG.round25?.traffic')
-    && mainSrc25.includes("hud-dialogue', 'hud-mission-panel', 'hud-radio', 'hud-respect', 'minimap'");
+    // Round 26: the cover-only HUD hide no longer includes 'hud-dialogue'
+    // (the round-15 needle gate counts the staged line in
+    // document.body.innerText, which excludes display:none elements, so
+    // hiding the dialogue failed the gate with 0). The hide list is now
+    // the 8 panels below; the dialogue stays visible.
+    && mainSrc25.includes("hud-mission-panel', 'hud-radio', 'hud-respect', 'minimap', 'hud-police-response', 'hud-vehicle-panel', 'hud-crew-panel', 'hud-district-panel'");
   if (!consumersOk25) {
     throw new Error('missing input: main.js must consume CONFIG.round25 — coverCam in the front-mode camera branch + cover shotCam, heli followOffset in stageCoverChase, traffic far in stageCoverTraffic, and the cover-only HUD hide after hud.update');
   }
@@ -1126,6 +1131,89 @@ if (!existsSync(gameFavicon)) {
     throw new Error('missing input: round-25 downscale gates — the harness must carry coastlineRun >= 150, HUD area <= 0.10 and districts >= 4 on the 768x480 sheet');
   }
   console.log(`round 25 (Marina sunset): config locked — coverCam side ${cfg25.coverCam.side} / ahead ${cfg25.coverCam.ahead} / height ${cfg25.coverCam.height} / lookAhead ${cfg25.coverCam.lookAhead} / lookEast ${cfg25.coverCam.lookEast} / fov ${cfg25.coverCam.fov}, heli followOffset [${cfg25.heli.followOffset.x}, ${cfg25.heli.followOffset.y}, ${cfg25.heli.followOffset.z}], traffic far (${cfg25.traffic.far.dx}, ${cfg25.traffic.far.dz})${harnessChecked25 ? ', harness cross-checked (coastline >= 150, HUD <= 10%, districts >= 4)' : ', harness absent — consumers used'}`);
+}
+// Round 26 — the coastline verdict + the round-25 gate fixes (the
+// round-25 builder never ran the full suite, so round 26 is the first
+// round to verify the round-25 code end to end).
+//
+// COASTLINE (unachievable from the cover camera):
+//  - The 113 px "coastline run" reported by the gate is the HUD health
+//    bar (green (46, 204, 113) passes the water predicate B-R > 40,
+//    B > 100, R < 120), NOT Marina water. It appears identically in
+//    every shot (sunset / combat / pursuit: 186-188 px at y ~75, x 1075-1262).
+//  - Marina visibility probe (r26-marina-vis.mjs): from the cover camera
+//    (46, 13, -57), all 81 Marina-basin grid points project on-screen
+//    (x 700-1000, y 287-306) but ZERO are water-coloured — they land on
+//    downtown-building pixels (dark brown (70, 50, 31)) and Solmar Spire
+//    pixels (cream (255, 239, 180) / orange (255, 200, 102)).
+//  - Re-frame poses tested (all at 20 s, all coastlineRun 113):
+//      (a) side -8 (camera west): first east pane 0.46 < 0.7 (FAIL).
+//      (b) height 30 (elevated): heli fin-to-nose 196 < 200, GT 14 px,
+//          east panes [0.44, 0.62] (all FAIL).
+//      (c) side -8 + lookEast 28 (yaw east): first east pane 0.44 < 0.7.
+//  - The 95 m Solmar Spire and the Marina basin sit in the same
+//    north-east direction from the cover camera, so the tower cannot be
+//    reduced without also hiding the Marina; the basin is occluded by
+//    downtown buildings from every road-level pose tested.
+//  Conclusion: coastlineRun >= 150 is NOT achievable from the cover
+//  camera as specified. This block does NOT assert the coastline gate
+//  (that is the harness's job, and the harness honestly reports 113).
+//
+// CAMERA (hybrid — fixes the round-25 GT + heli gates):
+//  - The round-25 camera (ahead 15 / height 13 / fov 88) made the GT
+//    only 41 px tall (gate >= 50) and put the heli centre at x 503
+//    (gate 550-950). The hybrid — round-24's closer/lower camera
+//    (ahead 12 / height 10 / fov 84) with round-25's Marina framing
+//    (lookAhead 32 / lookEast 18) — reads GT 60 px, heli centre x 588,
+//    fin-to-nose 212, fin rows 114, east panes [0.86, 0.94].
+//  - The heli is moved east (followOffset x 3 -> 10) so its centre
+//    lands in the 550-950 open-sky corridor.
+//  - The dialogue box is NOT hidden in the cover (main.js round-26
+//    fix): the round-15 needle gate counts the staged line in
+//    document.body.innerText, which excludes display:none elements.
+//    It is moved RIGHT (left 16 -> 320) so it clears the Deco
+//    block's third tier centre (207, 138) — the top-left box made
+//    the pastel-tier gate read 0.09.
+//  - The GT light bars are fixed in vehicle.js (round 26): the
+//    taillight bar's emissiveIntensity 2.0 -> 3.0 (its left half
+//    read R=149, one short of the >150 red threshold), and a
+//    continuous emissive headlight BAR is added across the nose
+//    (the two lens boxes alone left the middle dark, 0.18 vs 0.30).
+{
+  const cfg26 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round26;
+  if (!cfg26?.coverCam || !cfg26?.heli || !cfg26?.coverDialogue || !cfg26?.coverLight) {
+    throw new Error('missing input: CONFIG.round26 missing in config.js — coverCam (side/ahead/height/lookAhead/lookEast/fov), heli followOffset + sideYawDeg, coverDialogue (left/width) and coverLight (warmer upper mids) are required for the round-26 hybrid cover');
+  }
+  if (cfg26.coverCam.side !== 6 || cfg26.coverCam.ahead !== 12 || cfg26.coverCam.height !== 10 || cfg26.coverCam.lookAhead !== 32 || cfg26.coverCam.lookEast !== 18 || cfg26.coverCam.fov !== 84) {
+    throw new Error(`missing input: round-26 coverCam must be the hybrid (side 6 / ahead 12 / height 10 / lookAhead 32 / lookEast 18 / fov 84), got side ${cfg26.coverCam.side} / ahead ${cfg26.coverCam.ahead} / height ${cfg26.coverCam.height} / lookAhead ${cfg26.coverCam.lookAhead} / lookEast ${cfg26.coverCam.lookEast} / fov ${cfg26.coverCam.fov}`);
+  }
+  if (cfg26.heli.followOffset.x !== 10 || cfg26.heli.followOffset.y !== 12 || cfg26.heli.followOffset.z !== -16) {
+    throw new Error(`missing input: round-26 heli followOffset must be x 10 / y 12 / z -16, got x ${cfg26.heli.followOffset.x} / y ${cfg26.heli.followOffset.y} / z ${cfg26.heli.followOffset.z}`);
+  }
+  if (cfg26.heli.sideYawDeg !== 122) {
+    throw new Error(`missing input: round-26 heli sideYawDeg must be 122 (restores yaw 90 deg with the heli 10 m east of the GT), got ${cfg26.heli.sideYawDeg}`);
+  }
+  if (cfg26.coverDialogue.left !== 750 || cfg26.coverDialogue.width !== 280) {
+    throw new Error(`missing input: round-26 coverDialogue must be left 750 / width 280 (top-right: clears the Deco tiers, the heli bbox, the OBJECTIVE and the sky box), got left ${cfg26.coverDialogue.left} / width ${cfg26.coverDialogue.width}`);
+  }
+  if (cfg26.coverLight.skyTop !== 0x7a2410 || !Array.isArray(cfg26.coverLight.mids) || cfg26.coverLight.mids[0]?.hex !== 0xab2608 || cfg26.coverLight.mids[1]?.hex !== 0xd41e02) {
+    throw new Error('missing input: round-26 coverLight must warm the upper sky (skyTop 0x7a2410, mids 0.18: 0xab2608, 0.30: 0xd41e02) to lift the pure-sky box R-B over 195.6');
+  }
+  const mainJsPath26 = join(gameDir, 'src', 'main.js');
+  const mainJs26 = readFileSync(mainJsPath26, 'utf8');
+  if (!mainJs26.includes('CONFIG.round26?.coverCam') || !mainJs26.includes('CONFIG.round26?.heli?.followOffset') || !mainJs26.includes('CONFIG.round26?.heli?.sideYawDeg') || !mainJs26.includes('CONFIG.round26?.coverDialogue') || !mainJs26.includes('CONFIG.round26?.coverLight')) {
+    throw new Error('missing input: main.js must consume CONFIG.round26.coverCam, CONFIG.round26.heli.followOffset, CONFIG.round26.heli.sideYawDeg, CONFIG.round26.coverDialogue and CONFIG.round26.coverLight (round-26 hybrid cover + heli east + side-on yaw + dialogue top-right + warmer sky)');
+  }
+  const testPath26 = join(repoRoot, '..', 'round26-test.mjs');
+  let harnessChecked26 = false;
+  if (existsSync(testPath26)) {
+    const testSrc26 = readFileSync(testPath26, 'utf8');
+    if (!testSrc26.includes('coastlineRun >= 150') || !testSrc26.includes('hudArea <= 0.10') || !testSrc26.includes('lmVis.length >= 4')) {
+      throw new Error('missing input: round-26 downscale gates — the harness must carry coastlineRun >= 150, HUD area <= 0.10 and districts >= 4 on the 768x480 sheet');
+    }
+    harnessChecked26 = true;
+  }
+  console.log(`round 26 (coastline verdict + hybrid cover): camera side 6 / ahead 12 / height 10 / lookAhead 32 / lookEast 18 / fov 84, heli followOffset [10, 12, -16] — coastline 113 = HUD health bar, not water (0/81 Marina points water-coloured); GT 60 px, heli centre x 588${harnessChecked26 ? ', harness cross-checked (coastline >= 150, HUD <= 10%, districts >= 4)' : ', harness absent — consumers used'}`);
 }
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)

@@ -1215,6 +1215,80 @@ export const CONFIG = {
     },
   },
 
+  round26: {
+    // Cover camera: HYBRID — round-24's closer/lower camera (ahead 12 /
+    // height 10 / fov 84) with round-25's Marina framing (lookAhead 32 /
+    // lookEast 18). The round-25 camera (ahead 15 / height 13 / fov 88)
+    // made the GT only 41 px tall (gate >= 50) and put the heli centre
+    // at x 503 (gate 550-950). The hybrid reads GT 60 px, heli centre
+    // x 588 (with the heli moved east, below), fin-to-nose 212, fin rows
+    // 114, east panes [0.86, 0.94], Deco [164, 132] — all passing.
+    // Coastline: the 113 "coastline" is the HUD health bar (green
+    // (46, 204, 113) passes the water predicate B-R>40/B>100/R<120),
+    // NOT Marina water — 0 of 81 Marina grid points are water-coloured
+    // from the cover camera (they land on building/Spire pixels). The
+    // Marina basin is occluded by downtown buildings + the 95 m Solmar
+    // Spire from every road-level pose tested (side -8, height 30,
+    // side -8 + lookEast 28 — all coastline 113, and side -8 / height 30
+    // also broke the east panes / heli / GT). The Spire and the Marina
+    // sit in the same north-east direction, so the tower cannot be
+    // reduced without also hiding the Marina. Coastline >= 150 is
+    // therefore NOT achievable from the cover camera as specified (see
+    // main.ts round-26 block). Round 26 fixes every other failing gate
+    // the round-25 code carried (the round-25 builder never ran the
+    // full suite) and delivers all 4 screenshots re-captured from
+    // round-26 code.
+    coverCam: { side: 6, ahead: 12, height: 10, lookAhead: 32, lookEast: 18, fov: 84 },
+    // Heli east (followOffset x 3 -> 10): the hybrid camera puts the
+    // heli centre at x 479, left of the 550-950 open-sky corridor.
+    // Moving the heli 7 m east of the GT shifts it ~100 px right on
+    // screen (fin-to-nose has margin: 281 vs the 200 bar).
+    // Heli east (followOffset x 3 -> 10): the hybrid camera puts the
+    // heli centre at x 479, left of the 550-950 open-sky corridor.
+    // Moving the heli 7 m east of the GT shifts it ~100 px right on
+    // screen (fin-to-nose has margin: 281 vs the 200 bar).
+    // sideYawDeg 90 -> 122: the heli yaw is atan2(GT.x - heli.x,
+    // GT.z - heli.z) + sideYaw. With the heli 10 m east of the GT,
+    // atan2(-10, 16) = -32 deg, so the round-16 sideYaw 90 deg gives
+    // yaw 58 deg (gate 80-100). sideYaw 122 deg restores yaw 90 deg
+    // (side-on to the north-looking camera).
+    heli: { followOffset: { x: 10, y: 12, z: -16 }, sideYawDeg: 122 },
+    // Dialogue top-right (left 16 -> 750): the round-24 top-left
+    // dialogue box (16, 108, 280, 93) covers the Deco block's third
+    // tier centre (207, 138), so the pastel-tier gate read 0.09
+    // (needs >= 0.5). Moving it right to x 320-600 cleared the
+    // tiers but overlapped the heli bbox by 3,270 px^2 (gate 0).
+    // Top-right (x 750-1030, y 108-201) clears everything: the
+    // tiers (x <= 362), the heli bbox (x <= 721), the OBJECTIVE
+    // (x <= 277), the shopfront windows / SOLMAR sign (y >= 294),
+    // the sky box (x <= 740) and the HEALTH / CASH panels
+    // (x >= 1050). It sits over the Spire's left edge — a HUD panel
+    // over the 3D scene, which is what HUD panels do. Width stays
+    // 280 so the text wraps to the same 4 lines / 93 px height.
+    coverDialogue: { left: 750, width: 280 },
+    // Sky warmer (coverLight mids): the pure-sky box (500, 60, 740, 100)
+    // reads R-B 182 (gate >= 195.6, i.e. baseline 185.6 + 10). The
+    // round-21 coverLight's upper mids are too cool for the hybrid
+    // camera's easterly view (lookEast 18 samples cooler eastern sky
+    // than round-24's lookEast 8). Warming skyTop (R 100 -> 122) and
+    // the two upper mids (0.18: R 152 -> 171; 0.30: R 194 -> 212) lifts
+    // the box R-B by ~15 with no other gate at risk — the heli
+    // body-vs-sky contrast has 64 points of margin (114 vs 50).
+    // Horizon / fog / sunOffset are unchanged from round 21.
+    coverLight: {
+      skyTop: 0x7a2410,
+      skyHorizon: 0xff8c1a,
+      fog: 0xe07028,
+      mids: [
+        { stop: 0.18, hex: 0xab2608 },
+        { stop: 0.30, hex: 0xd41e02 },
+        { stop: 0.40, hex: 0xdb2604 },
+        { stop: 0.47, hex: 0xffc46b },
+      ],
+      sunOffset: [165, 38, 85],
+    },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,
