@@ -618,6 +618,105 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 21 (re-touch): pastel warmth (tiers R-B ${tiers21.map((c: number) => rb21(c)).join('/')}, fin R-B ${rb21(cfg21b.deco.finColor)}) + skyTop R-B ${rb21(cl21.skyTop)} > sunset 42 + mids 0-2 warmer than round-5`);
 }
+// Round 21 (re-touch 2): the EXACT round-21 values + the rendered-
+// pastel arithmetic must be right, not just present-and-warm. The
+// structural gate above allows tier luminance up to 170 and the
+// semantics gate only checks warmth — the round-21a build passed
+// both shapes of check with 0xb57f74/0x87a06e and rendered 169/178,
+// OVER the 160 pastel cap. So pin the exact hexes, cap the hex
+// luminance at 160 AND the ACES-adjusted render estimate (hex lum
+// + ~27, per the config note — MeshBasicMaterial under ACES at
+// exposure 1.12) inside the 110-160 pixel gate; pin the exact
+// wedding-cake arithmetic (tiers 10+8+8+7 = 33, crown +2+1 = 36,
+// fin to 40 — 4 m clear above the crown, the margin the fin needs
+// above the dialogue box); pin the east shopfront to the round-18
+// SOLMAR row it extends (same warm glass 0xffd98a, same frame,
+// same ground-floor datum) with a BLUE awning, never the SOLMAR
+// red; pin the exact cover-light sky/fog/mids/sun; and verify the
+// staging functions actually READ these fields instead of running
+// on their fallbacks (the stageCoverDeco fallback tier colours
+// ARE the over-cap 21a hexes).
+{
+  const cfg21c = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round21;
+  const lum21c = (hex: number): number => {
+    const r = (hex >> 16) & 255, g = (hex >> 8) & 255, b = hex & 255;
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const exact21c = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+  const deco21c = cfg21c?.deco;
+  const decoExactOk = !!(deco21c
+    && exact21c(deco21c.tierColors, [0xa86a52, 0x9a6a5e, 0x678252])
+    && deco21c.finColor === 0x8a7a5e && deco21c.crownColor === 0x678252
+    && deco21c.bandColor === 0x2e2a26 && deco21c.railColor === 0x6a5a44
+    && deco21c.tierBaseY === 10
+    && exact21c(deco21c.tierHeights, [8, 8, 7]) && exact21c(deco21c.tierWidths, [28, 24, 20])
+    && exact21c(deco21c.tierDepths, [0.8, 1.6, 2.4])
+    && exact21c(deco21c.crownWidths, [12, 8]) && exact21c(deco21c.crownHeights, [2, 1])
+    && deco21c.crownDepth === 1.6 && deco21c.finWidth === 3.0
+    && deco21c.finTopY === 40 && deco21c.finDepth === 1.2);
+  // Geometry arithmetic: the crown must sit on the top tier
+  // (10 + 8 + 8 + 7 = 33, + 2 + 1 = 36) and the fin must clear it
+  // (40 > 36); each tier steps exactly 0.8 m proud of the one
+  // below (epsilon compare — 2.4 - 1.6 is 0.7999999999999998 in
+  // binary float, so a strict === would fail a correct config).
+  const crownTop21c = decoExactOk
+    ? deco21c.tierBaseY + deco21c.tierHeights.reduce((s: number, h: number) => s + h, 0)
+      + deco21c.crownHeights.reduce((s: number, h: number) => s + h, 0)
+    : -1;
+  const geomOk = decoExactOk && crownTop21c === 36 && deco21c.finTopY > crownTop21c
+    && Math.abs(deco21c.tierDepths[1] - deco21c.tierDepths[0] - 0.8) < 1e-9
+    && Math.abs(deco21c.tierDepths[2] - deco21c.tierDepths[1] - 0.8) < 1e-9;
+  // Rendered-pastel guard: every pastel face (3 tiers + fin) must
+  // stay inside the 110-160 on-screen gate AFTER the ~+27 ACES
+  // lift, and inside the config's own <= 160 hex cap. The 21a
+  // hexes fail this (0xb57f74: 137.7 + 27 = 164.7; 0x87a06e:
+  // 151.1 + 27 = 178.1); the shipped hexes land 142-150.
+  const pastelOk = decoExactOk
+    && [...deco21c.tierColors, deco21c.finColor]
+      .every((c: number) => lum21c(c) <= 160 && lum21c(c) + 27 >= 110 && lum21c(c) + 27 <= 160);
+  const r18cover21c = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round18?.cover;
+  const east21c = cfg21c?.east;
+  const eastOk = !!(east21c && deco21c)
+    && east21c.glassColor === 0xffd98a && east21c.glassColor === r18cover21c?.glassColor // same warm glass as the SOLMAR row
+    && east21c.frameColor === 0x2a2a22 && east21c.frameColor === r18cover21c?.frameColor
+    && east21c.awningColor === 0x2e86c1 && east21c.awningColor !== r18cover21c?.awningColor // shaded BLUE, never the SOLMAR red 0xc23a2a
+    && east21c.windowW === 6.0 && east21c.windowW > r18cover21c?.windowW // wider than the SOLMAR 4.5 m — the grazing angle needs it
+    && east21c.windowH === 2.2 && east21c.windowH === r18cover21c?.windowH
+    && east21c.windowY === 1.6 && east21c.windowY === r18cover21c?.windowY
+    && east21c.awningY === 3.5 && east21c.awningY === r18cover21c?.awningY
+    && east21c.awningLength === 16 && exact21c(east21c.bandY, [21, 26]) && east21c.bandLength === 14
+    && east21c.bandColor === deco21c.bandColor && east21c.railColor === deco21c.railColor; // same dark band + brass rail as the Deco block
+  const cl21c = cfg21c?.coverLight;
+  const lightExactOk = !!(cl21c
+    && cl21c.skyTop === 0x641c0a && cl21c.skyHorizon === 0xff8c1a && cl21c.fog === 0xe07028
+    && exact21c(cl21c.mids?.map((m: { stop: number }) => m.stop), [0.18, 0.30, 0.40, 0.47])
+    && exact21c(cl21c.mids?.map((m: { hex: number }) => m.hex), [0x981e08, 0xc21402, 0xdb2604, 0xffc46b])
+    && exact21c(cl21c.sunOffset, [165, 38, 85]));
+  if (!decoExactOk || !geomOk || !pastelOk || !eastOk || !lightExactOk) {
+    throw new Error('missing input: CONFIG.round21 exact values — deco tiers must be 0xa86a52/0x9a6a5e/0x678252 (fin 0x8a7a5e, crown 0x678252, band 0x2e2a26, rail 0x6a5a44; heights 8/8/7, widths 28/24/20, depths 0.8/1.6/2.4, crown 12/8 + 2/1 @ 1.6, fin 3.0 m to 40 m over a 36 m crown top; rendered pastel lum+27 in 110-160), east must be the round-18 glass 0xffd98a + blue awning 0x2e86c1 (never the SOLMAR red) with 6.0 m panes and bands at 21/26, coverLight must be skyTop 0x641c0a / horizon 0xff8c1a / fog 0xe07028 / mids 0.18-0.47 / sun [165, 38, 85]');
+  }
+  const mainSrc21c = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const decoIdx21c = mainSrc21c.indexOf('function stageCoverDeco()');
+  const eastIdx21c = mainSrc21c.indexOf('function stageCoverEast()');
+  const chaseIdx21c = mainSrc21c.indexOf('function stageCoverChase()');
+  const decoFnSrc21c = decoIdx21c >= 0 && eastIdx21c > decoIdx21c ? mainSrc21c.slice(decoIdx21c, eastIdx21c) : '';
+  const eastFnSrc21c = eastIdx21c >= 0 && chaseIdx21c > eastIdx21c ? mainSrc21c.slice(eastIdx21c, chaseIdx21c) : '';
+  const chaseFnSrc21c = chaseIdx21c >= 0 ? mainSrc21c.slice(chaseIdx21c) : '';
+  const appliedOk21c = decoFnSrc21c.includes('cfg.tierColors') && decoFnSrc21c.includes('cfg.tierHeights')
+    && decoFnSrc21c.includes('cfg.tierWidths') && decoFnSrc21c.includes('cfg.tierDepths')
+    && decoFnSrc21c.includes('cfg.finWidth') && decoFnSrc21c.includes('cfg.finTopY')
+    && decoFnSrc21c.includes('cfg.crownWidths') && decoFnSrc21c.includes('cfg.crownHeights')
+    && eastFnSrc21c.includes('cfg.glassColor') && eastFnSrc21c.includes('cfg.windowW')
+    && eastFnSrc21c.includes('cfg.awningLength') && eastFnSrc21c.includes('cfg.bandY')
+    && eastFnSrc21c.includes('cfg.bandLength')
+    && chaseFnSrc21c.includes('world.sky.setPalette(cl.skyTop, cl.skyHorizon, cl.mids)')
+    && chaseFnSrc21c.includes('new THREE.Fog(cl.fog')
+    && chaseFnSrc21c.includes('shotSunOffset = [...cl.sunOffset]');
+  if (!appliedOk21c) {
+    throw new Error('missing input: main.js must APPLY the exact CONFIG.round21 values — stageCoverDeco reads cfg.tierColors/tierHeights/tierWidths/tierDepths/finWidth/finTopY/crownWidths/crownHeights, stageCoverEast reads cfg.glassColor/windowW/awningLength/bandY/bandLength, stageCoverChase sets the sky palette + fog + sun offset from CONFIG.round21.coverLight (fallbacks alone would ship the over-cap 21a pastels)');
+  }
+  console.log(`round 21 (re-touch 2): exact deco (tiers ${deco21c.tierColors.map((c: number) => `0x${c.toString(16)}`).join('/')}, rendered pastel ${[...deco21c.tierColors, deco21c.finColor].map((c: number) => Math.round(lum21c(c) + 27)).join('/')}, crown top ${crownTop21c} m, fin to ${deco21c.finTopY} m) + east glass 0x${east21c.glassColor.toString(16)} (round-18 glass, blue awning) + cover light sun [${cl21c.sunOffset.join(', ')}] applied in main.js`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
@@ -730,3 +829,10 @@ console.log(`wrote ${join(outDir, 'dossier.json')} (${dossier.length} bytes)`);
 // real values (head 1.8/0.95/1.8, tail 2.0/0.95, tail > head) +
 // traffic colours + ped depths, and stageCoverTraffic applying them
 // (head/tail branches) with the no-GT guard, build entrypoint intact.
+// Round 21 (re-touch 2): round-21 EXACT-values gate — CONFIG.round21
+// deco exact hexes/geometry (tiers 0xa86a52/0x9a6a5e/0x678252, crown
+// top 36 m, fin 3.0 m to 40 m, rendered pastel lum+27 in 110-160) +
+// east pinned to the round-18 SOLMAR row (glass 0xffd98a, blue awning
+// 0x2e86c1, never the SOLMAR red) + coverLight exact sky/fog/mids/sun,
+// and stageCoverDeco/stageCoverEast/stageCoverChase actually reading
+// those fields (not their fallbacks), build entrypoint intact.
