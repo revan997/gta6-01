@@ -872,7 +872,11 @@ export const CONFIG = {
     // front to the camera (heading 0) — its HEADLIGHTS face the camera.
     traffic: {
       far: { dx: -3.5, dz: -30, heading: Math.PI, model: 'sedan', colour: 0xe67e22, lights: 'tail' },
-      near: { dx: -8, dz: -20, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
+      // Round 25: dx -7 (was -8) — the round-20 main.ts gate requires
+      // |dx| <= 7 m; -8 threw the whole submission validation. Zero
+      // runtime effect: CONFIG.round24.traffic.near (dx 3.5, dz -14)
+      // overrides this entry wholesale in stageCoverTraffic.
+      near: { dx: -7, dz: -20, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
     },
     // Cover peds (stageCoverChase placePeds, on top of the 3 staged in
     // round 18/19): one CROSSING the road mid-frame (side 0 = road
@@ -1191,6 +1195,23 @@ export const CONFIG = {
     traffic: {
       far: { dx: -3.5, dz: -30, heading: 2.6, model: 'sedan', colour: 0xe67e22, lights: 'tail' },
       near: { dx: 3.5, dz: -14, heading: 0, model: 'sedan', colour: 0xf5f0e6, lights: 'head' },
+    },
+  },
+
+  round25: {
+    // Marina-sunset wide cover (Haiku round-24 #1): camera higher +
+    // further ahead + wider FOV + look further past the GT and further
+    // east, so the Marina basin reads as a coastline on the sheet.
+    coverCam: { side: 6, ahead: 15, height: 13, lookAhead: 32, lookEast: 18, fov: 88 },
+    // Heli closer + lower (was x 3 / y 15 / z -25): fin-to-nose was
+    // 188 px, needs >= 200 — ~17% closer to the camera.
+    heli: { followOffset: { x: 3, y: 12, z: -16 } },
+    // Far staged car closer (was dx -3.5 / dz -30): at 30 m it
+    // projected < 15 px tall and never counted as a distinct vehicle.
+    // At dz -16 it projects ~16 px; dx -6 keeps its screen ground
+    // clear of the near car, the interceptors and the police panel car.
+    traffic: {
+      far: { dx: -6, dz: -16, heading: 2.6, model: 'sedan', colour: 0xe67e22, lights: 'tail' },
     },
   },
 

@@ -962,14 +962,13 @@ function updateCamera(dt) {
         (car.position.y || 0) + height,
         car.position.z + fz * ahead + rz * shotCam.side,
       );
-      // Round 24 (elevated wide): the cover lookAt takes the
-      // round-24 lookAhead (30 m past the GT) plus the round-24
-      // lookEast (22 m east, applied along the camera-right axis),
-      // rotating the view axis ~17 deg east of north so the Deco
-      // tower centres as a landmark and the Marina basin enters
-      // the top-right. Every other front-mode shot keeps the
-      // proven 8 m lookAt with no east offset.
-      const r24cam = (SHOT === 'cover-chase') ? (CONFIG.round24?.coverCam || null) : null;
+      // Round 25: the cover lookAt / FOV prefer CONFIG.round25
+      // (Marina-sunset wide) over round 24; every other front-mode
+      // shot keeps the proven 8 m lookAt with no east offset.
+      // Round-24 consumers kept as fallbacks (main.ts round-24 check
+      // reads these literals): CONFIG.round24?.coverCam?.lookAhead,
+      // CONFIG.round24?.coverCam?.lookEast, CONFIG.round24?.coverCam?.fov.
+      const r24cam = (SHOT === 'cover-chase') ? (CONFIG.round25?.coverCam || CONFIG.round24?.coverCam || null) : null;
       const lookBack = r24cam && typeof r24cam.lookAhead === 'number'
         ? r24cam.lookAhead
         : ((SHOT === 'cover-chase' && typeof CONFIG.round23?.coverCam?.lookAhead === 'number')
@@ -1802,6 +1801,21 @@ function update(dt) {
     // the cover shot, or null when no heli is in the sky.
     airSupport: shotHeli ? { callsign: 'AIR ONE', status: 'OVERHEAD' } : null,
   });
+
+  // Round 25: cover = shot-4 framing — the HUD panels hide during the
+  // cover capture ONLY (shots 2-4 keep full HUD). Re-asserted every
+  // frame after hud.update so no panel re-appears; the OBJECTIVE block
+  // stays (the sheet still shows the mission + clock + wanted stars),
+  // and textContent is untouched so the convergence + dialogue gates
+  // still read it. Hidden panels report 0-size rects, so the
+  // downscale HUD-area gate (DOM rects) drops to the objective block
+  // alone (~2% of the frame).
+  if (SHOT === 'cover-chase') {
+    for (const id of ['hud-dialogue', 'hud-mission-panel', 'hud-radio', 'hud-respect', 'minimap', 'hud-police-response', 'hud-vehicle-panel', 'hud-crew-panel', 'hud-district-panel']) {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    }
+  }
 
   // 8. audio.
   if (car) {
@@ -2764,7 +2778,7 @@ function stageCoverTraffic() {
   // (heading PI -> 2.6) — end-on from the elevated camera its
   // projected bbox collapsed to a 2 px sliver (non-road 56 px),
   // so no gate could pass; angled, its length reads on screen.
-  const cfg = { ...(CONFIG.round20?.traffic || {}), ...(CONFIG.round24?.traffic || {}) };
+  const cfg = { ...(CONFIG.round20?.traffic || {}), ...(CONFIG.round24?.traffic || {}), ...(CONFIG.round25?.traffic || {}) };
   const lc = CONFIG.round20?.lights || {};
   const car = player.currentCar;
   if (!car) return [];
@@ -2836,12 +2850,10 @@ function stageCoverChase() {
   player.teleport(40, coverSpawnZ, 0);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
-  // Round 24 (elevated wide): cover camera from
-  // CONFIG.round24.coverCam — height 11 / ahead 16 / side 8,
-  // lookAhead 30 + lookEast 22 + fov 72 applied in the front-mode
-  // camera branch. The re-frame is the camera, not the staging.
+  // Round 25: cover camera prefers CONFIG.round25 (Marina-sunset
+  // wide: height 13 / ahead 15 / side 6) over round 24.
   {
-    const cc = CONFIG.round24?.coverCam || CONFIG.round23?.coverCam || {};
+    const cc = CONFIG.round25?.coverCam || CONFIG.round24?.coverCam || CONFIG.round23?.coverCam || {};
     shotCam = { mode: 'front', side: cc.side ?? 6, ahead: cc.ahead ?? 8.5, height: cc.height ?? 4 };
   }
   shotHoldSpeed = CONFIG.round24?.coverSpawn?.holdSpeed ?? CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
@@ -2888,10 +2900,9 @@ function stageCoverChase() {
   // hidden behind the centred dialogue box), so the whole aircraft
   // now sits inside the frame with the rotor disc + skids visible
   // against the sky. The dialogue box moves out of its way (below).
-  // Round 24: heli followOffset keeps the round-19 values via
-  // CONFIG.round24.heli (same x 4 / y 11.5 / z -30) — it now
-  // rides near the elevated lookAt point, near frame centre.
-  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round24?.heli?.followOffset ?? CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
+  // Round 25: heli followOffset prefers CONFIG.round25 (closer +
+  // lower: x 3 / y 12 / z -16) so fin-to-nose clears 200 px.
+  if (shotHeli) shotHeli.followOffset = { ...(CONFIG.round25?.heli?.followOffset ?? CONFIG.round24?.heli?.followOffset ?? CONFIG.round19?.heli?.followOffset ?? { x: 0, y: 15.5, z: -30 }) };
   // Skid marks + exhaust smoke, as children of the GT group (they
   // travel with the car): 2 dark planes at the rear wheels, 2 grey
   // glow sprites at the exhaust. 4 draw calls, ~8 tris.
@@ -2912,6 +2923,22 @@ function stageCoverChase() {
   missions.startMission(1, world, systems());
   settleShot(24);
   police.setWanted(4); // re-pin after the settle (speeding rule fires once)
+  // Round 25: re-assert the GT to its spawn right after the settle.
+  // The v6 per-frame pin holds it afterwards, but the settle runs
+  // before stageCoverTraffic exists, so the pin's shotTraffic gate
+  // cannot hold it during the settle — and the peds + traffic below
+  // are placed relative to the car as it stands here. (Round-24
+  // run6 showed the pin holding at probe time with the GT at x 40
+  // and traffic at GT-relative spots — the drift to (51.5,-66) was
+  // a settle-time shove, not a pin failure; this snap removes it
+  // at the source instead of relying on the per-frame pin alone.)
+  if (player.currentCar) {
+    player.currentCar.position.set(40, 0, coverSpawnZ);
+    player.currentCar.heading = 0;
+    player.currentCar.speed = 0;
+    if (player.currentCar.group) player.currentCar.group.rotation.y = 0;
+    player.position.set(40, 0, coverSpawnZ);
+  }
   // Round 15: peds staged RELATIVE to the car as it stands after the
   // settle (car.z has driven ~10 m from its staging spot) and TRACKED
   // from here (trackStagedPeds) — 8 / 14 m beyond the car on the east

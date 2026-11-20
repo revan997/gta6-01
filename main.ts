@@ -1084,6 +1084,49 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 24 (elevated wide, part 2): consumers locked — main.js reads CONFIG.round24 (spawn/holdSpeed/lookAt/lookEast/fov/shotCam/dialogue)${harnessChecked24 ? `, harness cross-checked (fin >= ${finGate24} rows, districts/coastline/HUD gates present)` : ', harness absent — consumers used'}`);
 }
+// Round 25 (Marina-sunset cover): the cover re-frames wide toward
+// the Marina (lookEast 18 / lookAhead 32 / fov 88, camera height 13 /
+// ahead 15), the heli moves closer + lower (followOffset x 3 / y 12 /
+// z -16) so fin-to-nose clears 200 px, the far staged car moves to
+// dz -16 so it projects tall enough to count as the 4th distinct
+// vehicle, the GT is re-asserted to its spawn right after the settle,
+// and the HUD panels hide during the cover capture only (objective
+// stays). The round-25 gates are districts >= 4, coastline run
+// >= 150 px, HUD area <= 10%, fin >= 30 rows on the 768x480 sheet,
+// driven by round24-downscale.mjs.
+{
+  const cfg25 = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round25;
+  if (!cfg25?.coverCam || !cfg25?.heli || !cfg25?.traffic) {
+    throw new Error('missing input: CONFIG.round25 missing in config.js — coverCam (side/ahead/height/lookAhead/lookEast/fov), heli followOffset and traffic far are required for the round-25 Marina-sunset cover');
+  }
+  const camOk25 = cfg25.coverCam.side === 6 && cfg25.coverCam.ahead === 15 && cfg25.coverCam.height === 13
+    && cfg25.coverCam.lookAhead === 32 && cfg25.coverCam.lookEast === 18 && cfg25.coverCam.fov === 88;
+  const heliOk25 = cfg25.heli.followOffset.x === 3 && cfg25.heli.followOffset.y === 12 && cfg25.heli.followOffset.z === -16;
+  const farOk25 = cfg25.traffic.far && cfg25.traffic.far.dx === -6 && cfg25.traffic.far.dz === -16;
+  if (!camOk25 || !heliOk25 || !farOk25) {
+    throw new Error('missing input: CONFIG.round25 exact values — coverCam must be side 6 / ahead 15 / height 13 / lookAhead 32 / lookEast 18 / fov 88, heli followOffset x 3 / y 12 / z -16, traffic far dx -6 / dz -16');
+  }
+  const mainSrc25 = readFileSync(join(gameDir, 'src', 'main.js'), 'utf-8');
+  const consumersOk25 = mainSrc25.includes('CONFIG.round25?.coverCam')
+    && mainSrc25.includes('CONFIG.round25?.heli?.followOffset')
+    && mainSrc25.includes('CONFIG.round25?.traffic')
+    && mainSrc25.includes("hud-dialogue', 'hud-mission-panel', 'hud-radio', 'hud-respect', 'minimap'");
+  if (!consumersOk25) {
+    throw new Error('missing input: main.js must consume CONFIG.round25 — coverCam in the front-mode camera branch + cover shotCam, heli followOffset in stageCoverChase, traffic far in stageCoverTraffic, and the cover-only HUD hide after hud.update');
+  }
+  let harnessChecked25 = false;
+  const testPath25 = join(repoRoot, '..', 'round24-test.mjs');
+  if (existsSync(testPath25)) {
+    const testSrc25 = readFileSync(testPath25, 'utf-8');
+    harnessChecked25 = testSrc25.includes('coastlineRun >= 150')
+      && testSrc25.includes('hudArea <= 0.10')
+      && testSrc25.includes('lmVis.length >= 4');
+  }
+  if (existsSync(testPath25) && !harnessChecked25) {
+    throw new Error('missing input: round-25 downscale gates — the harness must carry coastlineRun >= 150, HUD area <= 0.10 and districts >= 4 on the 768x480 sheet');
+  }
+  console.log(`round 25 (Marina sunset): config locked — coverCam side ${cfg25.coverCam.side} / ahead ${cfg25.coverCam.ahead} / height ${cfg25.coverCam.height} / lookAhead ${cfg25.coverCam.lookAhead} / lookEast ${cfg25.coverCam.lookEast} / fov ${cfg25.coverCam.fov}, heli followOffset [${cfg25.heli.followOffset.x}, ${cfg25.heli.followOffset.y}, ${cfg25.heli.followOffset.z}], traffic far (${cfg25.traffic.far.dx}, ${cfg25.traffic.far.dz})${harnessChecked25 ? ', harness cross-checked (coastline >= 150, HUD <= 10%, districts >= 4)' : ', harness absent — consumers used'}`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
