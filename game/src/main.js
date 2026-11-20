@@ -962,7 +962,14 @@ function updateCamera(dt) {
         (car.position.y || 0) + height,
         car.position.z + fz * ahead + rz * shotCam.side,
       );
-      camera.lookAt(car.position.x - fx * 8, 1.5, car.position.z - fz * 8);
+      // Round 23: cover-only lookAt — 8 m beyond the car (the proven round-12 value) (CONFIG.
+      // round23.coverCam.lookAhead) instead of 8 m, so the view axis
+      // stays ~20 deg west of south and the nearer Deco
+      // block recentres while the east tower stays in frame. Every
+      // other front-mode shot keeps the proven 8 m lookAt.
+      const lookBack = (SHOT === 'cover-chase' && typeof CONFIG.round23?.coverCam?.lookAhead === 'number')
+        ? CONFIG.round23.coverCam.lookAhead : 8;
+      camera.lookAt(car.position.x - fx * lookBack, 1.5, car.position.z - fz * lookBack);
       followSun(car.position.x, car.position.z);
       return;
     }
@@ -2775,30 +2782,53 @@ function stageCoverChase() {
   // 0.01 h (36 s) is invisible in the light; the sheet says 17:48.
   timeOfDay = 17.81;
   money = 1200;
-  const car = createCar(scene, 'sports', 0xd7263d, 40, -80, 0);
+  // Round 23: the whole cover staging moves 8 m north toward the
+  // round-22 capture point (CONFIG.round23.coverSpawn.carZ -72)
+  // and the GT is held still (holdSpeed 0): at capture the camera
+  // sits ~70 m from the tower face instead of ~83 m,
+  // deterministically (see config.js for the failed closer tries).
+  const coverSpawnZ = CONFIG.round23?.coverSpawn?.carZ ?? -80;
+  const car = createCar(scene, 'sports', 0xd7263d, 40, coverSpawnZ, 0);
   spawnedCars.add(car);
-  car.speed = 26;
+  // Round 23: holdSpeed 0 — the GT stands still (see config).
+  car.speed = CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
   // Round 17: the hero trim — taillight bar, exhausts, rear glass,
   // flank stripes, rim discs, mirrors, grille, headlight lenses —
   // on the GT ONLY (the hero car). The shared sports model is never
   // touched, so the interceptors and traffic stay plain.
   attachHeroDetail(car);
-  player.teleport(40, -80, 0);
+  player.teleport(40, coverSpawnZ, 0);
   player.enterCar(car);
   camYaw = car.heading + Math.PI;
-  shotCam = { mode: 'front', side: 6, ahead: 8.5, height: 4 };
-  shotHoldSpeed = 26;
+  // Round 23: cover camera from CONFIG.round23.coverCam (side /
+  // ahead / height keep the proven round-12 values; the re-frame is
+  // the spawn shift + the lookAt below, not the camera offsets).
+  {
+    const cc = CONFIG.round23?.coverCam || {};
+    shotCam = { mode: 'front', side: cc.side ?? 6, ahead: cc.ahead ?? 8.5, height: cc.height ?? 4 };
+  }
+  shotHoldSpeed = CONFIG.round23?.coverSpawn?.holdSpeed ?? 26;
   police.maxPoliceCars = 2;
   police.maxOfficers = 0;
   police.addWanted(4);
-  stagePursuitCars(40, -98, -110, 0);
+  // Round 23: pursuit spawns shift 6 m south (-98/-110 ->
+  // -104/-116), so the interceptors end ~13/23 m behind the GT
+  // instead of ramming it at 1 m (see config.js).
+  {
+    const pz = CONFIG.round23?.coverSpawn?.pursuitZ || [-98, -110];
+    stagePursuitCars(40, pz[0], pz[1], 0);
+  }
   // Round 14: the interceptors FLANK the GT (one each side of the
   // road centre) instead of trailing in a single file — the chase
   // reads as a pincer, and both light bars stay in the frame. x 33 /
   // 47 puts them at the road edges (the road is ~14 m wide), so they
   // read on opposite sides of the GT in the picture.
-  police.policeCars[0].position.x = 33;
-  police.policeCars[1].position.x = 47;
+  // Round 23: flank wider (31/49 instead of 33/47) — with the GT
+  // held still the interceptors steer toward its x as they close
+  // in, collapsing the flank below the 8 m gate (run1: 37.1/44.4);
+  // 2 m outside the road edge buys the margin back.
+  police.policeCars[0].position.x = 31;
+  police.policeCars[1].position.x = 49;
   // Round 14: NO lane-2 heli — the police._scene wiring used to spawn
   // a second heli at altitude 38 whose dark body hung at the top edge
   // of the frame (the ambiguous dark blob in 13B). The fallback heli
@@ -3821,6 +3851,17 @@ window.__solmar = {
   get round22() {
     return {
       coverLight: CONFIG.round21?.coverLight || null,
+      coverDeco: coverDeco || null,
+      coverEast: coverEast || null,
+    };
+  },
+  // Round 23 probe: the re-frame facts (coverCam + coverSpawn) so
+  // the test can verify the staging actually moved south and the
+  // lookAt actually lengthened, not just that the config exists.
+  get round23() {
+    return {
+      coverCam: CONFIG.round23?.coverCam || null,
+      coverSpawn: CONFIG.round23?.coverSpawn || null,
       coverDeco: coverDeco || null,
       coverEast: coverEast || null,
     };
