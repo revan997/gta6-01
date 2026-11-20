@@ -907,6 +907,45 @@ if (!existsSync(gameFavicon)) {
   }
   console.log(`round 22 (re-touch): exact dialogue right edge ${dlg22b.left + dlg22b.width} px + tiers ${deco22b.tierWidths.join('/')} m / fin -${deco22b.finWestShift} m / crown band ${cfg22b.deco.crownBand} + east panes ${east22b.windowW} m / awning margin ${east22b.awningLength - 2 * east22b.windowW} m, merged fields read in main.js`);
 }
+// Round 22 (re-touch 2): lock the round-22 GATE NUMBERS themselves —
+// fin >= 60 rows, Deco visible bbox width >= 175 px, BOTH east panes
+// >= 0.7 warm, Deco balcony 4/4. The two blocks above pin the CONFIG
+// values and their consumers, but a copy whose test file had its gates
+// loosened (fin 60 -> 30, bbox 175 -> 150, pane 0.7 -> 0.5, balcony
+// 4 -> 3) would still pass those blocks while the pixel gates no
+// longer prove the round-22 fixes. Read the four thresholds live from
+// the sibling harness (round22-test.mjs) when it sits beside the repo
+// (local dev); in the kit intake context it is absent and the
+// cross-check is skipped, never fatal — but the CONFIG-side
+// preconditions (dialogue right edge 456 clear of the fin x-range,
+// bottom tier 31 m, crown band on, east panes 8.0 m) are always
+// enforced, because without them no gate number is reachable.
+{
+  const cfg22c = (await import(join(gameDir, 'src', 'config.js')))?.CONFIG?.round22;
+  const preOk22c = cfg22c?.coverDialogue?.left === 16 && cfg22c.coverDialogue.width === 440
+    && cfg22c.coverDialogue.left + cfg22c.coverDialogue.width === 456
+    && cfg22c?.deco?.tierWidths?.[0] === 31 && cfg22c?.deco?.crownBand === true
+    && cfg22c?.east?.windowW === 8.0 && cfg22c?.east?.awningLength === 20;
+  let finGate22c = 60, bboxGate22c = 175, paneGate22c = 0.7, balconyGate22c = 4, harnessChecked22c = false;
+  const testPath22c = join(repoRoot, '..', 'round22-test.mjs');
+  if (existsSync(testPath22c)) {
+    const testSrc22c = readFileSync(testPath22c, 'utf-8');
+    const finM22c = testSrc22c.match(/finPastelRows >= (\d+)/);
+    const bboxM22c = testSrc22c.match(/visibleBboxWH\[0\] >= (\d+)/);
+    const paneM22c = testSrc22c.match(/ec21\.warmWindowFracs[\s\S]{0,200}?v >= ([0-9.]+)/);
+    const balcM22c = testSrc22c.match(/dc21\.balconyReadable >= (\d+)/);
+    if (finM22c) finGate22c = Number(finM22c[1]);
+    if (bboxM22c) bboxGate22c = Number(bboxM22c[1]);
+    if (paneM22c) paneGate22c = Number(paneM22c[1]);
+    if (balcM22c) balconyGate22c = Number(balcM22c[1]);
+    harnessChecked22c = true;
+  }
+  const gatesOk22c = finGate22c === 60 && bboxGate22c === 175 && paneGate22c === 0.7 && balconyGate22c === 4;
+  if (!preOk22c || (harnessChecked22c && !gatesOk22c)) {
+    throw new Error('missing input: CONFIG.round22 gate numbers (re-touch 2) — fin gate must be 60 rows, Deco visible bbox width gate 175 px, east pane gate 0.7, Deco balcony gate 4/4 in round22-test.mjs, with coverDialogue right edge 456 / bottom tier 31 m / crownBand true / east panes 8.0 m in config.js');
+  }
+  console.log(`round 22 (re-touch 2): gates locked — fin >= ${finGate22c} rows, Deco bbox width >= ${bboxGate22c} px, east panes >= ${paneGate22c}, Deco balcony ${balconyGate22c}/4${harnessChecked22c ? ', harness cross-checked' : ', harness absent — config preconditions used'}`);
+}
 const gameSrc = join(gameDir, 'src');
 const gameJsFiles = existsSync(gameSrc)
   ? readdirSync(gameSrc).filter((name) => name.endsWith('.js'))
