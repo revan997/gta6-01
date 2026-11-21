@@ -805,6 +805,38 @@ export function buildWorld(scene, seedOrRng) {
     addFlat(matBasinWater, lagoonArm.maxX - lagoonArm.minX, lagoonArm.maxZ - lagoonArm.minZ,
       (lagoonArm.minX + lagoonArm.maxX) / 2, (lagoonArm.minZ + lagoonArm.maxZ) / 2, 0.05);
   }
+  // Round 27: planted median on the x=40 road, NORTH of the cover GT
+  // (z -100..-180 — the GT drives south, so it never reaches it).
+  // Parkland crossing the frame's centre-line (spec Step 3 fallback
+  // 2): the 6 m grass strip splits the asphalt spine up the middle
+  // of the cover frame (probe F1: 53 px wide at z=-100, 20 px at
+  // z=-180, centred x 433-506). Split at the z=-120 cross road (gap
+  // z -113..-127) so the intersection stays clear. Grass + low
+  // planters only, no palms (no Deco occlusion risk); fixed
+  // positions, ZERO rng draws (no seeded-layout shift); visual only,
+  // no collision boxes (like the promenade planters). The planters
+  // reuse the promenade pattern (box + shrub) with local materials.
+  const median27 = CONFIG.round27?.median || null;
+  if (median27) {
+    const matMedianGrass = new THREE.MeshStandardMaterial({ color: median27.grassColor ?? 0x6b8256, roughness: 1 });
+    for (const seg of (median27.segments || [])) {
+      addFlat(matMedianGrass, seg.maxX - seg.minX, seg.maxZ - seg.minZ,
+        (seg.minX + seg.maxX) / 2, (seg.minZ + seg.maxZ) / 2, 0.06);
+    }
+    const matMedianPlanter = new THREE.MeshStandardMaterial({ color: 0x9a9a92, roughness: 1 });
+    const matMedianShrub = new THREE.MeshStandardMaterial({ color: 0x3f7a34, roughness: 1 });
+    for (const p of (median27.planters || [])) {
+      const box = new THREE.Mesh(boxGeo, matMedianPlanter);
+      box.scale.set(2.2, 0.7, 2.2);
+      box.position.set(p.x, 0.35, p.z);
+      box.receiveShadow = true;
+      scene.add(box);
+      const shrub = new THREE.Mesh(boxGeo, matMedianShrub);
+      shrub.scale.set(1.6, 0.7, 1.6);
+      shrub.position.set(p.x, 1.05, p.z);
+      scene.add(shrub);
+    }
+  }
   // Marina piers (wooden walkways into the basin).
   for (let i = 0; i < 3; i++) {
     const px = 190 + i * 42;

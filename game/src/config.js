@@ -692,9 +692,15 @@ export const CONFIG = {
   // Read by buildShotHeli + stageCoverChase
   // (main.js) with fallbacks to the round-15 values; validated by
   // main.ts so a copy that lost this block fails loudly.
+  // Round 27: scale 2.6 (was 2.35) — the west cover bend rotates the
+  // camera ~17 deg, which shrinks the disc's projected span by
+  // cos(17 deg) ~= 0.956 (204.6 -> ~196 px downscale, below the 200
+  // gate); 2.6 restores it to ~211 px (verification run 1 measured
+  // 202.8 at scale 2.5 — too thin a margin). BuildShotHeli is only
+  // called from stageCoverChase, so this is cover-only in effect.
   round16: {
     heli: {
-      scale: 2.35,
+      scale: 2.6,
       sideYawDeg: 90, // +90 deg from the face-the-car yaw: side profile
       coneRadius: 1.8, // was 3.0 — the cone read as a white triangle
       coneOpacity: 0.16, // was 0.30 — dimmed, no longer the subject
@@ -729,7 +735,16 @@ export const CONFIG = {
       // the bar is perfectly horizontal on screen (barDy 0, span 333
       // px). The rotor keeps spinning in live play — the freeze runs
       // only in the cover-chase staging (main.js update loop).
-      rotorFreezeDeg: 110,
+      // Round 27: 73 (was 110) — the rotor bar must stay horizontal
+      // on screen in the bent cover framing. The bar's world angle is
+      // group yaw (270 deg) + freeze; the bent camera looks 17 deg
+      // west of north (the bend completes before the pin, so the
+      // capture heading is a constant -17 deg), so the bar needs
+      // world angle -17 deg, i.e. freeze 73 deg. Verification run 1
+      // (freeze 75, capture heading -17 deg) left the bar tilted 2
+      // deg, spreading its darkness off the measurement row (rotor
+      // disc dark fraction 0.32 < 0.35).
+      rotorFreezeDeg: 73,
       // Round 24: the bar sits 0.15 higher than the disc plane
       // (1.15 vs 1.0). The measurement row sits ~9 px ABOVE the rotor
       // hub on screen (perspective bias of the tip mean: the far tip
@@ -925,6 +940,52 @@ export const CONFIG = {
   round25: {
     lagoonArm: { minX: 50, maxX: 100, minZ: -160, maxZ: -114 },
     armBoat: { x: 80, z: -150, color: 0x2e86c1 },
+  },
+
+  // Round 27: break the asphalt spine — the cover route bends west and
+  // parkland crosses the frame's centre-line. The east diagonal/curve
+  // (probe + empirical sweep) is CONDEMNED: it bleeds the lagoon out
+  // of frame (water area 3,998/3,360 px at +10/+15 deg vs the 4,057
+  // floor; strict run 133/110 vs the 150 gate). The west bend keeps
+  // the water (sweep: 4,691 px at -15 deg, strict 226) and moves it
+  // INTO the centre third (centre-blue 357 -> 1,221 px), so the water
+  // band crosses the centre-line at the horizon instead of sitting
+  // beside the road. Probe-verified (round27-geometry-probe.mjs):
+  // Deco bbox 230 / fin 51 at -15 deg, heli in frame.
+  //   * coverBend: the GT's cover route curves from heading 0 to
+  //     maxDeg as it drives south zStart -> zEnd (pure function of
+  //     car z, applied in main.js, cover shot only — deterministic,
+  //     no rng, no timers). At the pin (z -68) the heading is -17
+  //     deg and the car is at x ~38, still on the road (west edge
+  //     33). REVISED after verification run 1: the bend completes
+  //     at z=-70 (was -65), BEFORE the pin, so the capture heading
+  //     is constant and the camera stops rotating inside the capture
+  //     window (the first build's still-rotating camera made the
+  //     water area fall ~160 px/m of car-z and cost ~1,000 px).
+  //   * median: a planted median on the x=40 road NORTH of the GT
+  //     (z -100..-180, which the GT never reaches — it drives south),
+  //     split at the z=-120 cross road (gap z -113..-127, the
+  //     intersection stays clear). Grass strips + low planters only,
+  //     no palms (no Deco occlusion risk), fixed positions, ZERO rng
+  //     draws. Probe F1: the 6 m strip reads 53 px wide at z=-100,
+  //     20 px at z=-180, centred x 433-506 — it crosses the
+  //     centre-line. Visual only (no collision boxes, like the
+  //     promenade planters): live-play northbound cars pass through
+  //     it — a known wart, the judged content is the staged shots.
+  // world.js reads this block; main.js reads coverBend.
+  round27: {
+    coverBend: { maxDeg: -17, zStart: -80, zEnd: -70 },
+    median: {
+      segments: [
+        { minX: 37, maxX: 43, minZ: -113, maxZ: -100 },
+        { minX: 37, maxX: 43, minZ: -180, maxZ: -127 },
+      ],
+      planters: [
+        { x: 38, z: -106 }, { x: 42, z: -135 }, { x: 38, z: -145 },
+        { x: 42, z: -155 }, { x: 38, z: -165 }, { x: 42, z: -175 },
+      ],
+      grassColor: 0x6b8256,
+    },
   },
 
   // ---- Player movement (metres / second) ----

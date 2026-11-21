@@ -899,7 +899,17 @@ function updateCamera(dt) {
   // proven round-12 values). 'fixed': a locked vista camera — the
   // sunset story moment holds this exact frame, with the sun still
   // following the subject.
-  if (shotCam && state === 'playing') {
+  // Round 27: the staged camera ALSO holds while paused. The harness
+  // pause-freezes the cover capture (KeyP) so the car cannot drift
+  // during the slow SwiftShader screenshots — but updateCamera runs
+  // the normal chase branch while paused, and camYaw eases to the
+  // chase yaw in 1-2 frames, swinging the camera behind the car and
+  // destroying the staged framing (proven in round-27 verification
+  // run 1: paused capture was the chase pose, GT dead-centre x=640,
+  // Deco/heli/water all out of frame). With a shotCam set, the staged
+  // camera is the frame — it holds in both states. No effect on
+  // normal play (no shotCam) or on any playing-state shot.
+  if (shotCam && (state === 'playing' || state === 'paused')) {
     if (shotCam.mode === 'front' && player.currentCar) {
       const car = player.currentCar;
       const fx = Math.sin(car.heading);
@@ -1349,6 +1359,30 @@ function update(dt) {
     // headless shot, so drag would otherwise bleed it to a crawl).
     if (shotHoldSpeed > 0) player.currentCar.speed = shotHoldSpeed;
     player.currentCar.update(dt, world, undefined, input);
+    // Round 27: the cover-route bend — the GT's cover route curves
+    // west as it drives south (heading 0 -> maxDeg over zStart ->
+    // zEnd), so the x=40 road sweeps diagonally across the cover
+    // frame and the lagoon water crosses the centre-line at the
+    // horizon. Pure function of car z (CONFIG.round27.coverBend),
+    // cover shot only, deterministic (no rng, no timers, no state).
+    // The shotCam front camera follows car.heading, so the camera
+    // move is incidental to the GT's new route, not a free camera
+    // move. REVISED after verification run 1: the bend completes at
+    // z=-70 (was -65), BEFORE the pin — so the capture heading is a
+    // constant -17 deg and the camera stops rotating inside the
+    // capture window. The first build (ramp to -65) left the camera
+    // still rotating at capture, which made the water area a steep
+    // function of car-z (~160 px/m) and the post-pin drift cost
+    // ~1,000 px (water 3,246 < 4,057 floor). At the pin (z -68)
+    // the heading is -17 deg, car x ~38 (road west edge 33 — still
+    // on the road). The median (world.js) sits north of the staging
+    // point, so the GT never reaches it.
+    if (SHOT === 'cover-chase' && CONFIG.round27?.coverBend) {
+      const bend = CONFIG.round27.coverBend;
+      const bt = Math.min(1, Math.max(0,
+        (player.currentCar.position.z - bend.zStart) / (bend.zEnd - bend.zStart)));
+      player.currentCar.heading = (bend.maxDeg * Math.PI / 180) * bt;
+    }
     // Round 14: Rico's position IS the car's while driving. Without
     // this, player.position stays at the enterCar point and every
     // distance the HUD reports (police panel, district, minimap) is
