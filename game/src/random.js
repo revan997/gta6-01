@@ -172,6 +172,27 @@ export function smoothstep(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 
+// Round-26 (motion-design ref, Part A7): closed-form spring easings —
+// backOut (one overshoot past 1, then settle) and elasticOut (decaying
+// oscillation). Pure functions of t in [0,1]: no state, no timers, no
+// rng — deterministic by construction, so a staged shot using them is
+// still a pure function of game time. main.js uses backOut for the
+// cover camera intro pullback and elasticOut for the cover dialogue
+// pop-in. backOut uses the standard c1=1.70158 overshoot constant.
+export function backOut(t) {
+  const u = clamp01(t);
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * Math.pow(u - 1, 3) + c1 * Math.pow(u - 1, 2);
+}
+
+export function elasticOut(t) {
+  const u = clamp01(t);
+  if (u === 0 || u === 1) return u;
+  const c4 = (2 * Math.PI) / 3;
+  return Math.pow(2, -10 * u) * Math.sin((u * 10 - 0.75) * c4) + 1;
+}
+
 // Create a generator from a numeric seed.
 // Returns { next(), range(min, max), int(min, max), pick(array), chance(p) }.
 export function createRng(seed) {

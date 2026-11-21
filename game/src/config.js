@@ -845,10 +845,13 @@ export const CONFIG = {
     // their round-23 spots (62,-150) and (98,-140) are inside the arm
     // water (x 60-100, z -160..-114). The planters stay: (55,-135)
     // and (105,-135)/(105,-140) sit 5 m clear of the arm's shores.
+    // Round 26: the arm widens west to x 50, so the (55,-135) planter
+    // is in the water now — it moves to the east shore (105,-125),
+    // clear of the (105,-135) planter and the (111.5,-128.5) sign.
     promenade: {
       planterColor: 0x9a9a92, benchColor: 0x8a6a4a,
       planters: [
-        { x: 55, z: -135 }, { x: 105, z: -135 },
+        { x: 105, z: -125 }, { x: 105, z: -135 },
         { x: 55, z: -185 }, { x: 105, z: -140 },
       ],
       benches: [
@@ -889,6 +892,24 @@ export const CONFIG = {
   //     the GT drives on. The road's east edge is x 47 + sidewalk to
   //     x 50, so 10 m of land stays between road and shore — same
   //     margin as the round-24 basin (minX 60).
+  //   * Round 26: the arm widens WEST to x 50 (was 60) — the water now
+  //     meets the x=40 road's east sidewalk, so the chase runs ON the
+  //     waterfront, not beside a 10 m promenade strip. Probe-verified
+  //     (r26 probes 1-4): the bridge restaging is CONDEMNED (Deco fin
+  //     cropped to 0 px, heli out of frame in every offset, basin
+  //     behind the camera heading east / Deco behind it heading west,
+  //     GT buried 0.76 m into the rising deck after 8.5 m); east
+  //     widening is off-frame (x 110 projects to full-res x 1434+);
+  //     south extension is behind the vehicle HUD panel (downscale
+  //     y 219-253 vs panel top 237) and outside the measure window.
+  //     West is the only on-screen direction: the arm's west edge
+  //     moves left 30-88 px on the downscale (live probe: (50,-140)
+  //     -> (536,205) vs (60,-140) -> (592,206)). The west strip's
+  //     footprint holds only two planters: the (55,-135) promenade
+  //     planter (moved east below) and one rng street planter at
+  //     (50.5,-128.5) (skipped by the world.js guard, draws kept).
+  //     The 3 m sidewalk (x 47-50) stays dry between the road edge
+  //     (47) and the shore (50); cover peds stand on it at x 48.5.
   //   * south edge -114, NOT -90/-100: the z=-120 cross road (+ its
   //     sidewalks, z -113..-110) would be flooded by a longer arm,
   //     and traffic on it would read as driving on water. -114 stops
@@ -902,7 +923,7 @@ export const CONFIG = {
   //     layout downstream) anchors the "marina" read.
   // world.js reads this block; hud.js draws the arm on the minimap.
   round25: {
-    lagoonArm: { minX: 60, maxX: 100, minZ: -160, maxZ: -114 },
+    lagoonArm: { minX: 50, maxX: 100, minZ: -160, maxZ: -114 },
     armBoat: { x: 80, z: -150, color: 0x2e86c1 },
   },
 

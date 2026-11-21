@@ -1320,11 +1320,16 @@ export class HUD {
 
     // Mission marker: yellow diamond with a pulsing ring. Round 4: the
     // ring now breathes wider (6–12 px) so the objective reads from
-    // across the map at a glance.
+    // across the map at a glance. Round 26 (motion-design ref, Part
+    // A4): the pulse phase is game time (state.playTime, seconds), NOT
+    // Date.now() — the minimap must be a pure function of game time so
+    // the staged shots are deterministic and seal-stable. Same visual
+    // speed as before (3.33 rad/s); the ?? 0 fallback covers callers
+    // that render without playTime (static ring, still deterministic).
     const marker = state.marker || null;
     if (marker) {
       const [mx, my] = toMap(marker.x, marker.z);
-      const pulse = 8 + 4 * Math.sin((state.timeOfDay ?? 0) * 40 + Date.now() / 300);
+      const pulse = 8 + 4 * Math.sin((state.timeOfDay ?? 0) * 40 + ((state.playTime ?? 0) * 1000) / 300);
       ctx.strokeStyle = '#f1c40f';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -1425,7 +1430,9 @@ export class HUD {
     // solid blue squares. state.policeOfficers (from police.getOfficers())
     // is preferred; when only the flat state.police list is passed, units
     // with kind 'police-officer' are drawn as squares.
-    const flashingBlue = Math.floor(Date.now() / 400) % 2 === 0;
+    // Round 26 (Part A4): the flash phase is game time, not Date.now()
+    // (same 400 ms period); see the mission-marker pulse above.
+    const flashingBlue = Math.floor(((state.playTime ?? 0) * 1000) / 400) % 2 === 0;
     const policeUnits = state.police || [];
     const officerSet = new Set(state.policeOfficers || policeUnits.filter((u) => u?.kind === 'police-officer'));
     for (const unit of policeUnits) {

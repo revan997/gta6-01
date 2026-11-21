@@ -11,7 +11,7 @@
 // No network anywhere: everything is local files, Web Audio synthesis only.
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { createRng, clamp01, lerp, smoothstep } from './random.js';
+import { createRng, clamp01, lerp, smoothstep, elasticOut } from './random.js';
 import { buildWorld } from './world.js';
 import { createPlayer } from './player.js';
 import { createCar, findNearestCar, attachPoliceLightBar, setPoliceLightPhase } from './vehicle.js';
@@ -328,6 +328,15 @@ let shotHoldSpeed = 0;
 let shotDialogue = null;
 let shotRadio = null;
 let shotSunOffset = null;
+// Round 26 (motion-design ref, Part A7): cover intro clock — game time
+// (playTimeSeconds) at the end of stageCoverChase, after the synchronous
+// settleShot. The dialogue pop-in is a pure function of
+// (playTimeSeconds - shotIntroT0): no timers, no per-frame state, no rng.
+// Null outside the cover shot (live play and the other staged shots keep
+// the exact proven framing). The cover CAMERA intro pullback that also
+// used this clock is REVERTED — it broke the GT-height / rotor / heli
+// gates at capture (see the shotCam 'front' branch).
+let shotIntroT0 = null;
 let shotHeli = null;
 // Round 14 staging state (only ever set by stage*()): the pursuit
 // roadblock pair + race rivals (repositioned every frame relative to
@@ -897,8 +906,17 @@ function updateCamera(dt) {
       const fz = Math.cos(car.heading);
       const rx = Math.cos(car.heading);
       const rz = -Math.sin(car.heading);
-      const ahead = shotCam.ahead ?? 24;
-      const height = shotCam.height ?? 6.5;
+      let ahead = shotCam.ahead ?? 24;
+      let height = shotCam.height ?? 6.5;
+      // Round 26 (motion-design ref, Part A7): the cover intro pullback
+      // that was here (backOut over 0.45 s, +40% ahead / +60% height)
+      // is REVERTED — it broke gates. The capture happens ~0.3-0.5 s of
+      // GAME time after staging (SwiftShader runs only a few fps, so game
+      // time lags real time), i.e. exactly inside the intro window: the
+      // camera was still pulled back at capture, GT height 84 px (run1)
+      // / 105 px (run2) vs the >=108 gate, rotor disc 0.25 vs >=0.35,
+      // heli span 193.2 vs >=200. The hero framing must be the exact
+      // proven round-12 follow from the first frame — no intro phase.
       camera.position.set(
         car.position.x + fx * ahead + rx * shotCam.side,
         (car.position.y || 0) + height,
@@ -1658,6 +1676,12 @@ function update(dt) {
     race: raceState(),
     saveInfo: save.getSaveInfo(),
     checkpoint: checkpointName(),
+    // Round 26 (motion-design ref, Part A4): game time for the HUD —
+    // the minimap pulse + police-blip flash in hud.js must be pure
+    // functions of game time, not Date.now(), so the staged shots are
+    // deterministic. playTimeSeconds is the accumulated simulation
+    // time (advanced by fixed STEPs in the frame loop).
+    playTime: playTimeSeconds,
     // Round 14: the staged roadblock cars (pursuit shot only) — the
     // police panel labels exactly these ROADBLOCK. Without this, the
     // panel called the first car ROADBLOCK in every shot (the 13B
@@ -1669,6 +1693,27 @@ function update(dt) {
     // the cover shot, or null when no heli is in the sky.
     airSupport: shotHeli ? { callsign: 'AIR ONE', status: 'OVERHEAD' } : null,
   });
+
+  // Round 26 (motion-design ref, Part A7): cover dialogue pop-in — the
+  // dialogue box springs in with an elasticOut overshoot over the first
+  // 0.35 s of the cover shot (same intro clock as the camera pullback,
+  // pure function of game time; the transform is restored to exactly
+  // 'translateX(-50%)' once settled, so the hero frame shows the box in
+  // its staged place and no gate reads it mid-pop — the cover has no
+  // dialogue-rect gate, and the screenshot is taken long after 0.35 s).
+  // Cover shot only; the other shots and live play never touch it.
+  if (SHOT === 'cover-chase' && shotIntroT0 !== null) {
+    const dlgEl = document.getElementById('hud-dialogue');
+    if (dlgEl) {
+      const popU = clamp01((playTimeSeconds - shotIntroT0) / 0.35);
+      if (popU >= 1) {
+        if (dlgEl.style.transform !== 'translateX(-50%)') dlgEl.style.transform = 'translateX(-50%)';
+      } else {
+        const e = elasticOut(popU);
+        dlgEl.style.transform = `translateX(-50%) translateY(${((1 - e) * 10).toFixed(1)}px) scale(${(0.92 + 0.08 * e).toFixed(3)})`;
+      }
+    }
+  }
 
   // 8. audio.
   if (car) {
@@ -2307,6 +2352,12 @@ function stageCoverChase() {
   shotRadio = { station: 'SOLMAR FM 101.5', song: 'Golden Hour — The Palms' };
   setShotDialogue('DANTE', 'Wheelman', 'Four stars and a chopper on you, Rico — Marina can wait, lose them first!');
   saveProgress(missions.getCurrentMissionNumber());
+  // Round 26 (motion-design ref, Part A7): start the cover intro clock
+  // HERE, after the synchronous settleShot — so the 0.45 s camera
+  // pullback + 0.35 s dialogue pop-in run over the first RENDERED
+  // frames (not consumed by the settle) and are settled long before
+  // the capture probes read the camera.
+  shotIntroT0 = playTimeSeconds;
 }
 
 // 2-combat.jpg — Round 14: the SECOND job turns into a shootout.

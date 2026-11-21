@@ -792,6 +792,14 @@ export function buildWorld(scene, seedOrRng) {
   // trees or buildings (only the two promenade benches, moved east in
   // CONFIG.round23.promenade). South edge -114 stops 1 m short of the
   // z=-120 road's sidewalk so no road is flooded.
+  // Round 26: the arm widens WEST to x 50 (was 60) — the water meets
+  // the x=40 road's east sidewalk, so the chase runs ON the waterfront.
+  // The basin stays at minX 60 (the bridge's west end x0 60 and the
+  // Marina district are untouched); the 10 m step at z=-160 reads as
+  // the lagoon widening toward the viewer. Only two planters stood in
+  // the new west strip: the (55,-135) promenade planter (moved east
+  // in CONFIG.round23.promenade) and one rng street planter at
+  // (50.5,-128.5) (skipped below, draws kept).
   const lagoonArm = CONFIG.round25?.lagoonArm || null;
   if (lagoonArm) {
     addFlat(matBasinWater, lagoonArm.maxX - lagoonArm.minX, lagoonArm.maxZ - lagoonArm.minZ,
@@ -2962,18 +2970,28 @@ export function buildWorld(scene, seedOrRng) {
       addStreetSign(ix - 8.5, iz - 8.5, avenueNames[iz], streetNames[ix]);
     }
   }
+  // Round 26: no street prop standing in the lagoon arm — the widened
+  // arm (minX 50) covers the rng sidewalk planter at (50.5,-128.5)
+  // (a planter in the water reads as a glitch; the lamp guard above
+  // already covers the lamp posts). The position draws still run in
+  // the same order and count, so the seeded city layout downstream is
+  // untouched; only the add is skipped. Probe-verified: no trash bin
+  // falls in the arm in this seed — the bin guard is the same pattern,
+  // kept honest for a future widening.
+  const propInLagoonArm = (px, pz) => lagoonArm && px >= lagoonArm.minX && px <= lagoonArm.maxX
+    && pz >= lagoonArm.minZ && pz <= lagoonArm.maxZ;
   // Trash bins + planters along the sidewalks (offset 8.5 m, on the walk).
   for (let i = 0; i < R4.streetProps.trashBinCount; i++) {
     const line = rng.pick(lines);
     const side = rng.next() < 0.5 ? 1 : -1;
-    if (i % 2 === 0) addTrashBin(line + side * 8.5, rng.range(-280, 260));
-    else addTrashBin(rng.range(-280, 260), line + side * 8.5);
+    if (i % 2 === 0) { const z = rng.range(-280, 260); if (!propInLagoonArm(line + side * 8.5, z)) addTrashBin(line + side * 8.5, z); }
+    else { const x = rng.range(-280, 260); if (!propInLagoonArm(x, line + side * 8.5)) addTrashBin(x, line + side * 8.5); }
   }
   for (let i = 0; i < R4.streetProps.planterCount; i++) {
     const line = rng.pick([-120, -40, 40, 120]);
     const side = rng.next() < 0.5 ? 1 : -1;
-    if (i % 2 === 0) addPlanter(line + side * 8.5, rng.range(-200, 200));
-    else addPlanter(rng.range(-200, 200), line + side * 8.5);
+    if (i % 2 === 0) { const z = rng.range(-200, 200); if (!propInLagoonArm(line + side * 8.5, z)) addPlanter(line + side * 8.5, z); }
+    else { const x = rng.range(-200, 200); if (!propInLagoonArm(x, line + side * 8.5)) addPlanter(x, line + side * 8.5); }
   }
   // Traffic cones in two clusters by the docks (roadworks by the yard).
   for (const [cx, cz] of [[-230, 240], [-170, 255]]) {
