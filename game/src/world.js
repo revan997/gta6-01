@@ -816,7 +816,9 @@ export function buildWorld(scene, seedOrRng) {
   // positions, ZERO rng draws (no seeded-layout shift); visual only,
   // no collision boxes (like the promenade planters). The planters
   // reuse the promenade pattern (box + shrub) with local materials.
-  const median27 = CONFIG.round27?.median || null;
+  // Round 28 (§6 fallback): the median widens 6 m -> 8 m (x 36-44).
+  // Prefer CONFIG.round28.median when present, else the r27 median.
+  const median27 = CONFIG.round28?.median || CONFIG.round27?.median || null;
   if (median27) {
     const matMedianGrass = new THREE.MeshStandardMaterial({ color: median27.grassColor ?? 0x6b8256, roughness: 1 });
     for (const seg of (median27.segments || [])) {

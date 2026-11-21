@@ -2419,7 +2419,9 @@ function stageCombat() {
   combat.selectWeapon('pistol');
   combat.addArmour(50);
   police.maxPoliceCars = 1;
-  police.maxOfficers = 6;
+  police.maxOfficers = 7; // Round 28 (§6 fallback): 7 officers (was 6) — a
+  // seventh officer joins the right (advancing) cluster so the
+  // firefight reads denser; the muzzle flash already exists.
   // Round 14: one interceptor in the frame, staged BEFORE the spawn
   // loop — policeCars already holds the capped 1 car, so the loop's
   // spawn tick cannot field a second (orphan) chasing car. It never
@@ -2433,7 +2435,7 @@ function stageCombat() {
   pc.staged = true;
   police.policeCars = [pc];
   // Triangle budget: the Harbour view ran 155,452 tris in run 2
-  // (cap 150,000) — the six officers are required, so thin the
+  // (cap 150,000) — the seven officers are required, so thin the
   // ambient fleet instead. These caps are instance props read by the
   // traffic spawn loop, and staging runs before the first update, so
   // the settle only ever spawns up to these numbers.
@@ -2457,6 +2459,14 @@ function stageCombat() {
   // the spawn tick, so they have no time to close in first, and
   // placeOfficersArc zeroes their arrest timers.
   for (let i = 0; i < 90 && police.getOfficers().length < 6; i++) update(1 / 60);
+  // Round 28: the spawn system fields at most 6 officers at wanted 4
+  // (desiredUnits() = (wanted-1)*2), so the 7th officer is spawned
+  // manually here. Its random spawn position (12-30 m out) is
+  // overwritten at once by placeOfficersArc below; the despawn
+  // exemption in police.js (staged officers are never popped) keeps
+  // all seven through the capture. The two rng draws are deterministic
+  // (seeded police rng) and consistent across runs.
+  police._spawnOfficer(player);
   // Round 15: TWO clusters, not a line — the right cluster (officers 0,
   // 1, 5) ADVANCES at 7-9 m on the near side, the left cluster
   // (officers 3, 4) holds at 8.5-10 m on the far side, and officer 2
@@ -2469,7 +2479,13 @@ function stageCombat() {
   // (jitter ±0.3 rad) so no two read as the same doll. Officer 4
   // pulled in to (10 m, +3): at (11, +3.5) it sat at screen x ~171,
   // isolated behind the radio panel instead of in the left cluster.
-  placeOfficersArc([7, 7.5, 9, 8.5, 10, 9], [-2.5, -4.5, 0, 2, 3, -1], 2, [0, -0.3, 0, 0.3, -0.25, 0.2]);
+  // Round 28 (§6 fallback): officer 6 joins the RIGHT cluster
+  // (8 m, lateral -3.5 — between officers 0 and 1, inside the
+  // cluster's lateral range, so it cannot land behind the radio
+  // panel the way a left-cluster addition would). Officer 0 stays
+  // the nearest (7.4 m) and the aim officer; the fallen officer
+  // (index 2) and the cluster gap are unchanged.
+  placeOfficersArc([7, 7.5, 9, 8.5, 10, 9, 8], [-2.5, -4.5, 0, 2, 3, -1, -3.5], 2, [0, -0.3, 0, 0.3, -0.25, 0.2, -0.2]);
   // Round 16: a warm light pool on the asphalt under the FALLEN
   // officer (officer 2, prone in the gap between the clusters).
   // Baseline: his dark uniform on dark asphalt measured body-vs-ring
@@ -2686,7 +2702,12 @@ function stageSunset() {
   // half of it being empty asphalt. Probe-verified: Rico ~130 px,
   // Dante + coupe + both patrols + both neon signs + the bridge deck
   // all stay on screen (see round15-probe).
-  shotCam = { mode: 'fixed', pos: [198.3, 1.9, -130.5], look: [196.0, 1.4, -138.3] };
+  // Round 28 (§6 fallback): camera pulled back + raised (was 8.2 m
+  // from Rico, y 1.9 — now 9.8 m, y 2.3) so the frame includes more
+  // of the skyline/buildings behind the MARINA sign, PIER 12 and the
+  // bridge. Rico drops to ~108 px (gate >= 90) — the MARINA /
+  // dialogue-box overlap gate is re-verified by the r28 harness.
+  shotCam = { mode: 'fixed', pos: [199.0, 2.3, -129.0], look: [196.0, 1.4, -138.3] };
   // Jobs 1-4 are done (the sheet's chapter 5).
   missions.completed.add(1);
   missions.completed.add(2);
@@ -2781,6 +2802,9 @@ window.__solmar = {
   get state() { return state; },
   get money() { return money; },
   get timeOfDay() { return timeOfDay; },
+  // Round 28: expose CONFIG so the harness can read the live
+  // round-28 median (width gate) without a second import.
+  config: CONFIG,
   player,
   police,
   traffic,

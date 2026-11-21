@@ -608,7 +608,17 @@ export class PoliceSystem {
       while (this.policeCars.length < want.cars) this._spawnCar(player);
       while (this.officers.length < want.officers) this._spawnOfficer(player);
       while (this.policeCars.length > want.cars) this.policeCars.pop();
-      while (this.officers.length > want.officers) this.officers.pop();
+      // Round 28: never pop a STAGED officer. The combat shot fields 7
+      // staged officers at wanted 4, where desiredUnits() only allows 6
+      // ((wanted-1)*2) — without this exemption the spawn tick would
+      // pop the 7th officer within 0.75 s of staging. Normal gameplay
+      // never stages an officer (staged is only set by placeOfficersArc
+      // in staged shots), so the despawn is unchanged there.
+      while (this.officers.length > want.officers) {
+        const i = this.officers.findIndex((o) => !o.staged);
+        if (i === -1) break;
+        this.officers.splice(i, 1);
+      }
       // Round 4: at 3+ stars, pick one car as the interceptor. It is
       // re-picked whenever the wanted level drops below 3 or the pick
       // leaves the field, and the roadblock toast fires once per chase.

@@ -988,6 +988,31 @@ export const CONFIG = {
     },
   },
 
+  // ---- Round 28 (§6 fallback): the median/park strip widens 6 m ->
+  // 8 m (x 36-44, was 37-43) so the parkland reads wider across the
+  // cover frame's centre-line. Same split at the z=-120 cross road
+  // (gap z -113..-127), same grass colour, same fixed positions,
+  // ZERO rng draws. Two extra planters (8 total, was 6) at the
+  // widened edges. The GT never reaches the strip (it drives south
+  // from z=-80; the strip is z -100..-180), so it does not look like
+  // it is driving on a lawn. The road lanes narrow to 3 m each side
+  // (x 33-36, x 44-47) — visual only, no collision boxes (same wart
+  // as r27). world.js prefers this block over round27.median.
+  round28: {
+    median: {
+      segments: [
+        { minX: 36, maxX: 44, minZ: -113, maxZ: -100 },
+        { minX: 36, maxX: 44, minZ: -180, maxZ: -127 },
+      ],
+      planters: [
+        { x: 38, z: -106 }, { x: 42, z: -135 }, { x: 38, z: -145 },
+        { x: 42, z: -155 }, { x: 38, z: -165 }, { x: 42, z: -175 },
+        { x: 37, z: -150 }, { x: 43, z: -170 },
+      ],
+      grassColor: 0x6b8256,
+    },
+  },
+
   // ---- Player movement (metres / second) ----
   player: {
     walkSpeed: 4.2,
