@@ -783,6 +783,20 @@ export function buildWorld(scene, seedOrRng) {
   const marina = CONFIG.marina;
   addFlat(matBasinWater, marina.maxX - marina.minX, marina.maxZ - marina.minZ,
     (marina.minX + marina.maxX) / 2, (marina.minZ + marina.maxZ) / 2, 0.05);
+  // Round 25: lagoon arm — a 40 m wide inlet running SOUTH from the
+  // basin's south-west corner toward the cover pose (x 60-100, z
+  // -160..-114), same bright water, so the cover chase runs ALONG the
+  // Marina waterfront. Probe-verified: the arm's water projects onto
+  // the cover at full-res x 964-1234, y 303-337, tripling the water
+  // mass below the basin band; the footprint holds no lamps, palms,
+  // trees or buildings (only the two promenade benches, moved east in
+  // CONFIG.round23.promenade). South edge -114 stops 1 m short of the
+  // z=-120 road's sidewalk so no road is flooded.
+  const lagoonArm = CONFIG.round25?.lagoonArm || null;
+  if (lagoonArm) {
+    addFlat(matBasinWater, lagoonArm.maxX - lagoonArm.minX, lagoonArm.maxZ - lagoonArm.minZ,
+      (lagoonArm.minX + lagoonArm.maxX) / 2, (lagoonArm.minZ + lagoonArm.maxZ) / 2, 0.05);
+  }
   // Marina piers (wooden walkways into the basin).
   for (let i = 0; i < 3; i++) {
     const px = 190 + i * 42;
@@ -2790,8 +2804,13 @@ export function buildWorld(scene, seedOrRng) {
   // the water chops the cover's water band into short runs and reads
   // as a lamp standing in a lagoon. Skip both sides of every road
   // whose lamps fall in the basin (inclusive of its south edge).
-  const lampInBasin = (lx, lz) => lx > marina.minX - 10 && lx < marina.maxX
-    && lz >= marina.minZ && lz <= marina.maxZ;
+  // Round 25: same guard for the lagoon arm (probe-verified: no lamp
+  // currently falls in the arm — vertical-road lamps sit at x 50.6 /
+  // 109.4 — but the guard keeps a future widening honest).
+  const lampInBasin = (lx, lz) => (lx > marina.minX - 10 && lx < marina.maxX
+    && lz >= marina.minZ && lz <= marina.maxZ)
+    || (lagoonArm && lx > lagoonArm.minX - 10 && lx < lagoonArm.maxX
+    && lz >= lagoonArm.minZ && lz <= lagoonArm.maxZ);
   for (const line of lines) {
     for (let t = -280; t <= 280; t += CONFIG.world.lampSpacing) {
       const lx1 = line + roadW / 2 + CONFIG.sidewalkWidth + 0.6;
@@ -2838,14 +2857,18 @@ export function buildWorld(scene, seedOrRng) {
   for (let i = 0; i < 10; i++) {
     addUmbrella(rng.range(-280, 280), rng.range(CONFIG.beachStartZ + 3, CONFIG.seaStartZ - 3));
   }
-  function addBoat(x, z) {
+  function addBoat(x, z, fixed) {
     const g = new THREE.Group();
     g.position.set(x, 0.15, z);
-    g.rotation.y = rng.range(-0.3, 0.3);
+    // Round 25: `fixed` ({ rotY, color }) builds a deterministic boat
+    // with ZERO rng draws, so the seeded city layout downstream is
+    // untouched (addBoat's rng.range / rng.pick would shift every later
+    // draw). Used for the lagoon-arm boat only.
+    g.rotation.y = fixed ? fixed.rotY : rng.range(-0.3, 0.3);
     scene.add(g);
     const hull = new THREE.Mesh(
       new THREE.BoxGeometry(2.2, 0.9, 5),
-      new THREE.MeshStandardMaterial({ color: rng.pick(CONFIG.boatPalette), roughness: 0.6 }),
+      new THREE.MeshStandardMaterial({ color: fixed ? fixed.color : rng.pick(CONFIG.boatPalette), roughness: 0.6 }),
     );
     hull.position.y = 0.3;
     hull.castShadow = true;
@@ -2875,6 +2898,15 @@ export function buildWorld(scene, seedOrRng) {
     mooredBoats.push({
       group: boat, phase: rng.range(0, Math.PI * 2), baseY: 0.15, baseRotY: boat.rotation.y,
     });
+  }
+  // Round 25: one deterministic moored boat in the lagoon arm (fixed
+  // pose + colour, zero rng draws — see addBoat) so the arm reads as a
+  // marina, not just a blue plane. It bobs with the other moored boats
+  // (phase 0). Its mast (y ~4.65) stands clear of the bridge (z -240).
+  const armBoatCfg = CONFIG.round25?.armBoat || null;
+  if (armBoatCfg) {
+    const armBoat = addBoat(armBoatCfg.x, armBoatCfg.z, { rotY: 0, color: armBoatCfg.color });
+    mooredBoats.push({ group: armBoat, phase: 0, baseY: 0.15, baseRotY: 0 });
   }
   // Parks (round-2 polish): the blocks the rng left as gaps get grass
   // patches, a round tree and sometimes a bench.
@@ -3399,6 +3431,13 @@ export function buildWorld(scene, seedOrRng) {
       marina: { minX: marina.minX, maxX: marina.maxX, minZ: marina.minZ, maxZ: marina.maxZ },
       landmarks: 5,
     },
+    // Round-25: the lagoon arm, so the minimap draws it (hud.js) and
+    // the harness can prove it exists. Null when the config block is
+    // absent (a stale world.js fails the harness, not silently).
+    round25: lagoonArm ? {
+      lagoonArm: { minX: lagoonArm.minX, maxX: lagoonArm.maxX, minZ: lagoonArm.minZ, maxZ: lagoonArm.maxZ },
+      armBoat: armBoatCfg ? { x: armBoatCfg.x, z: armBoatCfg.z } : null,
+    } : null,
     // Round-11 (Lane A): camera occlusion helpers bound to this city's
     // building boxes — main.js and the test harness call these to prove
     // a camera position / sightline is clear of every building.

@@ -1294,6 +1294,10 @@ export class HUD {
     };
     fillWorldRect(minX, seaStartZ, maxX, farZ, '#1e7fa8'); // open sea (z > 300)
     fillWorldRect(marina.minX, marina.minZ, marina.maxX, marina.maxZ, '#1e7fa8'); // marina basin
+    // Round 25: the lagoon arm (world.round25, from buildWorld) — the
+    // inlet south of the basin, so the map matches the world.
+    const lagoonArm = world?.round25?.lagoonArm || null;
+    if (lagoonArm) fillWorldRect(lagoonArm.minX, lagoonArm.minZ, lagoonArm.maxX, lagoonArm.maxZ, '#1e7fa8');
     fillWorldRect(minX, beachStartZ, maxX, seaStartZ, '#e8d5a0'); // beach strip
 
     // Roads from the world description. Lane A roads are segments

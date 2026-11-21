@@ -841,6 +841,10 @@ export const CONFIG = {
     // furniture only — nothing taller than 0.8 m, so the sightline to
     // the lagoon (which crosses this block at y 1.2-2.6 m) stays open.
     // Planters + benches at the block corners, clear of the corridor.
+    // Round 25: the two benches move EAST of the lagoon arm (x 112) —
+    // their round-23 spots (62,-150) and (98,-140) are inside the arm
+    // water (x 60-100, z -160..-114). The planters stay: (55,-135)
+    // and (105,-135)/(105,-140) sit 5 m clear of the arm's shores.
     promenade: {
       planterColor: 0x9a9a92, benchColor: 0x8a6a4a,
       planters: [
@@ -848,7 +852,7 @@ export const CONFIG = {
         { x: 55, z: -185 }, { x: 105, z: -140 },
       ],
       benches: [
-        { x: 62, z: -150 }, { x: 98, z: -140 },
+        { x: 112, z: -150 }, { x: 112, z: -135 },
       ],
     },
     // Harbour Gatehouse (deterministic sign wall): the MARINA / PIER 12
@@ -867,6 +871,39 @@ export const CONFIG = {
     // overlapping its footprint are skipped in the building loop.
     // It fronts the x=200 marina road.
     signWall: { minX: 168, maxX: 183, minZ: -168, maxZ: -138, height: 12 },
+  },
+
+  // ---- Round 25: WORLD GEOMETRY — lagoon arm (cover waterfront) ----
+  // Round 24's cover is still a street-canyon chase: the lagoon reads
+  // as a thin band at the right edge. Probe-verified (r25-sightline):
+  // NO building blocks the basin from the cover pose — the band is thin
+  // because the water is far (80-240 m) and low (camera 4 m), so it
+  // projects to a ~17 px wedge at the frame's right edge (full-res y
+  // 285-302). The fix is WORLD GEOMETRY, not camera: a lagoon ARM
+  // running SOUTH from the basin's south-west corner toward the cover
+  // pose, so the chase runs ALONG the Marina waterfront:
+  //   * arm x 60-100, z -160..-114 — 40 m wide, 46 m long. Its water
+  //     projects at full-res x 964-1234, y 303-337 (probe), i.e. the
+  //     water mass below the basin band roughly TRIPLES in height
+  //     (downscale y 171-202 continuous), right beside the x=40 road
+  //     the GT drives on. The road's east edge is x 47 + sidewalk to
+  //     x 50, so 10 m of land stays between road and shore — same
+  //     margin as the round-24 basin (minX 60).
+  //   * south edge -114, NOT -90/-100: the z=-120 cross road (+ its
+  //     sidewalks, z -113..-110) would be flooded by a longer arm,
+  //     and traffic on it would read as driving on water. -114 stops
+  //     1 m north of the sidewalk's north edge.
+  //   * the footprint is otherwise EMPTY (probe-verified): no lamps
+  //     (vertical-road lamps sit at x 50.6 / 109.4), no palms
+  //     (0 instanced palms in the rect), no trees, no buildings — only
+  //     the two promenade benches, moved east above.
+  //   * one deterministic moored boat (fixed pose/colour, ZERO rng
+  //     draws — addBoat's rng would shift the whole seeded city
+  //     layout downstream) anchors the "marina" read.
+  // world.js reads this block; hud.js draws the arm on the minimap.
+  round25: {
+    lagoonArm: { minX: 60, maxX: 100, minZ: -160, maxZ: -114 },
+    armBoat: { x: 80, z: -150, color: 0x2e86c1 },
   },
 
   // ---- Player movement (metres / second) ----
