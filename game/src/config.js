@@ -15,13 +15,21 @@ export const CONFIG = {
   // Road centrelines run at these coordinates (grid).
   roadLines: [-280, -200, -120, -40, 40, 120, 200, 280],
   // South strip (z > 280) is beach + sea; north-east corner is the marina basin.
+  // Round 23: the basin extends WEST to x 80 (a lagoon arm) so the cover
+  // camera on the x=40 road can see real water — the old basin (x 160+)
+  // sat 60+ deg off the cover axis, outside the frame, and the (80,-160)
+  // tower row walled it in. The lagoon's west water (x 80-160, z -240)
+  // projects on-screen at (995-1155, 289) from the cover pose.
   beachStartZ: 272,
   seaStartZ: 300,
-  marina: { minX: 160, maxX: 320, minZ: -320, maxZ: -160 },
+  marina: { minX: 80, maxX: 320, minZ: -320, maxZ: -160 },
 
   // ---- Districts (name -> rectangle, x/z bounds) ----
   districts: {
-    marina: { minX: 160, maxX: 320, minZ: -320, maxZ: -120, label: 'Marina' },
+    // Round 23: the Marina district extends west to x 80 with the lagoon,
+    // so the lagoon shore reads as Marina (white/blue frontage, lower
+    // towers) instead of Downtown.
+    marina: { minX: 80, maxX: 320, minZ: -320, maxZ: -120, label: 'Marina' },
     downtown: { minX: -120, maxX: 160, minZ: -200, maxZ: 40, label: 'Downtown' },
     oldTown: { minX: -320, maxX: -120, minZ: -200, maxZ: 120, label: 'Old Town' },
     beachfront: { minX: -320, maxX: 320, minZ: 200, maxZ: 320, label: 'Beachfront' },
@@ -323,8 +331,20 @@ export const CONFIG = {
       glowScale: 480, discScale: 170, haloScale: 700,
     },
     landmarks: {
-      spire: { x: 80, z: -80, height: 95, radiusTop: 7, radiusBottom: 13 },
-      bridge: { x0: 150, x1: 330, z: -240, spans: 7 },
+      // Round 23: the Spire moves EAST to the far edge of the skyline
+      // (x 320) and shortens to 60 m, so it FRAMES the Marina from the
+      // east instead of standing between the cover camera and the basin.
+      // In round 16 it sat at (80,-80) — 61 deg off the cover axis, out
+      // of the cover frame entirely — while the (80,-160)/(80,-240)
+      // tower row did the actual blocking (cleared below, round 23).
+      // The old (80,-80) block stays an empty plaza (world.js reserve)
+      // so the cover sightline grazing its west edge stays open.
+      spire: { x: 320, z: -80, height: 60, radiusTop: 6, radiusBottom: 11 },
+      // Round 23: the Bridge extends WEST to x 80, over the new lagoon
+      // arm, so its western span reads on the cover (west end projects
+      // to (995, 282) from the cover pose; was (1351, 257), off-frame).
+      // 10 spans keep ~25 m segments over the 250 m span.
+      bridge: { x0: 80, x1: 330, z: -240, spans: 10 },
     },
   },
 
@@ -652,18 +672,28 @@ export const CONFIG = {
   // darkens the rotor (dark bar + dark translucent disc — the pale
   // disc was invisible against the bright sky), and shrinks/dims the
   // searchlight cone so it stops dominating the frame. Scale 2.3
-  // (rotor span ~330 px). Read by buildShotHeli + stageCoverChase
+  // (rotor span ~330 px). Round 23: scale 2.35 (rotor span ~340 px) —
+  // the round-23 downscale target is heli >= 200 px on the 768x480
+  // sheet, and 330 px full-res is 198 px downscaled (1 px short).
+  // Read by buildShotHeli + stageCoverChase
   // (main.js) with fallbacks to the round-15 values; validated by
   // main.ts so a copy that lost this block fails loudly.
   round16: {
     heli: {
-      scale: 2.3,
+      scale: 2.35,
       sideYawDeg: 90, // +90 deg from the face-the-car yaw: side profile
       coneRadius: 1.8, // was 3.0 — the cone read as a white triangle
       coneOpacity: 0.16, // was 0.30 — dimmed, no longer the subject
       poolOpacity: 0.30, // was 0.45
       poolScale: 10, // was 14
       discRadius: 4.25, // rotor blur disc radius, in scale units.
+      // Round 23: disc opacity 0.55 (was a hardcoded 0.38) — the
+      // disc-dark fraction swung 0.32-0.51 between runs of identical
+      // code (the measurement row's height follows the rotor phase),
+      // and 0.32 failed the >= 0.35 gate. A darker blur disc lifts
+      // the floor above the gate at every phase; it still reads as
+      // rotor blur, not a solid disc.
+      discOpacity: 0.55,
       // Iteration 3: back to the full 4.25 (was 3.8 in iteration 2) —
       // the smaller disc no longer covered the rotor-bar span, so the
       // disc-dark fraction fell to 0.20. The full disc's far edge
@@ -686,6 +716,87 @@ export const CONFIG = {
     // foreshortens depth on screen — a 5 m square pool's top/bottom
     // fell outside the ring's screen extent. Read by stageCombat.
     fallenPool: { width: 4, length: 8, opacity: 0.8 },
+  },
+
+  // ---- Round 23: WORLD GEOMETRY, not camera (gta6-01) ----
+  // The round-16 cover read as a street canyon: no water, no dominant
+  // landmark, criterion 1 (open world) unanswered. Camera-only
+  // re-framing was proven exhausted (round 26) — the world itself
+  // changes. The cover camera (x=40 road, looking 20 deg west of
+  // north) and all round-16 staging stay EXACTLY as they were; only
+  // the world in front of it changes:
+  //   * the Marina basin extends west to x 80 (CONFIG.marina above) —
+  //     a lagoon arm whose water projects on-screen at (995-1155, 289)
+  //     from the cover pose (baseline probe);
+  //   * the (80,-160) tower block is cleared (world.js reserve) into a
+  //     low Marina Gate promenade, opening the sightline to that water;
+  //   * the Deco Tower below, a stepped Art Deco landmark on the
+  //     (0,-160) block, 105 m up the cover axis — projected bbox
+  //     216 px wide on the 768x480 sheet (target >= 192), fin 43 px
+  //     (target >= 30), east-face panes bright gold on a dark facade
+  //     (contrast target >= 0.7);
+  //   * the Spire moves east + shortens and the Bridge extends west
+  //     (CONFIG.round6.landmarks above).
+  // world.js reads this block; no sizes/colours are hardcoded there.
+  round23: {
+    deco: {
+      x: 0, z: -160,
+      // Stepped ziggurat: wide base, set-back middle, narrow crown.
+      // Total height 36 m + fin to 46 m — the cover frame's top edge
+      // sits at ~47 m at this distance, so the crown + fin stay
+      // inside the frame (a 55 m tower's crown would crop).
+      tiers: [
+        { w: 48, d: 48, h: 16, color: 0x1b1b26 },
+        { w: 36, d: 36, h: 12, color: 0x222230 },
+        { w: 24, d: 24, h: 8, color: 0x2b2934 },
+      ],
+      crownH: 1.2, crownColor: 0xffd98a,
+      // The fin: a vertical gold blade on the crown, the tower's
+      // signature. y 34-46 (12 m) so it reads >= 30 px on the sheet.
+      fin: { w: 1.4, d: 6, h: 12, y0: 34, color: 0xffe9a8 },
+      // Lit panes: bright unlit gold on the dark facade, in a grid on
+      // every face (south + east are what the cover camera sees).
+      // Pane size / grid pitch per tier; the east face is the
+      // contrast-gated one (bright panes vs dark facade >= 0.7).
+      paneColor: 0xffe9a8,
+      panes: [
+        { cols: 6, rows: 2, w: 4, h: 4 }, // tier 1 (48 m faces)
+        { cols: 4, rows: 2, w: 4, h: 3.5 }, // tier 2 (36 m faces)
+        { cols: 3, rows: 2, w: 3, h: 3 }, // tier 3 (24 m faces)
+      ],
+      // Vertical gold accent strips on the south + east faces.
+      stripColor: 0xffd98a, stripW: 0.6,
+    },
+    // Marina Gate promenade (the cleared 80,-160 block): low street
+    // furniture only — nothing taller than 0.8 m, so the sightline to
+    // the lagoon (which crosses this block at y 1.2-2.6 m) stays open.
+    // Planters + benches at the block corners, clear of the corridor.
+    promenade: {
+      planterColor: 0x9a9a92, benchColor: 0x8a6a4a,
+      planters: [
+        { x: 55, z: -135 }, { x: 105, z: -135 },
+        { x: 55, z: -185 }, { x: 105, z: -140 },
+      ],
+      benches: [
+        { x: 62, z: -150 }, { x: 98, z: -140 },
+      ],
+    },
+    // Harbour Gatehouse (deterministic sign wall): the MARINA / PIER 12
+    // neon signs attach to the east face of the building with the
+    // largest maxX in [180,199] overlapping their z bands. The round-23
+    // reserves re-randomised the (160,-160) block, so no random building
+    // qualifies any more (run1: signs []). This gatehouse guarantees a
+    // wall — x 170-185, z -168..-138, height 12 — overlapping both sign
+    // bands. Its east face (maxX 183) puts the signs left of the
+    // dialogue box in the sunset shot (round-16 sign bbox maxX 473 vs
+    // dialogue x>=485); maxX 193 projected the sign INTO the dialogue,
+    // and maxX 185 cleared it by only 1 px (bbox maxX 484). maxX 183
+    // clears it by ~95 px.
+    // The sign code prefers this wall (signWall flag) over any random
+    // building, so its maxX need not be the largest. Random buildings
+    // overlapping its footprint are skipped in the building loop.
+    // It fronts the x=200 marina road.
+    signWall: { minX: 168, maxX: 183, minZ: -168, maxZ: -138, height: 12 },
   },
 
   // ---- Player movement (metres / second) ----

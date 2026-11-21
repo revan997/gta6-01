@@ -124,6 +124,24 @@ const landmarkList = (() => {
       focusX: lm.pyramid.x, focusZ: lm.pyramid.z, focusY: lm.pyramid.height || 64,
     });
   }
+  // Round 23: the Deco Tower (the cover's dominant subject) and the
+  // Marina itself (the water the cover now shows). The Marina's visit
+  // point is its south shore road; the L key looks at the basin.
+  if (lm?.deco) {
+    list.push({
+      name: 'Deco Tower',
+      x: lm.deco.x, z: lm.deco.z,
+      focusX: lm.deco.x, focusZ: lm.deco.z, focusY: lm.deco.height || 46,
+    });
+  }
+  if (lm?.marina) {
+    list.push({
+      name: 'Marina',
+      x: lm.marina.x, z: lm.marina.z,
+      focusX: lm.marina.focusX ?? lm.marina.x, focusZ: lm.marina.focusZ ?? lm.marina.z,
+      focusY: lm.marina.focusY ?? 2,
+    });
+  }
   return list;
 })();
 
@@ -2113,7 +2131,7 @@ function buildShotHeli(x, y, z, scale = 1) {
   // sky). A dark disc over a bright sky reads as rotor blur.
   const rotorBlur = new THREE.Mesh(
     new THREE.CircleGeometry(discRadius * s, 20),
-    new THREE.MeshBasicMaterial({ color: 0x2e2e2e, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0x2e2e2e, transparent: true, opacity: typeof r16.discOpacity === 'number' ? r16.discOpacity : 0.38, side: THREE.DoubleSide, depthWrite: false }),
   );
   rotorBlur.rotation.x = -Math.PI / 2;
   rotorBlur.position.y = 1.0 * s;

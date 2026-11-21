@@ -685,6 +685,17 @@ export function buildWorld(scene, seedOrRng) {
     color: C.water, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.88,
     map: waterTex,
   });
+  // Round 23: the MARINA BASIN gets its own BRIGHT water material.
+  // The shared Standard water renders near-black at golden hour (the
+  // sea can stay moody — it is far from every shot — but the basin is
+  // the cover's water and must read as BLUE). MeshBasicMaterial with
+  // the same procedural texture renders the texture's true colours
+  // (#1e7fa8 + white caustics) regardless of the low sun, so the
+  // lagoon reads as unmistakable blue water on the 768x480 sheet.
+  // Same texture (no new canvas), opacity animated with the sea's.
+  const matBasinWater = new THREE.MeshBasicMaterial({
+    map: waterTex, transparent: true, opacity: 0.95,
+  });
   const matGlass = new THREE.MeshStandardMaterial({
     color: C.downtownGlass, roughness: 0.15, metalness: 0.55,
   });
@@ -767,8 +778,10 @@ export function buildWorld(scene, seedOrRng) {
   // Open sea south of the beach.
   addFlat(matWater, half * 2 + 800, 420, 0, CONFIG.seaStartZ + 210, 0.05);
   // Marina basin (north-east): a rectangular bite of water with piers.
+  // Round 23: bright basin water (matBasinWater) — the cover's water
+  // must read as blue, not near-black.
   const marina = CONFIG.marina;
-  addFlat(matWater, marina.maxX - marina.minX, marina.maxZ - marina.minZ,
+  addFlat(matBasinWater, marina.maxX - marina.minX, marina.maxZ - marina.minZ,
     (marina.minX + marina.maxX) / 2, (marina.minZ + marina.maxZ) / 2, 0.05);
   // Marina piers (wooden walkways into the basin).
   for (let i = 0; i < 3; i++) {
@@ -1136,7 +1149,24 @@ export function buildWorld(scene, seedOrRng) {
       // buildings here. The park-gap rng draw above is still consumed
       // so the seeded layout of later blocks is disturbed as little as
       // possible.
-      if (cx === 80 && cz === -80) continue; // Solmar Spire reserve
+      // Round-23: the Spire MOVED east to (320, -80) and the old
+      // (80, -80) block stays an EMPTY plaza — the cover sightline to
+      // the lagoon grazes this block's west edge at y ~3.7 m, so a
+      // tower here would wall the water in again.
+      if (cx === 80 && cz === -80) continue; // Solmar Spire reserve (round-23: old site, empty plaza)
+      // Round-23: the (0, -160) block is reserved for the Deco Tower
+      // landmark (built after the loop) — the cover's dominant subject.
+      if (cx === 0 && cz === -160) continue; // Round-23: Deco Tower reserve
+      // Round-23: the (80, -160) block is reserved for the Marina Gate
+      // promenade — LOW street furniture only (built after the loop).
+      // Its towers walled the Marina basin in from the cover camera;
+      // clearing it opens the sightline to the lagoon water at
+      // (80-160, -240). Nothing taller than 0.8 m may stand here.
+      if (cx === 80 && cz === -160) continue; // Round-23: Marina Gate promenade reserve
+      // Round-23: the (320, -80) block is reserved for the relocated
+      // Solmar Spire (far east edge of the skyline, framing the
+      // Marina instead of blocking it).
+      if (cx === 320 && cz === -80) continue; // Round-23: Solmar Spire reserve (moved east)
       // Round-7: the block centred (-80, 80) is reserved for the
       // Solmar Pyramid landmark (built after the loop) — no normal
       // buildings here. Same pattern as the Spire reserve above.
@@ -1153,6 +1183,16 @@ export function buildWorld(scene, seedOrRng) {
         const height = isDowntown
           ? rng.range(CONFIG.world.downtownMinHeight, CONFIG.world.downtownMaxHeight)
           : rng.range(CONFIG.world.normalMinHeight, CONFIG.world.normalMaxHeight);
+        // Round-23: the Harbour Gatehouse (sign wall) occupies x 178-193,
+        // z -168..-138 in the (160,-160) block. Skip any random building
+        // whose footprint overlaps it, so the gatehouse never intersects
+        // a random tower. The position/size/height draws above are
+        // already consumed, so the seeded stream is disturbed as little
+        // as possible.
+        const sw = CONFIG.round23.signWall;
+        if (cx === 160 && cz === -160
+          && px - bw / 2 < sw.maxX && px + bw / 2 > sw.minX
+          && pz - bd / 2 < sw.maxZ && pz + bd / 2 > sw.minZ) continue;
         const group = new THREE.Group();
         group.position.set(px, 0, pz);
         scene.add(group);
@@ -1614,6 +1654,36 @@ export function buildWorld(scene, seedOrRng) {
     makeInstanced(geoWinAwnings, matBalcony, false);
   }
 
+  // ---- Round 23: Harbour Gatehouse (deterministic sign wall) ----
+  // The MARINA / PIER 12 neon signs below attach to the east face of
+  // the building with the largest maxX in [180,199] overlapping their
+  // z bands. The round-23 reserves re-randomised the (160,-160) block,
+  // so no random building qualifies any more (run1: signs []). This
+  // gatehouse guarantees a wall: its box is pushed to `buildings` with
+  // signWall: true, so the sign search prefers it (below) and both
+  // signs always land on its east face; its footprint is reserved in
+  // the loop above. A waterfront building fronting the x=200 marina
+  // road.
+  {
+    const sw = CONFIG.round23.signWall;
+    const swTex = (facadeByDistrict['Marina'] || facadeTextures)[0].clone();
+    swTex.needsUpdate = true;
+    swTex.wrapS = swTex.wrapT = THREE.RepeatWrapping;
+    swTex.repeat.set(1, 1);
+    const swMat = new THREE.MeshStandardMaterial({ map: swTex, roughness: 0.9 });
+    const swGroup = new THREE.Group();
+    swGroup.position.set((sw.minX + sw.maxX) / 2, 0, (sw.minZ + sw.maxZ) / 2);
+    scene.add(swGroup);
+    addBox(swMat, sw.maxX - sw.minX, sw.height, sw.maxZ - sw.minZ, 0, sw.height / 2, 0, swGroup);
+    addBox(matRoof, sw.maxX - sw.minX + 0.4, 0.5, sw.maxZ - sw.minZ + 0.4, 0, sw.height + 0.25, 0, swGroup);
+    buildings.push({
+      minX: sw.minX, maxX: sw.maxX, minZ: sw.minZ, maxZ: sw.maxZ,
+      height: sw.height, district: 'Marina', signWall: true,
+      x: (sw.minX + sw.maxX) / 2, z: (sw.minZ + sw.maxZ) / 2,
+      w: sw.maxX - sw.minX, d: sw.maxZ - sw.minZ,
+    });
+  }
+
   // ---- Round 14: marina neon signs — the sunset shot's flat brown
   // west wall (the left third of the frame) gets two lit signs. The
   // buildings are procedural, so each sign's x is DERIVED from the
@@ -1631,11 +1701,23 @@ export function buildWorld(scene, seedOrRng) {
     ];
     for (const s of marinaSignDefs) {
       let faceX = null;
-      for (const b of buildings) {
-        if (b.maxX < 180 || b.maxX > 199) continue;
-        if (b.minZ > s.z + 6 || b.maxZ < s.z - 6) continue;
-        if ((b.height || 0) < s.y + 1) continue;
-        if (faceX === null || b.maxX > faceX) faceX = b.maxX;
+      // Round-23: the deterministic Harbour Gatehouse (signWall) wins
+      // over any random building, so the signs always land on its east
+      // face at a position clear of the dialogue box. Fall back to the
+      // largest-maxX search if no wall qualifies for this band.
+      const wall = buildings.find((b) => b.signWall
+        && b.maxX >= 180 && b.maxX <= 199
+        && b.minZ <= s.z + 6 && b.maxZ >= s.z - 6
+        && (b.height || 0) >= s.y + 1);
+      if (wall) {
+        faceX = wall.maxX;
+      } else {
+        for (const b of buildings) {
+          if (b.maxX < 180 || b.maxX > 199) continue;
+          if (b.minZ > s.z + 6 || b.maxZ < s.z - 6) continue;
+          if ((b.height || 0) < s.y + 1) continue;
+          if (faceX === null || b.maxX > faceX) faceX = b.maxX;
+        }
       }
       if (faceX === null) continue;
       const sign = new THREE.Mesh(
@@ -1666,8 +1748,11 @@ export function buildWorld(scene, seedOrRng) {
   const bridgeCfg = (R6.landmarks && R6.landmarks.bridge)
     || { x0: 150, x1: 330, z: -240, spans: 7 };
   // (a) Solmar Spire — tapered glass cylinder, tallest in the city.
-  // Its downtown block (centred 80, -80) was left empty by the building
-  // loop above, so nothing underneath it needs removing.
+  // Round 23: relocated to the far east edge (320, -80) and shortened
+  // to 60 m, so it frames the Marina instead of standing between the
+  // cover camera and the basin. Its block was left empty by the
+  // building loop above (round-23 reserve), so nothing underneath it
+  // needs removing.
   const spireGroup = new THREE.Group();
   spireGroup.position.set(spireCfg.x, 0, spireCfg.z);
   scene.add(spireGroup);
@@ -1879,7 +1964,8 @@ export function buildWorld(scene, seedOrRng) {
     x: spireCfg.x, z: spireCfg.z, w: 26, d: 26,
   });
   // (b) Marina Bridge — arched deck over the marina basin, east-west at
-  // z = -240 from x 150 to x 330. Seven angled deck segments follow a
+  // z = -240 from x 80 to x 330 (round 23: extended west over the
+  // lagoon arm, was x 150-330). Ten angled deck segments follow a
   // shallow arch (peak ~8 m mid-span), with railings, two support
   // pillars in the water and lamp posts. Purely visual (over water).
   // Round-12 (Lane C): round 11 read as a thin dark line from N/S/W —
@@ -2063,9 +2149,12 @@ export function buildWorld(scene, seedOrRng) {
     const cz = bridgeCfg.z + side * bridgeEdgeZ;
     const anchorY = bridgeDeckTop(0) + 0.7; // just above the deck at the abutment
     // Side spans: straight runs, anchor -> pylon top (3 segments each).
-    for (const [sx0, sx1] of [[150, 210], [270, 330]]) {
-      const sy0 = sx0 === 150 ? anchorY : bridgePylonTopY(270);
-      const sy1 = sx0 === 150 ? bridgePylonTopY(210) : anchorY;
+    // Round 23: the west side span runs from the (new) west abutment
+    // bridgeCfg.x0, not the old x 150 — the deck west of x 150 would
+    // otherwise carry no cable at all.
+    for (const [sx0, sx1] of [[bridgeCfg.x0, 210], [270, bridgeCfg.x1]]) {
+      const sy0 = sx0 === bridgeCfg.x0 ? anchorY : bridgePylonTopY(270);
+      const sy1 = sx0 === bridgeCfg.x0 ? bridgePylonTopY(210) : anchorY;
       for (let s = 0; s < 3; s++) {
         const fx0 = sx0 + ((sx1 - sx0) * s) / 3;
         const fx1 = sx0 + ((sx1 - sx0) * (s + 1)) / 3;
@@ -2095,22 +2184,23 @@ export function buildWorld(scene, seedOrRng) {
   // narrow warm-gold strip under the deck centreline, both just above
   // the marina water (y 0.05) so the span reads against the basin
   // instead of as a line over black. Clipped to the basin x-range
-  // (160..320) so no blue plane ever sits on dry land.
+  // (80..320, round 23: was 160..320) so no blue plane ever sits on
+  // dry land.
   const matBridgeReflect = new THREE.MeshBasicMaterial({
     color: R12B.reflectColor ?? 0x3a8ab0, transparent: true,
     opacity: R12B.reflectOpacity ?? 0.45, depthWrite: false,
   });
-  const reflect = new THREE.Mesh(new THREE.PlaneGeometry(160, 14), matBridgeReflect);
+  const reflect = new THREE.Mesh(new THREE.PlaneGeometry(240, 14), matBridgeReflect);
   reflect.rotation.x = -Math.PI / 2;
-  reflect.position.set(240, 0.12, bridgeCfg.z);
+  reflect.position.set(200, 0.12, bridgeCfg.z);
   bridgeGroup.add(reflect);
   const matBridgeReflectWarm = new THREE.MeshBasicMaterial({
     color: R12B.reflectWarmColor ?? 0xffb36b, transparent: true,
     opacity: R12B.reflectWarmOpacity ?? 0.28, depthWrite: false,
   });
-  const reflectWarm = new THREE.Mesh(new THREE.PlaneGeometry(150, 5), matBridgeReflectWarm);
+  const reflectWarm = new THREE.Mesh(new THREE.PlaneGeometry(230, 5), matBridgeReflectWarm);
   reflectWarm.rotation.x = -Math.PI / 2;
-  reflectWarm.position.set(240, 0.14, bridgeCfg.z);
+  reflectWarm.position.set(200, 0.14, bridgeCfg.z);
   bridgeGroup.add(reflectWarm);
   // (c) Solmar Pyramid — stepped pyramid tower, third skyline
   // silhouette. Four stacked tapering sandstone tiers (18 + 16 + 14 +
@@ -2160,11 +2250,175 @@ export function buildWorld(scene, seedOrRng) {
     height: pyramidCfg.height, district: 'Downtown',
     x: pyramidCfg.x, z: pyramidCfg.z, w: 36, d: 36,
   });
+  // ---- Round-23 landmarks: Deco Tower + Marina Gate promenade ----
+  // (d) Deco Tower — a stepped Art Deco ziggurat on the (0, -160)
+  // block, 105 m up the cover camera's axis: the cover's dominant
+  // subject (projected bbox 216 px wide on the 768x480 sheet, fin
+  // 43 px — baseline probe, before this tower existed). Three set-back
+  // tiers (48/36/24 m), a gold crown ring and a vertical gold fin
+  // blade on the crown. Facades are dark unlit slate (MeshBasic, so
+  // they stay dark at dusk) with bright unlit gold window panes in a
+  // grid on every face — the east face is the contrast-gated one
+  // (bright panes vs dark facade, target >= 0.7). Panes are ONE
+  // InstancedMesh (1 draw call for ~104 panes), the tiers share
+  // boxGeo. Deterministic (no rng consumed) so the seeded layout of
+  // everything after this block is unchanged. Collision footprint so
+  // the player / car cannot pass through it.
+  const R23 = CONFIG.round23 || {};
+  const decoCfg = R23.deco || { x: 0, z: -160, tiers: [
+    { w: 48, d: 48, h: 16, color: 0x23232e },
+    { w: 36, d: 36, h: 12, color: 0x2b2b3a },
+    { w: 24, d: 24, h: 8, color: 0x35333e },
+  ], crownH: 1.2, crownColor: 0xffd98a,
+    fin: { w: 1.4, d: 6, h: 12, y0: 34, color: 0xffe9a8 },
+    paneColor: 0xffe9a8,
+    panes: [{ cols: 6, rows: 2, w: 4, h: 4 }, { cols: 4, rows: 2, w: 4, h: 3.5 }, { cols: 3, rows: 2, w: 3, h: 3 }],
+    stripColor: 0xffd98a, stripW: 0.6 };
+  const decoGroup = new THREE.Group();
+  decoGroup.position.set(decoCfg.x, 0, decoCfg.z);
+  scene.add(decoGroup);
+  let decoY = 0;
+  let decoTopY = 0;
+  const decoTierBoxes = [];
+  for (const t of decoCfg.tiers) {
+    const tier = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color: t.color }));
+    tier.scale.set(t.w, t.h, t.d);
+    tier.position.y = decoY + t.h / 2;
+    tier.castShadow = true;
+    tier.receiveShadow = true;
+    decoGroup.add(tier);
+    decoTierBoxes.push({ w: t.w, d: t.d, y0: decoY, y1: decoY + t.h });
+    decoY += t.h;
+  }
+  decoTopY = decoY;
+  // Gold crown ring on the top tier + a warm glow sprite, so the
+  // crown reads at dusk instead of going dark.
+  const decoCrown = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color: decoCfg.crownColor ?? 0xffd98a }));
+  decoCrown.scale.set(decoCfg.tiers[decoCfg.tiers.length - 1].w + 2, decoCfg.crownH ?? 1.2, decoCfg.tiers[decoCfg.tiers.length - 1].d + 2);
+  decoCrown.position.y = decoTopY + (decoCfg.crownH ?? 1.2) / 2;
+  decoGroup.add(decoCrown);
+  const decoGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture('#ffd98a'), transparent: true, opacity: 0.55, depthWrite: false,
+  }));
+  decoGlow.scale.set(20, 12, 1);
+  decoGlow.position.set(0, decoTopY + 4, 0);
+  decoGroup.add(decoGlow);
+  // The fin: a vertical gold blade on the crown, the tower's
+  // signature — tall and thin so it reads as a fin, not a box.
+  const finCfg = decoCfg.fin || { w: 1.4, d: 6, h: 12, y0: 34, color: 0xffe9a8 };
+  const decoFin = new THREE.Mesh(boxGeo, new THREE.MeshBasicMaterial({ color: finCfg.color ?? 0xffe9a8 }));
+  decoFin.scale.set(finCfg.w, finCfg.h, finCfg.d);
+  decoFin.position.y = (finCfg.y0 ?? 34) + finCfg.h / 2;
+  decoGroup.add(decoFin);
+  const decoFinTip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.7, 8, 6),
+    new THREE.MeshBasicMaterial({ color: 0xfff2b0 }));
+  decoFinTip.position.y = (finCfg.y0 ?? 34) + finCfg.h;
+  decoGroup.add(decoFinTip);
+  // Lit window panes on every face of every tier, as ONE InstancedMesh
+  // (shared pane geometry + one bright material). A pane is a thin box
+  // 0.15 m proud of the face it sits on. The grid is centred on each
+  // face with equal margins; rows sit clear of the tier's top/bottom
+  // edges so no pane straddles a setback.
+  {
+    const paneSpecs = decoCfg.panes || [];
+    const paneGeo = new THREE.BoxGeometry(1, 1, 1);
+    const paneMat = new THREE.MeshBasicMaterial({ color: decoCfg.paneColor ?? 0xffe9a8 });
+    const placements = []; // { x, y, z, sx, sy, sz } in decoGroup space
+    decoTierBoxes.forEach((tb, ti) => {
+      const spec = paneSpecs[ti] || paneSpecs[paneSpecs.length - 1] || { cols: 4, rows: 2, w: 4, h: 3.5 };
+      const faceY = tb.y0 + (tb.y1 - tb.y0) / 2;
+      const rowH = (tb.y1 - tb.y0) / spec.rows;
+      for (let r = 0; r < spec.rows; r++) {
+        const py = tb.y0 + rowH * (r + 0.5);
+        // South (+z) and north (-z) faces: panes run along x.
+        const colW = tb.w / spec.cols;
+        for (let c = 0; c < spec.cols; c++) {
+          const px = -tb.w / 2 + colW * (c + 0.5);
+          placements.push({ x: px, y: py, z: tb.d / 2 + 0.08, sx: spec.w, sy: spec.h, sz: 0.15 });
+          placements.push({ x: px, y: py, z: -tb.d / 2 - 0.08, sx: spec.w, sy: spec.h, sz: 0.15 });
+        }
+        // East (+x) and west (-x) faces: panes run along z.
+        const colD = tb.d / spec.cols;
+        for (let c = 0; c < spec.cols; c++) {
+          const pz = -tb.d / 2 + colD * (c + 0.5);
+          placements.push({ x: tb.w / 2 + 0.08, y: py, z: pz, sx: 0.15, sy: spec.h, sz: spec.w });
+          placements.push({ x: -tb.w / 2 - 0.08, y: py, z: pz, sx: 0.15, sy: spec.h, sz: spec.w });
+        }
+      }
+      // Vertical gold accent strips on the south + east faces (two per
+      // face, at 1/3 and 2/3 across), full tier height — the Deco
+      // verticals that catch the eye from the cover camera.
+      const stripMat = new THREE.MeshBasicMaterial({ color: decoCfg.stripColor ?? 0xffd98a });
+      for (const f of [1 / 3, 2 / 3]) {
+        const sS = new THREE.Mesh(boxGeo, stripMat);
+        sS.scale.set(decoCfg.stripW ?? 0.6, tb.y1 - tb.y0 - 1, 0.2);
+        sS.position.set(-tb.w / 2 + tb.w * f, faceY, tb.d / 2 + 0.06);
+        decoGroup.add(sS);
+        const sE = new THREE.Mesh(boxGeo, stripMat);
+        sE.scale.set(0.2, tb.y1 - tb.y0 - 1, decoCfg.stripW ?? 0.6);
+        sE.position.set(tb.w / 2 + 0.06, faceY, -tb.d / 2 + tb.d * f);
+        decoGroup.add(sE);
+      }
+    });
+    const paneMesh = new THREE.InstancedMesh(paneGeo, paneMat, placements.length);
+    const m4 = new THREE.Matrix4();
+    placements.forEach((p, i) => {
+      m4.makeScale(p.sx, p.sy, p.sz);
+      m4.setPosition(p.x, p.y, p.z);
+      paneMesh.setMatrixAt(i, m4);
+    });
+    paneMesh.instanceMatrix.needsUpdate = true;
+    decoGroup.add(paneMesh);
+  }
+  // Total landmark height: the fin tip (y0 + h = 46 m).
+  const decoHeight = (finCfg.y0 ?? 34) + finCfg.h;
+  buildings.push({
+    minX: decoCfg.x - 24, maxX: decoCfg.x + 24,
+    minZ: decoCfg.z - 24, maxZ: decoCfg.z + 24,
+    height: decoHeight, district: 'Downtown',
+    x: decoCfg.x, z: decoCfg.z, w: 48, d: 48,
+  });
+  // (e) Marina Gate promenade — the cleared (80, -160) block: low
+  // street furniture ONLY (planters + benches, nothing over 0.8 m),
+  // at the block corners clear of the sightline corridor to the
+  // lagoon. The ground plane is already there; this is dressing, not
+  // buildings — no collision boxes, no rng.
+  {
+    const prom = R23.promenade || { planters: [], benches: [] };
+    const matPlanter = new THREE.MeshStandardMaterial({ color: prom.planterColor ?? 0x9a9a92, roughness: 1 });
+    const matShrub2 = new THREE.MeshStandardMaterial({ color: 0x3f7a34, roughness: 1 });
+    const matBench2 = new THREE.MeshStandardMaterial({ color: prom.benchColor ?? 0x8a6a4a, roughness: 1 });
+    for (const p of (prom.planters || [])) {
+      const box = new THREE.Mesh(boxGeo, matPlanter);
+      box.scale.set(2.2, 0.7, 2.2);
+      box.position.set(p.x, 0.35, p.z);
+      box.receiveShadow = true;
+      scene.add(box);
+      const shrub = new THREE.Mesh(boxGeo, matShrub2);
+      shrub.scale.set(1.6, 0.7, 1.6);
+      shrub.position.set(p.x, 1.05, p.z);
+      scene.add(shrub);
+    }
+    for (const b of (prom.benches || [])) {
+      const bench = new THREE.Mesh(boxGeo, matBench2);
+      bench.scale.set(2.4, 0.5, 0.8);
+      bench.position.set(b.x, 0.25, b.z);
+      bench.receiveShadow = true;
+      scene.add(bench);
+    }
+  }
   const landmarks = {
     spire: { x: spireCfg.x, z: spireCfg.z, height: spireCfg.height },
     bridge: { x0: bridgeCfg.x0, x1: bridgeCfg.x1, z: bridgeCfg.z, spans: bridgeCfg.spans },
     pyramid: { x: pyramidCfg.x, z: pyramidCfg.z, height: pyramidCfg.height },
-    count: 3,
+    // Round 23: the Deco Tower (cover's dominant subject) and the
+    // Marina itself (the lagoon + basin — the water the cover now
+    // shows). The Marina's visit point is the south shore road
+    // (x 200, z -150); its focus is the basin centre.
+    deco: { x: decoCfg.x, z: decoCfg.z, height: decoHeight },
+    marina: { x: 200, z: -150, focusX: 200, focusZ: -240, focusY: 2 },
+    count: 5,
   };
 
   // ---- Rooftop billboard + helipad (round-3 polish) ----
@@ -2520,10 +2774,18 @@ export function buildWorld(scene, seedOrRng) {
     g.add(lamp);
   }
 
+  // Round-23: no lamp posts standing in the Marina basin — a pole in
+  // the water chops the cover's water band into short runs and reads
+  // as a lamp standing in a lagoon. Skip both sides of every road
+  // whose lamps fall in the basin (inclusive of its south edge).
+  const lampInBasin = (lx, lz) => lx > marina.minX - 10 && lx < marina.maxX
+    && lz >= marina.minZ && lz <= marina.maxZ;
   for (const line of lines) {
     for (let t = -280; t <= 280; t += CONFIG.world.lampSpacing) {
-      addLamp(line + roadW / 2 + CONFIG.sidewalkWidth + 0.6, t);
-      addLamp(line - roadW / 2 - CONFIG.sidewalkWidth - 0.6, t + 20);
+      const lx1 = line + roadW / 2 + CONFIG.sidewalkWidth + 0.6;
+      const lx2 = line - roadW / 2 - CONFIG.sidewalkWidth - 0.6;
+      if (!lampInBasin(lx1, t)) addLamp(lx1, t);
+      if (!lampInBasin(lx2, t + 20)) addLamp(lx2, t + 20);
     }
   }
   for (let i = 0; i < CONFIG.world.palmCount; i++) {
@@ -2794,6 +3056,9 @@ export function buildWorld(scene, seedOrRng) {
     foamMat.opacity = w.foamOpacityMin
       + (w.foamOpacityMax - w.foamOpacityMin) * (0.5 + 0.5 * Math.sin(t * w.foamPulseSpeed));
     matWater.opacity = w.waterOpacityBase + w.waterOpacityAmp * Math.sin(t * 0.5);
+    // Round 23: the bright basin water shimmers with the sea but stays
+    // bright (floor 0.92) so the lagoon never goes near-black at dusk.
+    matBasinWater.opacity = Math.min(0.98, w.waterOpacityBase + 0.07 + w.waterOpacityAmp * Math.sin(t * 0.5));
     for (const b of mooredBoats) {
       b.group.position.y = b.baseY + w.mooredBobAmp * Math.sin(t * 0.9 + b.phase);
       b.group.rotation.z = w.mooredRockAmp * Math.sin(t * 0.6 + b.phase);
@@ -3100,6 +3365,21 @@ export function buildWorld(scene, seedOrRng) {
     // Round-6: skyline landmarks + warmer sky — the test harness reads
     // these to prove the pass.
     landmarks,
+    // Round-23: the marina rect itself, so the minimap draws the true
+    // (extended) basin instead of its hardcoded 160..320 fallback.
+    // The spawn point named `marina` lives inside `spawns` below and
+    // is a different thing — this is the water rectangle.
+    marina,
+    // Round-23: world-geometry round — the facts the harness checks:
+    // Spire moved east + shortened, Bridge extended west, Deco Tower
+    // built, lagoon opened, 5 landmarks in the world.
+    round23: {
+      spire: { x: spireCfg.x, z: spireCfg.z, height: spireCfg.height },
+      bridge: { x0: bridgeCfg.x0, x1: bridgeCfg.x1, spans: bridgeCfg.spans },
+      deco: { x: decoCfg.x, z: decoCfg.z, height: decoHeight },
+      marina: { minX: marina.minX, maxX: marina.maxX, minZ: marina.minZ, maxZ: marina.maxZ },
+      landmarks: 5,
+    },
     // Round-11 (Lane A): camera occlusion helpers bound to this city's
     // building boxes — main.js and the test harness call these to prove
     // a camera position / sightline is clear of every building.
@@ -3109,7 +3389,7 @@ export function buildWorld(scene, seedOrRng) {
       segmentBlocked: (ax, ay, az, bx, by, bz, ignore) => round11SegmentBlocked(buildings, ax, ay, az, bx, by, bz, ignore),
       buildingCount: buildings.length,
     },
-    round6: { skyWarm: true, landmarks: 2, spireHeight: 95, bridgeSpans: 7 },
+    round6: { skyWarm: true, landmarks: 2, spireHeight: spireCfg.height, bridgeSpans: bridgeCfg.spans },
     // Round-7: Solmar Pyramid landmark — the test harness reads these
     // to prove the pass. spireLuminous is a RUNTIME check of the
     // tower's actual material (unlit MeshBasicMaterial), not a config

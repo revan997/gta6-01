@@ -1029,6 +1029,9 @@ export class HUD {
       if (lm.spire) candidates.push({ name: 'Solmar Spire', x: lm.spire.x, z: lm.spire.z });
       if (lm.pyramid) candidates.push({ name: 'Solmar Pyramid', x: lm.pyramid.x, z: lm.pyramid.z });
       if (lm.bridge) candidates.push({ name: 'Marina Bridge', x: (lm.bridge.x0 + lm.bridge.x1) / 2, z: lm.bridge.z });
+      // Round 23: the Deco Tower + the Marina itself.
+      if (lm.deco) candidates.push({ name: 'Deco Tower', x: lm.deco.x, z: lm.deco.z });
+      if (lm.marina) candidates.push({ name: 'Marina', x: lm.marina.x, z: lm.marina.z });
       let best = null;
       let bestD = Infinity;
       for (const c of candidates) {
@@ -1374,6 +1377,19 @@ export class HUD {
         const [mx, my] = toMap((lm.bridge.x0 + lm.bridge.x1) / 2, lm.bridge.z);
         if (mx >= -10 && mx <= size + 10 && my >= -10 && my <= size + 10) {
           drawStar(mx, my, 5.5, visited.has('Marina Bridge') ? 'rgba(255, 215, 74, 0.45)' : '#ffd94a');
+        }
+      }
+      // Round 23: the Deco Tower + the Marina (basin centre).
+      if (lm?.deco) {
+        const [mx, my] = toMap(lm.deco.x, lm.deco.z);
+        if (mx >= -10 && mx <= size + 10 && my >= -10 && my <= size + 10) {
+          drawStar(mx, my, 5.5, visited.has('Deco Tower') ? 'rgba(255, 215, 74, 0.45)' : '#ffd94a');
+        }
+      }
+      if (lm?.marina) {
+        const [mx, my] = toMap(lm.marina.focusX ?? lm.marina.x, lm.marina.focusZ ?? lm.marina.z);
+        if (mx >= -10 && mx <= size + 10 && my >= -10 && my <= size + 10) {
+          drawStar(mx, my, 5, visited.has('Marina') ? 'rgba(255, 215, 74, 0.45)' : '#ffd94a');
         }
       }
     }
