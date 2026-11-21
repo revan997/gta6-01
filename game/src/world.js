@@ -1696,7 +1696,18 @@ export function buildWorld(scene, seedOrRng) {
   // in marinaSigns (returned below) so the probe can verify them.
   {
     const marinaSignDefs = [
-      { text: 'MARINA', y: 7, z: -148, bg: '#0e4d6b', fg: '#7fe7ff', glow: '#35c4ff' },
+      // Round 24: MARINA raised y 7 -> 9. The "M" read as "ARINA": the
+      // M-end (z -143.6, screen x 247-300, y 97-178) sat behind the
+      // mission panel (x 16-346, y 118+) AND the street lamp at
+      // (189.4,-140) crossed the sign's middle (probe-verified: no
+      // building blocks it — the coordinator's "foreground building"
+      // diagnosis was wrong). Raising 2 m lifts the M clear of the
+      // panel's top edge (M bottom ~104 vs panel top 118) and above
+      // the lamp-pole top (screen y 147); the gatehouse is 12 m so
+      // the sign (top 10.1) still fits. The sign's screen maxX is
+      // unchanged (~441 < dialogue x 485), so the 0-overlap gate
+      // holds. PIER 12 stays at y 5 — it already reads clean.
+      { text: 'MARINA', y: 9, z: -148, bg: '#0e4d6b', fg: '#7fe7ff', glow: '#35c4ff' },
       { text: 'PIER 12', y: 5, z: -165, bg: '#5c1d2e', fg: '#ffd166', glow: '#ff9f43' },
     ];
     for (const s of marinaSignDefs) {
@@ -2184,15 +2195,16 @@ export function buildWorld(scene, seedOrRng) {
   // narrow warm-gold strip under the deck centreline, both just above
   // the marina water (y 0.05) so the span reads against the basin
   // instead of as a line over black. Clipped to the basin x-range
-  // (80..320, round 23: was 160..320) so no blue plane ever sits on
-  // dry land.
+  // (round 24: 60..320, was 80..320 in round 23, 160..320 before) so
+  // no blue plane ever sits on dry land — derived from CONFIG.marina
+  // so it follows the basin westward automatically.
   const matBridgeReflect = new THREE.MeshBasicMaterial({
     color: R12B.reflectColor ?? 0x3a8ab0, transparent: true,
     opacity: R12B.reflectOpacity ?? 0.45, depthWrite: false,
   });
-  const reflect = new THREE.Mesh(new THREE.PlaneGeometry(240, 14), matBridgeReflect);
+  const reflect = new THREE.Mesh(new THREE.PlaneGeometry(marina.maxX - marina.minX, 14), matBridgeReflect);
   reflect.rotation.x = -Math.PI / 2;
-  reflect.position.set(200, 0.12, bridgeCfg.z);
+  reflect.position.set((marina.minX + marina.maxX) / 2, 0.12, bridgeCfg.z);
   bridgeGroup.add(reflect);
   const matBridgeReflectWarm = new THREE.MeshBasicMaterial({
     color: R12B.reflectWarmColor ?? 0xffb36b, transparent: true,
@@ -2785,7 +2797,14 @@ export function buildWorld(scene, seedOrRng) {
       const lx1 = line + roadW / 2 + CONFIG.sidewalkWidth + 0.6;
       const lx2 = line - roadW / 2 - CONFIG.sidewalkWidth - 0.6;
       if (!lampInBasin(lx1, t)) addLamp(lx1, t);
-      if (!lampInBasin(lx2, t + 20)) addLamp(lx2, t + 20);
+      // Round 24: skip the west-side lamp on the x=200 marina road at
+      // z -140 (lx 189.4). Probe-verified: its pole (screen x 323-350)
+      // + lamp head (x 356-416) cross the MARINA neon sign's middle in
+      // the sunset shot — the "M" end is already fixed by raising the
+      // sign, but this lamp is the only object standing in the sign's
+      // sightline, and one lamp in a 40 m row is invisible. Same
+      // pattern as the round-23 basin lamp skip above.
+      if (!lampInBasin(lx2, t + 20) && !(line === 200 && t + 20 === -140)) addLamp(lx2, t + 20);
     }
   }
   for (let i = 0; i < CONFIG.world.palmCount; i++) {

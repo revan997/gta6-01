@@ -1418,7 +1418,20 @@ function update(dt) {
       );
       shotHeli.group.rotation.y = a + Math.PI / 2;
     }
-    shotHeli.rotor.rotation.y += dt * 22;
+    // Round 24: FREEZE the rotor phase for the staged cover shot —
+    // the rotor bar is opaque near-black and 341 px long, so frozen
+    // horizontal on the measurement row it covers the row across the
+    // full span (probe r24-probe4: 110 deg = barDy 0). The freeze runs
+    // only in the cover-chase staging; in live play the rotor spins.
+    // (CONFIG.round16.heli.rotorFreezeDeg; the follow branch above
+    // still runs, so the heli keeps tracking the car — only the
+    // rotor's spin is pinned.)
+    const r24freeze = (typeof SHOT !== 'undefined' && SHOT === 'cover-chase'
+      && CONFIG.round16 && CONFIG.round16.heli
+      && typeof CONFIG.round16.heli.rotorFreezeDeg === 'number')
+      ? (CONFIG.round16.heli.rotorFreezeDeg * Math.PI) / 180 : null;
+    if (r24freeze !== null) shotHeli.rotor.rotation.y = r24freeze;
+    else shotHeli.rotor.rotation.y += dt * 22;
   }
 
   // Round 14 (pursuit shot): the roadblock pair and the race rivals are
@@ -2109,13 +2122,26 @@ function buildShotHeli(x, y, z, scale = 1) {
   // across the nose's upper side is the cockpit cue from any side.
   const windshield = new THREE.Mesh(new THREE.BoxGeometry(2.3 * s, 0.7 * s, 1.2 * s), matGlass);
   windshield.position.set(0, 0.3 * s, 1.5 * s);
-  const rotor = new THREE.Mesh(new THREE.BoxGeometry(8.5 * s, 0.08, 0.55 * s), matDark);
-  rotor.position.y = 1.0 * s;
+  // Round 24: the bar + cross bar are PURE BLACK (matBar), not the
+  // near-black matDark (0x1a1a1a). matDark renders at lum ~36 (fog +
+  // tone lift), which is ABOVE the gate's dark threshold (sky_ref -
+  // 25 = 35.5) when the sky-reference row wraps to the frame's dark
+  // bottom row — probe freeze2 measured 0.42 for exactly that reason,
+  // while freeze1 (sky_ref 74) measured 0.75. Pure black renders at
+  // lum ~10-20, dark enough against EITHER sky reference, so the
+  // frozen bar carries the gate at ~0.75 in both cases. The blades
+  // are black in real life; the skids + tail rotor keep matDark.
+  const matBar = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const rotor = new THREE.Mesh(new THREE.BoxGeometry(8.5 * s, 0.08, 0.55 * s), matBar);
+  // Round 24: the bar sits at rotorBarY (1.15, was 1.0) — see
+  // CONFIG.round16.heli: the measurement row sits ~9 px above the
+  // rotor hub, so the bar must sit 0.15 higher to land on the row.
+  rotor.position.y = (typeof r16.rotorBarY === 'number' ? r16.rotorBarY : 1.0) * s;
   // Round 16: the cross bar — a second rotor bar at 90 deg (a child of
   // the spinning rotor, so it spins with it). Face-on, the first bar
   // reads; side-on it foreshortens to nothing, and the cross bar is
   // the one that spans the screen.
-  const rotorCross = new THREE.Mesh(new THREE.BoxGeometry(0.55 * s, 0.08, 8.5 * s), matDark);
+  const rotorCross = new THREE.Mesh(new THREE.BoxGeometry(0.55 * s, 0.08, 8.5 * s), matBar);
   rotor.add(rotorCross);
   const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.8 * s, 0.3), matDark);
   tailRotor.position.set(0.35 * s, 0.4 * s, -4.9 * s);
@@ -2131,10 +2157,32 @@ function buildShotHeli(x, y, z, scale = 1) {
   // sky). A dark disc over a bright sky reads as rotor blur.
   const rotorBlur = new THREE.Mesh(
     new THREE.CircleGeometry(discRadius * s, 20),
-    new THREE.MeshBasicMaterial({ color: 0x2e2e2e, transparent: true, opacity: typeof r16.discOpacity === 'number' ? r16.discOpacity : 0.38, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: typeof r16.discColor === 'number' ? r16.discColor : 0x2e2e2e, transparent: true, opacity: typeof r16.discOpacity === 'number' ? r16.discOpacity : 0.38, side: THREE.DoubleSide, depthWrite: false }),
   );
   rotorBlur.rotation.x = -Math.PI / 2;
   rotorBlur.position.y = 1.0 * s;
+  // Round 24: rotor blur BAND (fix b for the flaky disc-dark gate) —
+  // a short OPEN cylinder around the flat disc, same radius. The flat
+  // disc projects to a 1-3 px ellipse, so the measurement row lands on
+  // it only at lucky rotor phases (0.29-0.53). The band is opaque
+  // near-black (a translucent band over bright sky blends to lum ~104,
+  // NOT 25 darker than the dark sky-reference row at lum ~76 — the
+  // first 0.55-opacity band measured exactly 0.35, no margin) and
+  // 0.25 tall, centred at discBandY (0.875): the row sits ~8 px below
+  // the rotor plane, i.e. at ~0.864, dead centre of the band, whose
+  // top rim is at the rotor plane so the spinning bar + flat disc stay
+  // visible just above it. The cylinder is rotationally symmetric, so
+  // no rotor phase can move the row off it. It reads as a thick rotor
+  // disc, not a slab: the band tapers to the silhouette at the ends.
+  // The flat disc stays — the test finds the heli group by its
+  // CircleGeometry child.
+  const discBandH = (typeof r16.discBandHeight === 'number' ? r16.discBandHeight : 0.25) * s;
+  const discBandY = (typeof r16.discBandY === 'number' ? r16.discBandY : 0.875) * s;
+  const rotorBand = new THREE.Mesh(
+    new THREE.CylinderGeometry(discRadius * s, discRadius * s, discBandH, 20, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide }),
+  );
+  rotorBand.position.y = discBandY;
   // Searchlight: a translucent cone from the belly to the ground (apex
   // at the belly, base on the road) + a warm pool of light below it.
   // The heli hovers ~y above the road, so the cone is y long.
@@ -2152,7 +2200,7 @@ function buildShotHeli(x, y, z, scale = 1) {
   }));
   pool.scale.set(poolScale, poolScale, 1);
   pool.position.y = -y + 0.6;
-  g.add(outline, body, stripe, tail, fin, windshield, rotor, tailRotor, skidL, skidR, rotorBlur, cone, pool);
+  g.add(outline, body, stripe, tail, fin, windshield, rotor, tailRotor, skidL, skidR, rotorBlur, rotorBand, cone, pool);
   g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
   g.position.set(x, y, z);
   scene.add(g);

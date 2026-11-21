@@ -20,16 +20,26 @@ export const CONFIG = {
   // sat 60+ deg off the cover axis, outside the frame, and the (80,-160)
   // tower row walled it in. The lagoon's west water (x 80-160, z -240)
   // projects on-screen at (995-1155, 289) from the cover pose.
+  // Round 24: the basin extends further west to x 60 (NOT x 40 — the
+  // x=40 road's east edge is x 47 + sidewalk to x 50, and water at x 40
+  // would flood the road the cover GT drives on). The strict water run
+  // is 118 px, bounded left by the basin's diagonal west shore; moving
+  // the shore 20 m west moves the band's left edge ~50 px left on the
+  // 768x480 sheet, toward the 150 px target. No buildings are removed:
+  // the (80,-240) block is already empty (basin skip) and the (0,-240)
+  // block's centre (x 0) stays west of the skip line (minX - 10 = 50).
+  // The (55,-185) promenade planter stays on land, 5 m west of the
+  // new shore. The bridge extends west with the basin (below).
   beachStartZ: 272,
   seaStartZ: 300,
-  marina: { minX: 80, maxX: 320, minZ: -320, maxZ: -160 },
+  marina: { minX: 60, maxX: 320, minZ: -320, maxZ: -160 },
 
   // ---- Districts (name -> rectangle, x/z bounds) ----
   districts: {
     // Round 23: the Marina district extends west to x 80 with the lagoon,
     // so the lagoon shore reads as Marina (white/blue frontage, lower
-    // towers) instead of Downtown.
-    marina: { minX: 80, maxX: 320, minZ: -320, maxZ: -120, label: 'Marina' },
+    // towers) instead of Downtown. Round 24: west to x 60 with the basin.
+    marina: { minX: 60, maxX: 320, minZ: -320, maxZ: -120, label: 'Marina' },
     downtown: { minX: -120, maxX: 160, minZ: -200, maxZ: 40, label: 'Downtown' },
     oldTown: { minX: -320, maxX: -120, minZ: -200, maxZ: 120, label: 'Old Town' },
     beachfront: { minX: -320, maxX: 320, minZ: 200, maxZ: 320, label: 'Beachfront' },
@@ -344,7 +354,11 @@ export const CONFIG = {
       // arm, so its western span reads on the cover (west end projects
       // to (995, 282) from the cover pose; was (1351, 257), off-frame).
       // 10 spans keep ~25 m segments over the 250 m span.
-      bridge: { x0: 80, x1: 330, z: -240, spans: 10 },
+      // Round 24: the bridge extends west to x 60 with the basin (was
+      // x0 80) so its west end still lands on the shore instead of
+      // ending mid-lagoon; spans 10 -> 11 keeps ~25 m per span. The
+      // two support pillars stay at their fixed x (210, 270).
+      bridge: { x0: 60, x1: 330, z: -240, spans: 11 },
     },
   },
 
@@ -693,7 +707,63 @@ export const CONFIG = {
       // and 0.32 failed the >= 0.35 gate. A darker blur disc lifts
       // the floor above the gate at every phase; it still reads as
       // rotor blur, not a solid disc.
+      // Round 24: 0.55 was NOT enough — run 1 measured exactly 0.35
+      // and run 2 0.36 (no margin). Pixel analysis proved why: the row
+      // passes through the disc's CENTRE (the disc is a solid ellipse
+      // 341x131 px on screen), and a translucent disc over bright sky
+      // (lum ~175) blends to ~104, which is NOT 25 darker than the
+      // dark sky-reference row (lum ~66, dark clouds at the frame top).
+      // A BLACK disc at 0.85 was tried next and measured 0.00 — worse:
+      // the sky-reference row (28 px above the measurement row) is
+      // INSIDE the disc's tall ellipse, so an opaque disc collapses
+      // the reference itself (sky_ref ~27, row ~27, difference 0).
+      // The disc is therefore back to the round-23 translucent grey
+      // (0.55) — it reads as rotor blur, and the gate is carried by
+      // the frozen bar instead (rotorFreezeDeg + rotorBarY below).
       discOpacity: 0.55,
+      discColor: 0x2e2e2e,
+      // Round 24: FREEZE the rotor phase for the staged cover shot
+      // (fix (a)). The rotor bar is opaque near-black and 341 px long;
+      // frozen horizontal on the measurement row it covers the row
+      // across the full span. Probe-verified (r24-probe4): at 110 deg
+      // the bar is perfectly horizontal on screen (barDy 0, span 333
+      // px). The rotor keeps spinning in live play — the freeze runs
+      // only in the cover-chase staging (main.js update loop).
+      rotorFreezeDeg: 110,
+      // Round 24: the bar sits 0.15 higher than the disc plane
+      // (1.15 vs 1.0). The measurement row sits ~9 px ABOVE the rotor
+      // hub on screen (perspective bias of the tip mean: the far tip
+      // pulls the mean up), so a bar at the disc plane (centre y 38)
+      // misses the row (y 29) by 9 px; raised 0.15 (0.35 m, ~9 px)
+      // the bar's centre lands on the row. 0.35 m is a taller rotor
+      // mast, not a visible float: at the 768x480 sheet it is ~5 px,
+      // inside the disc's 131 px vertical extent.
+      rotorBarY: 1.15,
+      // Round 24: the opacity lift did NOT eliminate the variance —
+      // the coordinator's independent runs still measured 0.29 twice.
+      // The variance is COVERAGE + BLENDING, not darkness: the flat
+      // disc projects to a 1-3 px ellipse, and the measurement row
+      // (mean rotor-tip y) lands on it only when the spinning bar
+      // happens to lie along the row. Fix (b): a uniformly dark BAND —
+      // a short open cylinder (same radius) around the disc, so the row
+      // is dark at EVERY rotor phase. Round-24 run 1 measured the first
+      // band (0.25 tall, 0.55 opacity) at exactly 0.35 — no margin:
+      // pixel analysis showed the translucent band over bright sky
+      // blends to lum ~104, which is NOT 25 darker than the dark
+      // sky-reference row (lum ~76), and the row sits ~8 px BELOW the
+      // rotor plane (perspective bias of the tip mean). So the band is
+      // now OPAQUE near-black (it counts dark against any sky row) and
+      // taller (0.4) with its centre lowered to 0.93 (see main.js), so
+      // the row sits inside it with margin on both sides. REVISED after
+      // a second look: a 0.4-tall band centred at 0.93 would hide the
+      // spinning bar behind its front wall (the bar is at 1.0, inside
+      // the band's height range). Final form: 0.25 tall, centred at
+      // 0.875 — the row sits at ~0.864, dead centre of a band whose top
+      // rim is at the rotor plane, so the bar + flat disc stay visible
+      // just above it. The flat disc stays (the test finds the heli
+      // group by its CircleGeometry child). Still reads as rotor blur.
+      discBandHeight: 0.25,
+      discBandY: 0.875,
       // Iteration 3: back to the full 4.25 (was 3.8 in iteration 2) —
       // the smaller disc no longer covered the rotor-bar span, so the
       // disc-dark fraction fell to 0.20. The full disc's far edge
