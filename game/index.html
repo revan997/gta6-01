@@ -1,183 +1,43 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Solmar Bay — Rico Vega</title>
-<meta name="description" content="Solmar Bay — an original open-world crime game. Drive it, walk it, outrun the law across a coastal city at sunset. Eight story missions, police pursuit, sculpted cars, the Solmar Spire and the Marina Bridge — and a living bay.">
-<meta name="theme-color" content="#4a2a20">
-<meta name="solmar-bay-round" content="14">
-<link rel="icon" type="image/x-icon" href="./favicon.ico">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solmar Bay</title>
+<link rel="icon" href="./favicon.ico">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a141c;
-    font-family: Arial, Helvetica, sans-serif; color: #fff; }
-  #game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  /* Round-2 polish: a soft vignette over the 3D view (below the HUD). */
-  #vignette { position: fixed; inset: 0; pointer-events: none; z-index: 2;
-    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.28) 100%); }
-  /* Round-5 polish: a stronger warm wash from the top of the frame
-     (golden-hour tint, deepened for the dramatic sunset) over the 3D
-     view, below the HUD.
-     Round-9: softened (0.16 -> 0.10 at the top) — the sky gradient is
-     remapped onto the visible sky now, so the eye-level frame already
-     carries the sunset; the old wash double-tinted it and flattened
-     the new sienna -> gold bands. */
-  #top-glow { position: fixed; inset: 0; pointer-events: none; z-index: 2;
-    background: linear-gradient(180deg, rgba(255,150,60,0.10) 0%, rgba(255,150,60,0.03) 30%, transparent 50%); }
-  .hidden { display: none !important; }
-
-  /* ---- HUD ---- */
-  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
-  #minimap { position: absolute; left: 14px; bottom: 14px; width: 180px; height: 180px;
-    border: 2px solid rgba(255,255,255,0.55); border-radius: 50%; background: rgba(10,20,28,0.75);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
-  #wanted-stars { position: absolute; top: 14px; right: 16px; font-size: 30px; letter-spacing: 4px;
-    color: #ffd94a; text-shadow: 0 2px 6px rgba(0,0,0,0.7); }
-  /* Round-2 polish: the stars pulse while the heat is on (hud.js toggles .hot). */
-  #wanted-stars.hot { animation: starpulse 0.9s ease-in-out infinite; }
-  @keyframes starpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
-  /* Round-3 polish: the stars flash red when the heat rises (hud.js toggles .flash). */
-  #wanted-stars.flash { animation: starflash 0.6s ease-out; }
-  @keyframes starflash { 0% { color: #ff3b30; transform: scale(1.25); } 100% { color: #ffd94a; transform: scale(1); } }
-  #hud-district { position: absolute; top: 42px; left: 50%; transform: translateX(-50%);
-    font-size: 12px; letter-spacing: 3px; opacity: 0.85; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
-  #wanted-stars .off { color: rgba(255,255,255,0.28); }
-  #health-wrap { position: absolute; right: 16px; top: 58px; width: 190px; text-align: right; }
-  #health-wrap .label, #money .label { font-size: 11px; letter-spacing: 2px; opacity: 0.85; }
-  #health-bar { width: 100%; height: 12px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.5); margin-top: 3px; }
-  #health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37d67a, #7be495); }
-  #money { position: absolute; right: 16px; top: 96px; font-size: 24px; font-weight: bold;
-    text-shadow: 0 2px 6px rgba(0,0,0,0.8); text-align: right; }
-  #money .amount { color: #7be495; }
-  #speed { position: absolute; right: 16px; bottom: 16px; font-size: 34px; font-weight: bold;
-    text-shadow: 0 2px 6px rgba(0,0,0,0.8); text-align: right; }
-  #hud-ammo { position: absolute; right: 16px; bottom: 62px; font-size: 15px; font-weight: bold;
-    text-shadow: 0 2px 5px rgba(0,0,0,0.8); text-align: right; }
-  #objective { position: absolute; top: 14px; left: 16px; max-width: 46%;
-    font-size: 15px; line-height: 1.45; text-shadow: 0 2px 5px rgba(0,0,0,0.85); }
-  #objective .obj-title { font-size: 12px; letter-spacing: 2px; color: #ffd94a; }
-  #clock { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
-    font-size: 20px; font-weight: bold; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
-  #clock .day { font-size: 12px; font-weight: normal; opacity: 0.85; }
-  #message { position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%);
-    font-size: 20px; font-weight: bold; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.9); }
-  #crosshair { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px;
-    transform: translate(-50%, -50%); }
-  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: rgba(255,255,255,0.9);
-    box-shadow: 0 0 4px rgba(0,0,0,0.9); }
-  #crosshair::before { left: 10px; top: 0; width: 2px; height: 22px; }
-  #crosshair::after { left: 0; top: 10px; width: 22px; height: 2px; }
-  #controls-hint { position: absolute; left: 14px; bottom: 204px; font-size: 11px; line-height: 1.6;
-    opacity: 0.75; text-shadow: 0 1px 4px rgba(0,0,0,0.9); }
-
-  /* ---- Menu overlays ---- */
-  .overlay { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; text-align: center; padding: 24px;
-    background: rgba(6, 18, 28, 0.72); }
-  /* Round-2 polish: the title is a gold gradient, not a flat colour. */
-  .overlay h1 { font-size: 56px; letter-spacing: 4px;
-    background: linear-gradient(180deg, #ffe98a 0%, #ffd94a 45%, #c9a227 100%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-    text-shadow: 0 4px 18px rgba(0,0,0,0.8); }
-  .overlay h2 { font-size: 40px; letter-spacing: 3px; }
-  .overlay .subtitle { font-size: 17px; margin-top: 10px; opacity: 0.9; max-width: 560px; line-height: 1.6; }
-  .overlay .keys { font-size: 13px; margin-top: 18px; line-height: 1.9; opacity: 0.85; }
-  /* Round-4b: the saved profile's progress line under the START button. */
-  #save-stats { font-size: 12px; margin-top: 14px; opacity: 0.75; letter-spacing: 1px; }
-  .overlay button { pointer-events: auto; margin-top: 26px; padding: 14px 42px; font-size: 18px;
-    font-weight: bold; letter-spacing: 2px; color: #0a141c; background: #ffd94a; border: none;
-    border-radius: 6px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.45);
-    transition: background 0.15s, transform 0.15s; }
-  .overlay button:hover { background: #ffe98a; transform: translateY(-1px); }
-  #busted-screen { background: rgba(10, 30, 80, 0.78); }
-  #busted-screen h2 { color: #7db8ff; }
-  #wasted-screen { background: rgba(60, 8, 8, 0.8); }
-  #wasted-screen h2 { color: #ff5a5a; }
-  #mission-complete-screen { background: rgba(8, 50, 24, 0.78); }
-  #mission-complete-screen h2 { color: #7be495; }
-  #mission-complete-screen .reward { font-size: 26px; font-weight: bold; color: #7be495; margin-top: 12px; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1410; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  /* The HUD root: hud.js builds every panel inside #hud. */
+  #hud { position: fixed; inset: 0; pointer-events: none; font-family: 'Segoe UI', system-ui, sans-serif; color: #f5efe4; z-index: 10; }
+  #hud-root { position: absolute; inset: 0; }
+  #hud-minimap { position: absolute; left: 16px; bottom: 16px; width: 168px; height: 168px; border: 2px solid rgba(255,255,255,0.35); border-radius: 6px; background: rgba(0,0,0,0.45); }
+  #hud-mission-panel { position: absolute; left: 16px; top: 16px; background: rgba(10,10,16,0.72); border-left: 3px solid #ffd76a; padding: 10px 14px; font-size: 13px; line-height: 1.5; max-width: 340px; }
+  #hud-respect { position: absolute; right: 16px; top: 16px; background: rgba(10,10,16,0.72); padding: 8px 12px; font-size: 12px; }
+  #hud-vehicle-panel { position: absolute; right: 16px; top: 64px; background: rgba(10,10,16,0.72); padding: 8px 12px; font-size: 12px; }
+  #hud-police-response { position: absolute; right: 16px; top: 108px; background: rgba(60,0,0,0.72); padding: 8px 12px; font-size: 12px; }
+  #hud-crew-panel { position: absolute; left: 16px; bottom: 200px; background: rgba(10,10,16,0.6); padding: 6px 10px; font-size: 12px; }
+  #hud-district-panel { position: absolute; left: 200px; bottom: 16px; background: rgba(10,10,16,0.6); padding: 6px 10px; font-size: 12px; }
+  #hud-dialogue { position: absolute; left: 50%; bottom: 48px; transform: translateX(-50%); background: rgba(10,10,16,0.8); padding: 10px 18px; font-size: 14px; max-width: 640px; text-align: center; }
+  #hud-radio { position: absolute; right: 16px; bottom: 16px; background: rgba(10,10,16,0.72); padding: 6px 10px; font-size: 12px; }
+  #hud-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); background: rgba(160,0,0,0.85); color: #fff; padding: 8px 22px; font-size: 20px; font-weight: 700; letter-spacing: 2px; }
+  #message { position: absolute; left: 50%; top: 34%; transform: translateX(-50%); font-size: 15px; }
+  #controls-hint { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,0.65); }
+  #crosshair { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; font-size: 20px; line-height: 24px; text-align: center; color: #fff; text-shadow: 0 0 4px #000; }
+  #start-screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(8,6,10,0.72); pointer-events: auto; }
+  #start-screen.hidden { display: none; }
+  #hud-start-title { font-size: 64px; font-weight: 800; letter-spacing: 6px; color: #ffd76a; }
+  #hud-start-sub { font-size: 16px; margin: 12px 0 28px; color: #e8e0d0; }
+  #start-button { font-size: 20px; padding: 12px 44px; background: #ffd76a; color: #1a1410; border: none; border-radius: 4px; cursor: pointer; font-weight: 700; }
+  #crosshair.hidden { display: none; }
+  /* Read aloud, never shown: the status line screen readers announce. */
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 </style>
 </head>
 <body>
-<canvas id="game-canvas"></canvas>
-<div id="vignette"></div>
-<div id="top-glow"></div>
-
-<!-- HUD -->
-<div id="hud">
-  <canvas id="minimap" width="180" height="180"></canvas>
-  <div id="wanted-stars"><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span><span class="off">&#9733;</span></div>
-  <div id="health-wrap">
-    <div class="label">HEALTH</div>
-    <div id="health-bar"><div id="health-fill"></div></div>
-  </div>
-  <div id="money"><div class="label">CASH</div><span class="amount"><span id="money-amount">250</span></span></div>
-  <div id="speed"><span id="speed-value">0 km/h</span></div>
-  <div id="hud-ammo"></div>
-  <div id="objective"><div class="obj-title" id="mission-name"></div><div class="obj-title">OBJECTIVE</div><span id="objective-text">Explore Solmar Bay.</span></div>
-  <div id="clock"><span id="clock-time">12:00</span> <span class="day" id="clock-day">Day 1</span></div>
-  <div id="hud-district"></div>
-  <div id="message"></div>
-  <div id="crosshair" class="hidden"></div>
-  <!-- Round-11 final (re-touch): the L hint promises a "clear framed view" — the consolidated harness verifies it by screenshotting the settled focus view immediately after re-arming L, never the chase camera. -->
-<!-- Round-13B: #controls-hint is hidden by hud.js in staged (?shot=) mode; the element itself is unchanged. -->
-  <div id="controls-hint">WASD move &middot; SHIFT run &middot; SPACE jump / handbrake<br>E enter / exit car &middot; F punch / shoot &middot; 1-5 weapons &middot; H horn (in car) &middot; C camera &middot; V camera distance &middot; L look at landmark (clear framed view) &middot; P pause &middot; M mute</div>
-</div>
-
-<!-- Start screen -->
-<div id="start-screen" class="overlay">
-  <h1>SOLMAR BAY</h1>
-  <p class="subtitle">Rico Vega is back in the city that raised him. Drive it, walk it,
-    outrun the law under a burning sunset — and make the Bay yours.</p>
-  <p class="keys">WASD — move / drive &nbsp;&middot;&nbsp; SHIFT — run &nbsp;&middot;&nbsp; SPACE — jump / handbrake<br>
-    E — enter / exit car &nbsp;&middot;&nbsp; F — punch / shoot &nbsp;&middot;&nbsp; 1-5 — weapons &nbsp;&middot;&nbsp; C — camera &nbsp;&middot;&nbsp; V — camera distance &nbsp;&middot;&nbsp; L — look at landmark &nbsp;&middot;&nbsp; Mouse — look &nbsp;&middot;&nbsp; P — pause &nbsp;&middot;&nbsp; M — mute</p>
-  <button id="start-button" type="button">START</button>
-  <p id="save-stats"></p>
-</div>
-
-<!-- Pause -->
-<div id="pause-menu" class="overlay hidden">
-  <h2>PAUSED</h2>
-  <p class="subtitle">Solmar Bay is waiting.</p>
-  <button id="resume-button" type="button">RESUME</button>
-  <button id="restart-button" type="button">RESTART</button>
-</div>
-
-<!-- Busted -->
-<div id="busted-screen" class="overlay hidden">
-  <h2>BUSTED</h2>
-  <p class="subtitle">The Solmar Bay police took you in.</p>
-  <button id="busted-retry-button" type="button">TRY AGAIN</button>
-</div>
-
-<!-- Wasted -->
-<div id="wasted-screen" class="overlay hidden">
-  <h2>WASTED</h2>
-  <p class="subtitle">Rico Vega is down — but the Bay never forgets.</p>
-  <button id="wasted-retry-button" type="button">TRY AGAIN</button>
-</div>
-
-<!-- Mission complete -->
-<div id="mission-complete-screen" class="overlay hidden">
-  <h2>MISSION COMPLETE</h2>
-  <p class="subtitle" id="mission-complete-text">Clean work, Rico.</p>
-  <p class="reward" id="mission-complete-reward"></p>
-  <button id="mission-continue-button" type="button">CONTINUE</button>
-</div>
-
-<script type="importmap">
-{
-  "imports": {
-    "three": "./vendor/three.module.min.js"
-  }
-}
-</script>
-<!-- Round-13 final: no markup change — the eight density panels
-     (mission / police response / weapon wheel / dialogue / radio /
-     vehicle / respect / district) are built by hud.js at runtime, so the
-     staged screenshots (?shot=cover-chase etc.) render the live HUD. -->
+<canvas id="game" aria-label="Solmar Bay: drive, steal cars, lose the police, run the crew's jobs"></canvas>
+<div id="hud"></div>
+<p id="status" role="status" aria-live="polite"></p>
 <script type="module" src="./src/main.js"></script>
-<!-- Round-12 final: no markup change — art round (hero, facades, Bridge span). -->
 </body>
 </html>

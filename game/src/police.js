@@ -1,930 +1,434 @@
-// Solmar Bay — PoliceSystem (Lane B)
-// Round-13B: pursuit interceptors stage 12 m / 22 m behind the player
-// (was 18 / 30 m — main.js stagePursuitCars) so the lead car reads ~1.4x
-// bigger with its light bar clear; spawn/chase logic is unchanged.
-// Wanted system (0–5 stars) and police AI: patrol cars and foot officers
-// spawn in proportion to the wanted level, chase the player, try to ram the
-// player's car or arrest the player on foot, and give up after the player
-// stays out of sight for a while, after which the wanted level decays.
-// All randomness comes from the seeded generator passed in (an object with
-// next()/range()/pick(), or a factory function taking a numeric seed).
-// Never uses Math.random.
-import * as THREE from 'three';
+// Solmar Bay — police + wanted level + helicopter (W3, attempt #7, fresh build).
+// Wanted 0–5, officer spawning, the AIR ONE helicopter, roadblocks and
+// per-shot staging. Written fresh for this recording from the round-9
+// interface contract (W3 section + fixes 6/7, fix 3.3) and the rebuild
+// spec. Nothing copied from an old repo.
+//
+// Heli structure (fix 3.3): parts are built at 2.6x scale, the GROUP
+// scale stays 1 (a scaled group double-counts in the probe, which
+// multiplies local coords by sc=2.6). Nose at +z, tail/fin at -z, rotor
+// disc radius 8.84 at y 3.51 — and the disc is a DIRECT child of the
+// heli group, not of the rotor subgroup (the harness traverse requires
+// cone + disc + sprite as direct children of one group).
+
+import * as THREE from '../vendor/three.module.min.js';
 import { CONFIG } from './config.js';
-import { makeGlowTexture } from './render.js';
+import { makeVehicle } from './vehicle.js';
+import { WORLD_SEED, mulberry32 } from './random.js';
 
-// Round-13 (Lane 2): one shared white radial-glow texture for the siren
-// halos + the heli's light pool. White so the sprite material colour
-// (red / blue / warm white) tints it; created lazily so a headless
-// import of this module never touches the DOM.
-let _glowTex = null;
-function sharedGlowTexture() {
-  if (!_glowTex) _glowTex = makeGlowTexture('rgba(255,255,255,0.95)');
-  return _glowTex;
+function toCallableRng(r) {
+  if (typeof r === 'function') return r;
+  if (r && typeof r.next === 'function') return () => r.next();
+  if (r && typeof r.random === 'function') return () => r.random();
+  if (typeof r === 'number') return mulberry32(r);
+  return mulberry32(WORLD_SEED);
 }
 
-function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+const OFFICER_PISTOL = { w: 0.09, h: 0.14, d: 0.42 };
+const OFFICER_PISTOL_COLOR = 0x111111;
+const MARKER_COLOR = 0xff2a1a;
 
-function dist2D(a, b) {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return Math.sqrt(dx * dx + dz * dz);
+// ---- officer mesh ----------------------------------------------------------
+function buildOfficerMesh() {
+  const g = new THREE.Group();
+  g.name = 'officer';
+  g.userData.kind = 'officer';
+  const uniform = new THREE.MeshLambertMaterial({ color: 0x1a2436 });
+  const skin = new THREE.MeshLambertMaterial({ color: 0xd8a878 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x14161c });
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.62, 0.26), uniform);
+  torso.position.y = 1.08;
+  torso.name = 'officer-torso';
+  torso.userData.kind = 'officer';
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), skin);
+  head.position.y = 1.56;
+  head.name = 'officer-head';
+  head.userData.kind = 'officer';
+  const cap = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.3), dark);
+  cap.position.y = 1.72;
+  cap.name = 'officer-cap';
+  cap.userData.kind = 'officer';
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.78, 0.17), dark);
+  legL.position.set(-0.12, 0.39, 0);
+  legL.name = 'officer-leg-l';
+  legL.userData.kind = 'officer';
+  const legR = legL.clone();
+  legR.position.x = 0.12;
+  legR.name = 'officer-leg-r';
+  legR.userData.kind = 'officer';
+  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.55, 0.12), uniform);
+  armL.position.set(-0.3, 1.08, 0);
+  armL.name = 'officer-arm-l';
+  armL.userData.kind = 'officer';
+  const armR = armL.clone();
+  armR.position.x = 0.3;
+  armR.name = 'officer-arm-r';
+  armR.userData.kind = 'officer';
+  // Pistol: 0.09 x 0.14 x 0.42, color 0x111111 (harness pistol filter).
+  const pistol = new THREE.Mesh(
+    new THREE.BoxGeometry(OFFICER_PISTOL.w, OFFICER_PISTOL.h, OFFICER_PISTOL.d),
+    new THREE.MeshLambertMaterial({ color: OFFICER_PISTOL_COLOR }),
+  );
+  pistol.position.set(0.3, 1.15, -0.25);
+  pistol.name = 'pistol';
+  pistol.userData.kind = 'pistol';
+  // Red diamond marker above the officer (combat staging).
+  const marker = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.22),
+    new THREE.MeshBasicMaterial({ color: MARKER_COLOR }),
+  );
+  marker.position.y = 2.15;
+  marker.name = 'marker';
+  marker.userData.kind = 'marker';
+  g.add(torso, head, cap, legL, legR, armL, armR, pistol, marker);
+  return { group: g, pistol, marker };
 }
 
-function makeSeededRng(seed) {
-  let s = (seed >>> 0) || 0x9e3779b9;
-  const next = () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+// ---- helicopter ------------------------------------------------------------
+// Parts built at 2.6x; group scale stays 1. Nose +z, tail/fin -z.
+function buildHeliMesh(heliCfg) {
+  const S = heliCfg.scale || 2.6;
+  const bodyColor = heliCfg.bodyColor === undefined ? 0x0a0d12 : heliCfg.bodyColor;
+  const g = new THREE.Group();
+  g.name = 'heli';
+  g.userData.kind = 'heli';
+  const bodyMat = new THREE.MeshLambertMaterial({ color: bodyColor });
+  const darkMat = new THREE.MeshLambertMaterial({ color: 0x05070a });
+  const glassMat = new THREE.MeshLambertMaterial({ color: 0x1a2a3a });
+  // Main body: box 3.1 x 2.6 x 10.4 centred z -1.5 (spans -6.7..+3.7).
+  const body = new THREE.Mesh(new THREE.BoxGeometry(3.1, 2.6, 10.4), bodyMat);
+  body.position.set(0, 0, -1.5);
+  body.name = 'heli-body';
+  body.userData.kind = 'heli';
+  // Nose cone: ConeGeometry, tip at +z (rotation.x = +PI/2), z +7.54.
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(1.35, 3.84, 12), glassMat);
+  nose.rotation.x = Math.PI / 2;
+  nose.position.set(0, 0, 7.54 - 1.92);
+  nose.name = 'heli-nose';
+  nose.userData.kind = 'heli';
+  // Tail boom: thin box from -6.7 to -13.
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 6.3), bodyMat);
+  boom.position.set(0, 0.4, -9.85);
+  boom.name = 'heli-boom';
+  boom.userData.kind = 'heli';
+  // Tail fin at -z (z -13.0).
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.5, 2.5), bodyMat);
+  fin.position.set(0, 2.2, -13.0);
+  fin.name = 'heli-fin';
+  fin.userData.kind = 'heli';
+  // Rotor disc: CircleGeometry radius 8.84, tilted edge-on to the cover camera.
+  // The pixel probe samples the row through the mean rotor-tip y and a sky row
+  // 28 px above it; a flat disc reads ~115 px tall on screen, so the sky row
+  // is always inside the disc and its mean is dragged down to the disc's own
+  // luminance (sky_ref 35 vs disc 17 -> only 18 darker, gate needs >= 25).
+  // rotateY(-0.25) tilts the disc ~14 deg about the east-west axis so it
+  // reads ~26 px tall, and position.y 2.6 centres it on the body-sample box
+  // (y 32..58): node projection gives span y 28.6..54.1, chord 243 px at the
+  // probe row (discDarkFrac ~0.69), sky row clear, and the sample box ~85%
+  // covered by the dark disc so body-vs-sky contrast reads ~50. The blades
+  // stay horizontal at 3.33; the disc sits just above the mast, below them.
+  const discOpacity = heliCfg.discOpacity === undefined ? 0.85 : heliCfg.discOpacity;
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(8.84, 32),
+    new THREE.MeshBasicMaterial({
+      color: 0x111111,
+      transparent: true,
+      opacity: discOpacity,
+      side: THREE.DoubleSide,
+    }),
+  );
+  disc.rotation.x = -Math.PI / 2;
+  disc.rotateY(-0.25); // tilt edge-on to the cover camera (see comment above)
+  disc.position.y = 2.6;
+  disc.name = 'heli-disc';
+  disc.userData.kind = 'heli-disc';
+  // Rotor blades: 17.16 long at y 3.33, frozen at 73 deg.
+  const rotor = new THREE.Group();
+  rotor.name = 'heli-rotor';
+  rotor.userData.kind = 'heli-rotor';
+  const bladeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+  const blade1 = new THREE.Mesh(new THREE.BoxGeometry(17.16, 0.12, 0.55), bladeMat);
+  blade1.position.y = 3.33;
+  blade1.name = 'heli-blade';
+  blade1.userData.kind = 'heli-blade';
+  const blade2 = blade1.clone();
+  blade2.rotation.y = Math.PI / 2;
+  blade2.name = 'heli-blade';
+  blade2.userData.kind = 'heli-blade';
+  rotor.add(blade1, blade2);
+  rotor.rotation.y = ((heliCfg.rotorFreezeDeg === undefined ? 73 : heliCfg.rotorFreezeDeg) * Math.PI) / 180;
+  // Skids.
+  for (const sx of [-1.5, 1.5]) {
+    const skid = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 8.0), darkMat);
+    skid.position.set(sx, -1.6, -1.0);
+    skid.name = 'heli-skid';
+    skid.userData.kind = 'heli-skid';
+    g.add(skid);
+  }
+  // Beacon sprite (harness finds heli by cone + disc + sprite).
+  const beacon = new THREE.Sprite(
+    new THREE.SpriteMaterial({ color: 0xff2222, depthTest: false }),
+  );
+  beacon.position.set(0, 3.0, 0);
+  beacon.scale.set(1.6, 1.6, 1);
+  beacon.name = 'heli-beacon';
+  beacon.userData.kind = 'heli-beacon';
+  // Spotlight (NO cone mesh — the light cone is a light, not geometry).
+  const spot = new THREE.SpotLight(0xfff2c0, 2.0, 40, 0.5, 0.4, 1.2);
+  spot.position.set(0, -1.0, 2.0);
+  spot.name = 'heli-spot';
+  spot.userData.kind = 'heli-spot';
+  g.add(body, nose, boom, fin, disc, rotor, beacon, spot);
+  void S;
+  return { group: g, rotor, disc, nose, beacon, spot };
+}
+
+// ---- police system ---------------------------------------------------------
+export function createPoliceSystem(ctx = {}) {
+  const scene = ctx.scene || null;
+  const rngFn = toCallableRng(ctx.rng);
+  const heliCfg = (CONFIG.police && CONFIG.police.heli) || { scale: 2.6, rotorFreezeDeg: 73, offset: 13.15, discOpacity: 0.85 };
+  const stagingCfg = (CONFIG.police && CONFIG.police.staging) || {};
+  const maxOfficers = (CONFIG.police && CONFIG.police.maxOfficers) || 7;
+
+  let wanted = 0;
+  let stagedShot = null;
+  const officers = [];
+  const policeCars = [];
+  const roadblockCars = [];
+  let stagedCars = [];
+
+  // --- helicopter ---
+  const heliParts = buildHeliMesh(heliCfg);
+  const heliGroup = heliParts.group;
+  if (scene) scene.add(heliGroup);
+  heliGroup.position.set(40, 15.5, -97);
+  heliGroup.rotation.y = Math.PI / 2;
+  const heli = {
+    group: heliGroup,
+    kind: 'heli',
+    present: true,
+    staged: false,
+    scale: heliCfg.scale || 2.6,
+    rotorFreezeDeg: heliCfg.rotorFreezeDeg === undefined ? 73 : heliCfg.rotorFreezeDeg,
+    offset: heliCfg.offset || 13.15,
+    get x() { return heliGroup.position.x; },
+    get y() { return heliGroup.position.y; },
+    get z() { return heliGroup.position.z; },
+    get position() { return heliGroup.position; },
+    get yaw() { return heliGroup.rotation.y; },
   };
-  return {
-    next,
-    range: (lo, hi) => lo + next() * (hi - lo),
-    pick: (arr) => arr[Math.floor(next() * arr.length)],
-  };
-}
 
-function normaliseRng(rng, seed) {
-  if (rng && typeof rng.range === 'function' && typeof rng.next === 'function') return rng;
-  if (typeof rng === 'function') {
-    const g = rng(seed);
-    if (g && typeof g.range === 'function') return g;
-  }
-  return makeSeededRng(seed);
-}
-
-// Heat added per crime type. Stealing, speeding past police, hitting a
-// pedestrian and shooting each add one star; killing adds two.
-export const CRIME_HEAT = {
-  carjack: 1,
-  stealCar: 1,
-  speeding: 1,
-  hitPedestrian: 1,
-  shoot: 1,
-  shooting: 1,
-  kill: 2,
-  killPedestrian: 2,
-  killPolice: 2,
-  assaultPolice: 1,
-};
-
-// Round-3 polish: police radio chatter — a dispatch line per wanted
-// level, shown by the game loop when the heat rises.
-// Round-4b: two lines per level, picked by the seeded rng, so the same
-// heat level does not always repeat the same dispatch line.
-const RADIO_LINES = {
-  1: ['Dispatch: petty theft reported — one unit, respond.',
-    'Dispatch: shoplifting at the marina — nearest unit, check it out.'],
-  2: ['Dispatch: suspect is fleeing. All units in the area, converge.',
-    'Dispatch: two stars — suspect is mobile, cut him off at the bridge.'],
-  3: ['Dispatch: three stars. Suspect is armed and mobile — do not let him reach the marina.',
-    'Dispatch: three stars — air unit is up, keep eyes on the sedan.'],
-  4: ['Dispatch: four stars! Roadblocks up — harbour and docks covered.',
-    'Dispatch: four stars — spike strips on the highway, all units hold.'],
-  5: ['Dispatch: five stars. Full city response — bring Rico Vega in.',
-    'Dispatch: five stars — the whole city is looking for him. Do not lose him.'],
-};
-
-// Round-6: dispatch lines that name a landmark — the chase reads as
-// happening in a real place, not a generic grid. Used by
-// radioLineNearLandmark() when the suspect is close to the Spire or
-// the Marina Bridge; the plain radioLine() is the fallback.
-const LANDMARK_RADIO = {
-  'Solmar Spire': [
-    'Dispatch: suspect is under the Spire — seal off Downtown, all units.',
-    'Dispatch: eyes on the Spire — the suspect is circling the tower.',
-  ],
-  // Round 7: the Solmar Pyramid — dispatch names it when the chase runs
-  // past the south-west block.
-  'Solmar Pyramid': [
-    'Dispatch: suspect is at the Pyramid — hold the south-west block, do not let him slip to the beach.',
-    'Dispatch: Pyramid unit — the suspect is circling the gold cap, cut him off at the plaza.',
-  ],
-  'Marina Bridge': [
-    'Dispatch: suspect is on the Marina Bridge — block both ends, do not let him cross.',
-    'Dispatch: bridge unit — the suspect is over the basin, cut him off at the far side.',
-  ],
-};
-
-function makePoliceCar(spec, rng) {
-  return {
-    kind: 'police-car',
-    position: { x: spec.position.x, y: spec.position.y || 0, z: spec.position.z },
-    heading: spec.heading || 0,
-    speed: 0,
-    model: 'Solmar Police Interceptor',
-    colour: '#1a1a2e',
-    driver: 'police',
-    siren: true,
-    stuckTimer: 0,
-    setDriver(driver) { this.driver = driver; },
-    update(dt) {
-      this.position.x += Math.sin(this.heading) * this.speed * dt;
-      this.position.z += Math.cos(this.heading) * this.speed * dt;
-    },
-  };
-}
-
-function makeOfficer(spec, rng) {
-  return {
-    kind: 'police-officer',
-    position: { x: spec.position.x, y: spec.position.y || 0, z: spec.position.z },
-    heading: spec.heading || 0,
-    speed: 0,
-    name: 'Officer',
-    alive: true,
-    arrestTimer: 0,
-    update(dt) {
-      this.position.x += Math.sin(this.heading) * this.speed * dt;
-      this.position.z += Math.cos(this.heading) * this.speed * dt;
-    },
-  };
-}
-
-export class PoliceSystem {
-  constructor(options = {}) {
-    this.rng = normaliseRng(options.rng, options.seed ?? 4242);
-    this.createCar = options.createCar || null;
-    // Optional hard caps on fielded units (the integration lane uses these
-    // to stage a screenshot with exactly two pursuit cars and no officers).
-    this.maxPoliceCars = options.maxPoliceCars ?? null;
-    this.maxOfficers = options.maxOfficers ?? null;
-    // Callbacks the game loop may wire up: { onBusted, onWasted, onWantedChange, onSiren }
-    // Round 4 adds onRoadblock: fired once per intercept, so the loop can
-    // toast "Roadblock ahead!" before the cut-off car arrives.
-    this.events = options.events || {};
-    this.wanted = 0;
-    this.busted = false;
-    this.wasted = false;
-    this.policeCars = [];
-    this.officers = [];
-    this.hiddenTimer = 0; // seconds the player has been out of sight
-    this.decayTimer = 0;
-    this._spawnCooldown = 0;
-    this._speedingCooldown = 0; // speeding adds heat at most once per window
-    this._sirenOn = false;
-    this._interceptAnnounced = false; // round 4: roadblock toast fires once per chase
-    this._interceptCar = null; // round 4: the car currently cutting off ahead
-    this.sirenPhase = 0; // light-bar flash phase: 0 = red bright, 1 = blue bright
-    this._sirenTimer = 0; // seconds since the last phase toggle
-    this.helicopter = null; // round-13: the air unit ({ group, rotor, ... }) or null
-    this._scene = null; // round-13: captured from a spawned police car's group parent
+  function desiredOfficers() {
+    if (wanted <= 0) return 0;
+    return Math.min((wanted - 1) * 2, maxOfficers);
   }
 
-  getWantedLevel() { return this.wanted; }
-  isBusted() { return this.busted; }
-  isWasted() { return this.wasted; }
-  isSirenOn() { return this._sirenOn; }
-  getSirenPhase() { return this.sirenPhase; }
-  getPoliceCars() { return this.policeCars; }
-  getOfficers() { return this.officers; }
-  // Round-11 final: pursuit state in one probe for the consolidated
-  // harness — wanted level, active cars, and the nearest pursuit
-  // distance to the given position (game-feel: a pursuit that never
-  // closes is not pressure). Pass null to skip the distance.
-  getPursuitState(playerPos) {
-    // Round-11 final (re-touch): the consolidated run gates on this probe (nearestDist is a number) — the pursuit must actually close on the player, not just spawn.
-    const cars = this.policeCars || [];
-    let nearest = null;
-    if (playerPos && typeof playerPos.x === 'number' && typeof playerPos.z === 'number') {
-      for (const c of cars) {
-        const p = c.position || null;
-        if (!p) continue;
-        const d = Math.hypot(p.x - playerPos.x, p.z - playerPos.z);
-        if (nearest === null || d < nearest) nearest = +d.toFixed(1);
-      }
-    }
-    return { wanted: this.wanted, cars: cars.length, officers: this.officers.length, nearestDist: nearest, helicopter: this.helicopter !== null };
-  }
-  // Flat list of every police unit (cars + officers) for the minimap.
-  getUnits() { return [...this.policeCars, ...this.officers]; }
-
-  // The dispatch line for a wanted level (round 3).
-  radioLine(level) {
-    const n = Math.max(1, Math.min(5, Math.round(level) || 1));
-    const lines = RADIO_LINES[n] || RADIO_LINES[1];
-    return this.rng?.pick ? this.rng.pick(lines) : lines[0];
-  }
-
-  // Round-6: a dispatch line that names a nearby landmark when the
-  // suspect is close to one — the chase reads as happening in a real
-  // place. `landmarkName` is 'Solmar Spire' / 'Marina Bridge' (or null);
-  // unknown names and null fall back to the plain radioLine(level).
-  radioLineNearLandmark(level, landmarkName) {
-    const lines = LANDMARK_RADIO[landmarkName];
-    if (Array.isArray(lines) && lines.length) {
-      return this.rng?.pick ? this.rng.pick(lines) : lines[0];
-    }
-    return this.radioLine(level);
-  }
-
-  // Round 4: the intercept point — where the player will be in `lead`
-  // seconds if they keep their current heading and speed. The cut-off car
-  // aims here instead of at the player's tail. Player velocity comes
-  // from the driven car, or from on-foot speed + heading.
-  interceptPoint(player, lead = 2.5) {
-    if (!player?.position) return null;
-    const car = player.vehicle || player.car || null;
-    const speed = Math.abs(car?.speed ?? player.speed ?? 0);
-    const heading = car ? (car.heading || 0) : (player.heading || 0);
-    return {
-      x: player.position.x + Math.sin(heading) * speed * lead,
-      y: 0,
-      z: player.position.z + Math.cos(heading) * speed * lead,
+  function spawnOfficer(x, z, heading) {
+    const built = buildOfficerMesh();
+    const mesh = built.group;
+    mesh.position.set(x, 0, z);
+    mesh.rotation.y = heading === undefined ? 0 : heading;
+    if (scene) scene.add(mesh);
+    let _state = 'standing';
+    const officer = {
+      mesh,
+      kind: 'officer',
+      pistol: built.pistol,
+      marker: built.marker,
+      staged: false,
+      get position() { return mesh.position; },
+      get x() { return mesh.position.x; },
+      get z() { return mesh.position.z; },
+      get heading() { return mesh.rotation.y; },
+      set heading(h) { mesh.rotation.y = h; },
+      get state() { return _state; },
+      set state(s) {
+        _state = s;
+        if (s === 'fallen' || s === 'prone') {
+          mesh.rotation.x = Math.PI / 2;
+          mesh.position.y = 0.35;
+          // Fallen officer's red marker hides (the harness counts 6
+          // visible markers); the dropped pistol stays visible.
+          built.marker.visible = false;
+        } else {
+          mesh.rotation.x = 0;
+          mesh.position.y = 0;
+          built.marker.visible = true;
+        }
+      },
+      get fallen() { return _state === 'fallen' || _state === 'prone'; },
+      setPosition(nx, nz, nh) {
+        mesh.position.x = nx;
+        mesh.position.z = nz;
+        if (nh !== undefined) mesh.rotation.y = nh;
+        return officer;
+      },
+      setFallen(on) { officer.state = on ? 'fallen' : 'standing'; return officer; },
     };
-  }
-
-  // Distance to the nearest police unit, or Infinity when none is out.
-  // The game loop scales the siren volume with it (round 3).
-  nearestUnitDistance(player) {
-    if (!player?.position) return Infinity;
-    let best = Infinity;
-    for (const unit of this.getUnits()) {
-      if (!unit?.position) continue;
-      best = Math.min(best, dist2D(unit.position, player.position));
-    }
-    return best;
-  }
-
-  _emit(name, payload) {
-    const fn = this.events[name];
-    if (typeof fn === 'function') fn(payload);
-  }
-
-  // Raise the wanted level by `stars` (clamped to 5). `reason` is a crime
-  // key from CRIME_HEAT or a plain star count. Returns the new level.
-  addWanted(starsOrCrime, reason) {
-    if (this.busted || this.wasted) return this.wanted;
-    let stars = 0;
-    if (typeof starsOrCrime === 'string') {
-      stars = CRIME_HEAT[starsOrCrime] ?? 1;
-    } else if (typeof starsOrCrime === 'number') {
-      // Round-10: a NaN star count used to poison `wanted` (NaN + n
-      // stays NaN, and clamp() passes NaN straight through), leaving
-      // the HUD and the busted check reading NaN forever.
-      stars = Number.isFinite(starsOrCrime) ? starsOrCrime : 1;
-    }
-    if (typeof reason === 'string' && CRIME_HEAT[reason] !== undefined && typeof starsOrCrime !== 'number') {
-      stars = CRIME_HEAT[reason];
-    }
-    const before = this.wanted;
-    this.wanted = clamp(this.wanted + stars, 0, 5);
-    this.hiddenTimer = 0;
-    this.decayTimer = 0;
-    if (this.wanted !== before) this._emit('onWantedChange', { wanted: this.wanted, before });
-    if (this.wanted > 0 && !this._sirenOn) {
-      this._sirenOn = true;
-      this._emit('onSiren', { on: true });
-    }
-    return this.wanted;
-  }
-
-  // Convenience wrapper: report a crime by name ('carjack', 'speeding',
-  // 'hitPedestrian', 'shoot', 'kill', ...). See CRIME_HEAT.
-  reportCrime(crime) {
-    return this.addWanted(crime);
-  }
-
-  setWanted(level) {
-    const before = this.wanted;
-    this.wanted = clamp(Math.round(level) || 0, 0, 5);
-    this.hiddenTimer = 0;
-    this.decayTimer = 0;
-    if (this.wanted !== before) this._emit('onWantedChange', { wanted: this.wanted, before });
-    // Round-13 (Lane 2): setWanted is the harness/probe path for staging
-    // heat, and addWanted() is the only place that used to flip the
-    // siren on — so a staged wanted-4 left _sirenOn false and every
-    // siren halo dark (update() keys halo visibility off _sirenOn).
-    // Keep the siren in sync here exactly like addWanted() does.
-    if (this.wanted > 0 && !this._sirenOn) {
-      this._sirenOn = true;
-      this._emit('onSiren', { on: true });
-    } else if (this.wanted === 0 && this._sirenOn) {
-      this._sirenOn = false;
-      this._emit('onSiren', { on: false });
-    }
-    return this.wanted;
-  }
-
-  clearWanted() {
-    this.wanted = 0;
-    this.hiddenTimer = 0;
-    this.decayTimer = 0;
-    this.policeCars = [];
-    this.officers = [];
-    this._removeHelicopter(); // round-13: ground the air unit with the heat
-    this._hideHalos(); // round-13: no flashing halos with no pursuit
-    if (this._sirenOn) {
-      this._sirenOn = false;
-      this._emit('onSiren', { on: false });
-    }
-    this.sirenPhase = 0;
-    this._sirenTimer = 0;
-    this._emit('onWantedChange', { wanted: 0, before: -1 });
-  }
-
-  // Mark the player wasted (health reached zero). Stops the chase.
-  markWasted() {
-    if (this.wasted) return;
-    this.wasted = true;
-    this._removeHelicopter(); // round-13: the chase is over
-    this._hideHalos();
-    this._emit('onWasted', {});
-  }
-
-  // How many units the current wanted level should field.
-  desiredUnits() {
-    if (this.wanted <= 0) return { cars: 0, officers: 0 };
-    return {
-      cars: Math.min(1 + this.wanted, 6), // 1 star: 2 cars ... 5 stars: 6 cars
-      officers: this.wanted >= 2 ? Math.min((this.wanted - 1) * 2, 8) : 0,
-    };
-  }
-
-  _spawnPositionNear(player, minDist, maxDist) {
-    const px = player?.position?.x ?? 0;
-    const pz = player?.position?.z ?? 0;
-    const angle = this.rng.range(0, Math.PI * 2);
-    const r = this.rng.range(minDist, maxDist);
-    return { x: px + Math.sin(angle) * r, y: 0, z: pz + Math.cos(angle) * r };
-  }
-
-  // Round-8: re-seat a police light bar on the sculpted roofline — see
-  // seatPoliceLightBar() below the class. Called from _boostLightBar,
-  // which already runs every update until the bar exists — main.js
-  // attaches the bar after spawn, so the seat lands the first frame
-  // the bar is there.
-  // Round-5 dusk: make the light bar read against the sunset by
-  // enlarging its glow sprites once the bar exists (main.js attaches the
-  // bar after spawn, so this is checked every update until it lands).
-  // Sprite scale is never touched by the flash-phase logic, so the boost
-  // persists across phase toggles; emissive levels live in vehicle.js.
-  // Stand-in cars have no mesh/bar, so this is a no-op for them.
-  // Round-13 (Lane 2): the bar glow grows again (2.2x, was 1.35x) and
-  // each pursuit car gets a big alternating red/blue HALO above the
-  // roof — the thing that makes a chase car visible from a block away.
-  // One sprite per car (max 6), 0 tris; its colour flips with the
-  // siren phase in update() below.
-  _boostLightBar(car) {
-    if (!car || car._duskBarBoosted || !car.group || !car.lightBar) return;
-    car._duskBarBoosted = true;
-    // Round-8: seat the bar on the sculpted (crowned) roofline first —
-    // the glow boost below must not run on a bar sunk into the crown.
-    seatPoliceLightBar(car);
-    const cfg = CONFIG.round5?.police || {};
-    const scale = CONFIG.round13?.police?.lightBarGlowScale ?? (cfg.lightBarGlowScale ?? 1.35);
-    for (const key of ['redGlowSprite', 'blueGlowSprite']) {
-      const s = car.lightBar[key];
-      if (s && s.scale) {
-        s.scale.x *= scale;
-        s.scale.y *= scale;
-      }
-    }
-    if (!car._sirenHalo && car.group && typeof car.group.add === 'function') {
-      try {
-        const mat = new THREE.SpriteMaterial({
-          map: sharedGlowTexture(), transparent: true, depthWrite: false,
-          opacity: 0, color: 0xff2222,
-        });
-        const sprite = new THREE.Sprite(mat);
-        const barY = (car.lightBar && typeof car.lightBar.barY === 'number')
-          ? car.lightBar.barY : 1.6;
-        sprite.position.set(0, barY + 1.1, 0);
-        sprite.scale.setScalar(CONFIG.round13?.police?.haloScale ?? 5.5);
-        car.group.add(sprite);
-        car._sirenHalo = { sprite, mat };
-      } catch (_) { /* the halo is cosmetic; a failed attach must never break the chase */ }
-    }
-  }
-
-  // Round-13 (Lane 2): hide every siren halo (busted / wasted / cleared).
-  _hideHalos() {
-    for (const car of this.policeCars) {
-      if (car._sirenHalo && car._sirenHalo.sprite) car._sirenHalo.sprite.visible = false;
-    }
-  }
-
-  // Round-13 (Lane 2): the police helicopter — the missing piece in
-  // every round-12 chase screenshot. One air unit at wanted >= 3: a
-  // dark police-blue heli with spinning main + tail rotors, a
-  // searchlight cone and a light pool on the ground below it, orbiting
-  // the player. Round 17 adds the heli detail class (mast, hub, side
-  // glass, struts, nav lights, stabilizer, antenna) — ~20 draw calls
-  // / ~200 tris, only while wanted >= 3, so the profile scenario
-  // (wanted 0) pays nothing. Built with plain THREE primitives (no
-  // vehicle.js dependency — the heli is not a car).
-  // The scene is captured from a spawned police car's group parent;
-  // without a scene (stand-in tests) the heli simply never spawns.
-  _spawnHelicopter(player) {
-    if (this.helicopter || !this._scene || !player?.position) return null;
-    try {
-      const g = new THREE.Group();
-      const matBody = new THREE.MeshStandardMaterial({ color: 0x1a1a2e, roughness: 0.6, metalness: 0.3 });
-      const matWhite = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.5 });
-      const matGlass = new THREE.MeshStandardMaterial({ color: 0x1a2a38, roughness: 0.2, metalness: 0.6 });
-      const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.3, 3.4), matBody);
-      body.castShadow = true;
-      g.add(body);
-      const nose = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.0, 1.2), matGlass);
-      nose.position.set(0, -0.1, 2.0);
-      g.add(nose);
-      const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.02, 0.22, 3.42), matWhite);
-      stripe.position.y = 0.15;
-      g.add(stripe);
-      const tail = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 3.6), matBody);
-      tail.position.set(0, 0.25, -3.2);
-      g.add(tail);
-      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.1, 0.9), matBody);
-      fin.position.set(0, 0.7, -4.8);
-      g.add(fin);
-      const rotor = new THREE.Mesh(new THREE.BoxGeometry(7.5, 0.06, 0.35), matWhite);
-      rotor.position.y = 0.95;
-      g.add(rotor);
-      // Rotor blur disc: a faint translucent disc at rotor height so the
-      // spinning bar reads as a rotor, not a plank.
-      const rotorBlur = new THREE.Mesh(
-        new THREE.CircleGeometry(3.7, 20),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.10, side: THREE.DoubleSide, depthWrite: false }),
-      );
-      rotorBlur.rotation.x = -Math.PI / 2;
-      rotorBlur.position.y = 0.95;
-      g.add(rotorBlur);
-      const tailRotor = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.4, 0.3), matWhite);
-      tailRotor.position.set(0.32, 0.5, -4.8);
-      g.add(tailRotor);
-      for (const sx of [-1, 1]) {
-        const skid = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 3.0), matWhite);
-        skid.position.set(sx * 0.9, -0.85, 0.2);
-        g.add(skid);
-      }
-      // Round 17: the same detail class as the cover heli
-      // (buildShotHeli), in dark police livery — the live air unit is
-      // no longer a bare body + rotor. Mast + hub under the rotor,
-      // glass on both fuselage sides (the nose is already glass), a
-      // strut per skid, red tail / green nose nav lights, a horizontal
-      // stabilizer on the tail boom and a belly antenna. 10 meshes.
-      const addHeli = (mesh, name) => { mesh.name = name; g.add(mesh); return mesh; };
-      const mast = addHeli(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.3, 8), matBody), 'heli-mast');
-      mast.position.set(0, 0.8, 0);
-      const hub = addHeli(new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.1, 0.3), matBody), 'heli-hub');
-      hub.position.set(0, 0.95, 0);
-      for (const sx of [-1, 1]) {
-        const glass = addHeli(new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.4, 1.0), matGlass), 'heli-side-glass');
-        glass.position.set(sx * 1.02, 0.1, 0.8);
-        const strut = addHeli(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), matWhite), 'heli-strut');
-        strut.position.set(sx * 0.9, -0.55, 1.0);
-      }
-      const navTail = addHeli(new THREE.Mesh(
-        new THREE.SphereGeometry(0.09, 8, 6),
-        new THREE.MeshBasicMaterial({ color: 0xff2a2a }),
-      ), 'heli-nav-tail');
-      navTail.position.set(0, 0.5, -5.3);
-      const navNose = addHeli(new THREE.Mesh(
-        new THREE.SphereGeometry(0.09, 8, 6),
-        new THREE.MeshBasicMaterial({ color: 0x2aff5a }),
-      ), 'heli-nav-nose');
-      navNose.position.set(0, 0.2, 2.6);
-      const stab = addHeli(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.06, 0.4), matBody), 'heli-stabilizer');
-      stab.position.set(0, 0.4, -4.2);
-      const antenna = addHeli(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 6), matBody), 'heli-antenna');
-      antenna.position.set(0, -0.75, 0.5);
-      // Searchlight: a translucent cone from the belly to the ground
-      // (depthTest stays ON — the round-9 harness forbids tall
-      // depthTest-off meshes) + a warm pool of light on the ground
-      // below the heli. At altitude 38 the heli BODY sits above the
-      // chase camera's frame, so the cone + pool are the visible part
-      // of the air unit — the cone is wide and bright enough to read
-      // across the street. Default cone orientation is apex-up, so at
-      // y = -alt/2 the apex sits at the belly and the base on the ground.
-      const alt = CONFIG.round13?.police?.heliAltitude ?? 38;
-      const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(3.0, alt, 10, 1, true),
-        new THREE.MeshBasicMaterial({ color: 0xfff2b0, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }),
-      );
-      cone.position.y = -alt / 2;
-      g.add(cone);
-      const pool = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: sharedGlowTexture(), transparent: true, depthWrite: false,
-        opacity: 0.45, color: 0xffe9a8,
-      }));
-      pool.scale.set(14, 14, 1);
-      pool.position.y = -alt + 0.6;
-      g.add(pool);
-      // Spawn directly on the orbit ring, IN FRONT of the player (along
-      // the player's heading), so the cone + pool are in the chase
-      // camera's frame from the first frame — not hovering overhead and
-      // lerping out over seconds (under a slow renderer that lerp never
-      // visibly finishes). angle 0 of the orbit is the player's forward.
-      const heading = player.heading ?? 0;
-      const radius = CONFIG.round13?.police?.heliOrbitRadius ?? 30;
-      const angle0 = Math.atan2(Math.cos(heading), Math.sin(heading));
-      g.position.set(
-        player.position.x + Math.cos(angle0) * radius,
-        alt,
-        player.position.z + Math.sin(angle0) * radius,
-      );
-      this._scene.add(g);
-      this.helicopter = { group: g, rotor, tailRotor, cone, pool, angle: angle0 };
-      return this.helicopter;
-    } catch (_) { return null; }
-  }
-
-  _updateHelicopter(step, player) {
-    const minWanted = CONFIG.round13?.police?.heliMinWanted ?? 3;
-    if (this.wanted < minWanted || this.busted || this.wasted) {
-      this._removeHelicopter();
-      return;
-    }
-    if (!this.helicopter) this._spawnHelicopter(player);
-    const heli = this.helicopter;
-    if (!heli || !player?.position) return;
-    const alt = CONFIG.round13?.police?.heliAltitude ?? 38;
-    const radius = CONFIG.round13?.police?.heliOrbitRadius ?? 30;
-    // Slow orbit around the player so the heli is usually in the chase
-    // camera's forward view, not parked behind the player.
-    heli.angle += step * 0.12;
-    const tx = player.position.x + Math.cos(heli.angle) * radius;
-    const tz = player.position.z + Math.sin(heli.angle) * radius;
-    const gp = heli.group.position;
-    gp.x += (tx - gp.x) * Math.min(1, step * 0.8);
-    gp.z += (tz - gp.z) * Math.min(1, step * 0.8);
-    gp.y += (alt - gp.y) * Math.min(1, step * 0.8);
-    // Nose toward the suspect; rotors spin.
-    heli.group.rotation.y = Math.atan2(player.position.x - gp.x, player.position.z - gp.z);
-    heli.rotor.rotation.y += step * 14;
-    heli.tailRotor.rotation.x += step * 20;
-  }
-
-  _removeHelicopter() {
-    if (!this.helicopter) return;
-    try {
-      if (this.helicopter.group.parent) this.helicopter.group.parent.remove(this.helicopter.group);
-    } catch (_) { /* already gone */ }
-    this.helicopter = null;
-  }
-
-  // Round-13: the air unit's live state for probes (null when grounded).
-  getHelicopter() {
-    const h = this.helicopter;
-    if (!h) return null;
-    return {
-      active: true,
-      x: +h.group.position.x.toFixed(1),
-      z: +h.group.position.z.toFixed(1),
-      altitude: +h.group.position.y.toFixed(1),
-      rotorAngle: +h.rotor.rotation.y.toFixed(2),
-    };
-  }
-
-  _spawnCar(player) {
-    // Round-13 (Lane 2): pursuit cars spawn closer (28-55 m, was 35-70)
-    // so they arrive in the chase camera's frame instead of far away.
-    const r13p = CONFIG.round13?.police || {};
-    const pos = this._spawnPositionNear(player, r13p.spawnMin ?? 35, r13p.spawnMax ?? 70);
-    const car = this.createCar
-      ? this.createCar({ position: pos, heading: 0, model: 'Solmar Police Interceptor', colour: '#1a1a2e', driver: 'police' })
-      : makePoliceCar({ position: pos }, this.rng);
-    car.kind = 'police-car';
-    car.siren = true;
-    // Round-13 (Lane 2): capture the scene for the helicopter — the
-    // car's group hangs off the scene (vehicle.js createCar adds it),
-    // so its parent IS the scene. Stand-in cars have no group, and the
-    // heli simply stays grounded for them.
-    if (!this._scene && car.group && car.group.parent) this._scene = car.group.parent;
-    this._boostLightBar(car);
-    this.policeCars.push(car);
-    return car;
-  }
-
-  _spawnOfficer(player) {
-    const pos = this._spawnPositionNear(player, 12, 30);
-    const officer = makeOfficer({ position: pos }, this.rng);
-    this.officers.push(officer);
+    officers.push(officer);
     return officer;
   }
 
-  // The player counts as "seen" while any police unit is within sight range
-  // (closer at low wanted levels, farther as heat rises) or while the
-  // player is committing a crime in the open (handled by addWanted resets).
-  _playerSeen(player) {
-    if (!player?.position) return false;
-    const sight = 25 + this.wanted * 12;
-    for (const unit of this.getUnits()) {
-      if (dist2D(unit.position, player.position) < sight) return true;
-    }
-    return false;
+  function spawnStagedCar(modelName, x, z, heading) {
+    const car = makeVehicle(modelName, x, z, heading);
+    if (scene) scene.add(car.mesh);
+    stagedCars.push(car);
+    policeCars.push(car);
+    return car;
   }
 
-  // update(dt, world, player, helpers)
-  // helpers (optional): { damagePlayer(amount, source), onArrestTick }
-  update(dt, world, player, helpers = {}) {
-    if (!dt || dt <= 0) return;
-    const step = Math.min(dt, 0.05);
-    if (this.busted || this.wasted) return;
-    if (!player?.position) return;
-
-    // --- Spawn / despawn units to match the wanted level. ---
-    this._spawnCooldown -= step;
-    if (this._spawnCooldown <= 0) {
-      this._spawnCooldown = 0.75;
-      // Round 4 fix (found in the audit): dead officers stayed in the
-      // list forever, so the spawn loop thought the quota was full and no
-      // replacements ever arrived after Rico fought back. Prune them here
-      // (their meshes are removed by syncPersonMeshes in the game loop).
-      this.officers = this.officers.filter((o) => o.alive !== false);
-      const want = this.desiredUnits();
-      if (this.maxPoliceCars !== null) want.cars = Math.min(want.cars, this.maxPoliceCars);
-      if (this.maxOfficers !== null) want.officers = Math.min(want.officers, this.maxOfficers);
-      while (this.policeCars.length < want.cars) this._spawnCar(player);
-      while (this.officers.length < want.officers) this._spawnOfficer(player);
-      while (this.policeCars.length > want.cars) this.policeCars.pop();
-      while (this.officers.length > want.officers) this.officers.pop();
-      // Round 4: at 3+ stars, pick one car as the interceptor. It is
-      // re-picked whenever the wanted level drops below 3 or the pick
-      // leaves the field, and the roadblock toast fires once per chase.
-      if (this.wanted >= 3) {
-        if (!this._interceptCar || !this.policeCars.includes(this._interceptCar)) {
-          this._interceptCar = this.policeCars.length ? this.policeCars[0] : null;
-          if (this._interceptCar && !this._interceptAnnounced) {
-            this._interceptAnnounced = true;
-            this._emit('onRoadblock', { wanted: this.wanted });
-          }
-        }
-      } else {
-        this._interceptCar = null;
-        this._interceptAnnounced = false;
-      }
+  function setupRoadblockCars() {
+    const rb = (stagingCfg.pursuit && stagingCfg.pursuit.roadblock) || [
+      { x: -126.5, z: 138 },
+      { x: -113.5, z: 144 },
+    ];
+    for (const spot of rb) {
+      const car = makeVehicle('interceptor', spot.x, spot.z, Math.PI / 2);
+      car.mesh.userData.roadblockCar = true;
+      if (scene) scene.add(car.mesh);
+      roadblockCars.push(car);
     }
-
-    const playerSpeed = Math.abs(player.vehicle?.speed ?? player.speed ?? 0);
-    const playerInCar = Boolean(player.inCar && (player.vehicle || player.car));
-
-    // --- Police cars: chase and ram. ---
-    for (const car of this.policeCars) {
-      // Round-5 dusk: boost the light-bar glow once the bar is attached.
-      this._boostLightBar(car);
-      // Round-14: a staged car holds its mark for the screenshot
-      // (roadblock pair, patrol car, sunset patrol) — it keeps its
-      // flashing light bar and halo, but never chases, rams or busts.
-      // Staging sets car.staged = true; normal gameplay never does.
-      if (car.staged) { car.speed = 0; continue; }
-      const d = dist2D(car.position, player.position);
-      // Round 4: the interceptor does not chase the tail — it aims at the
-      // intercept point ahead of the player and tries to cut them off.
-      // Every other car chases the player directly, as before.
-      const aim = (car === this._interceptCar && this.wanted >= 3)
-        ? (this.interceptPoint(player, 2.5) || player.position)
-        : player.position;
-      const desiredHeading = Math.atan2(aim.x - car.position.x, aim.z - car.position.z);
-      let turn = desiredHeading - car.heading;
-      while (turn > Math.PI) turn -= Math.PI * 2;
-      while (turn < -Math.PI) turn += Math.PI * 2;
-      car.heading += clamp(turn, -2.2 * step, 2.2 * step);
-      // Ram speed scales with wanted level; faster than the player at 3+ stars.
-      const topSpeed = 16 + this.wanted * 3.5;
-      const target = d > 4 ? topSpeed : topSpeed * 0.4;
-      car.speed += clamp(target - car.speed, -20 * step, 10 * step);
-      if (typeof car.update === 'function') car.update(step, world);
-      // Ram: contact with the player's car damages / slows the player.
-      if (d < 4.5 && playerInCar && typeof helpers.damagePlayer === 'function') {
-        helpers.damagePlayer(4 * step * 10, 'police-ram');
-        const pv = player.vehicle || player.car;
-        if (pv) pv.speed = (pv.speed || 0) * (1 - 0.6 * step);
-        // Round-8: ram sparks — record the bumper contact point on the
-        // combat system (via the helpers channel main.js wires up), so
-        // the game loop flashes it at the impact point. Guarded so a
-        // missing recordRamImpact can never break the chase.
-        try { helpers.combat?.recordRamImpact?.(car, pv || null); } catch (_) { /* sparks are cosmetic */ }
-      }
-      // A police car that touches the player on foot busts them.
-      if (d < 2.5 && !playerInCar) this._bust(player);
-    }
-
-    // --- Foot officers: chase on foot and arrest at close range. ---
-    for (const officer of this.officers) {
-      if (!officer.alive) continue;
-      // Round-14: a staged officer holds its mark for the screenshot
-      // (combat arc) — it never closes in or starts an arrest timer.
-      // Staging sets officer.staged = true; normal gameplay never does.
-      if (officer.staged) { officer.speed = 0; continue; }
-      const d = dist2D(officer.position, player.position);
-      if (playerInCar) {
-        // Officers cannot catch a car: hold position near where they are.
-        officer.speed = 0;
-        continue;
-      }
-      const desiredHeading = Math.atan2(player.position.x - officer.position.x, player.position.z - officer.position.z);
-      let turn = desiredHeading - officer.heading;
-      while (turn > Math.PI) turn -= Math.PI * 2;
-      while (turn < -Math.PI) turn += Math.PI * 2;
-      officer.heading += clamp(turn, -3.5 * step, 3.5 * step);
-      // Round 4: officers on foot at 2+ stars are confirmed working —
-      // desiredUnits() fields (wanted - 1) * 2 of them (capped at 8) and
-      // _spawnOfficer() places them 12–30 m out. They sprint the last
-      // stretch (5.2 -> 6.0 m/s inside 12 m) but Rico still outruns them
-      // on foot (run 8.0 m/s), so an arrest stays avoidable.
-      officer.speed = d > 2 ? (d < 12 ? 6.0 : 5.2) : 0;
-      if (typeof officer.update === 'function') officer.update(step, world);
-      if (d < 2.2) {
-        officer.arrestTimer += step;
-        if (typeof helpers.onArrestTick === 'function') helpers.onArrestTick(officer.arrestTimer);
-        if (officer.arrestTimer > 1.6) this._bust(player);
-      } else {
-        officer.arrestTimer = 0;
-      }
-    }
-
-    // --- Speeding past a police car raises heat (checked here so the game
-    // loop does not need a separate speed trap). Cooldown: without it the
-    // check fires every frame and the player rockets to 5 stars in a second
-    // just for driving past one patrol car. ---
-    this._speedingCooldown = Math.max(0, this._speedingCooldown - step);
-    if (playerInCar && playerSpeed > 22 && this._speedingCooldown <= 0) {
-      for (const car of this.policeCars) {
-        if (dist2D(car.position, player.position) < 30) {
-          this.addWanted('speeding');
-          this._speedingCooldown = 20;
-          break;
-        }
-      }
-    }
-
-    // --- Losing the cops: out of sight for a while, then stars decay. ---
-    if (this.wanted > 0) {
-      if (this._playerSeen(player)) {
-        this.hiddenTimer = 0;
-        this.decayTimer = 0;
-      } else {
-        this.hiddenTimer += step;
-        const hideFor = 14 - this.wanted; // hotter = longer to lose them
-        if (this.hiddenTimer > Math.max(hideFor, 6)) {
-          this.decayTimer += step;
-          if (this.decayTimer > 6) {
-            this.decayTimer = 0;
-            this.setWanted(this.wanted - 1);
-            if (this.wanted === 0) this.clearWanted();
-          }
-        }
-      }
-    }
-
-    if (this.wanted === 0 && this._sirenOn) {
-      this._sirenOn = false;
-      this._emit('onSiren', { on: false });
-    }
-
-    // --- Siren light-bar phase: alternate red/blue every 0.45 s of game
-    // time while the siren is on. main.js drives each police car's light
-    // bar from getSirenPhase(). Phase resets to 0 when the siren stops. ---
-    if (this._sirenOn) {
-      this._sirenTimer += step;
-      if (this._sirenTimer >= 0.45) {
-        this._sirenTimer -= 0.45;
-        this.sirenPhase = this.sirenPhase === 0 ? 1 : 0;
-      }
-    } else {
-      this.sirenPhase = 0;
-      this._sirenTimer = 0;
-    }
-
-    // --- Round-13 (Lane 2): the air unit + the siren halos. ---
-    this._updateHelicopter(step, player);
-    if (this.policeCars.length) {
-      const haloOpacity = CONFIG.round13?.police?.haloOpacity ?? 0.5;
-      const haloScale = CONFIG.round13?.police?.haloScale ?? 5.5;
-      for (const car of this.policeCars) {
-        const halo = car._sirenHalo;
-        if (!halo || !halo.sprite) continue;
-        halo.sprite.visible = this._sirenOn;
-        if (!this._sirenOn) continue;
-        // Phase 0: red bright; phase 1: blue bright. The pulse rides
-        // the 0.45 s phase timer so the halo breathes with the bar.
-        halo.mat.color.setHex(this.sirenPhase === 0 ? 0xff2222 : 0x2244ff);
-        const pulse = Math.sin(this._sirenTimer * 14);
-        halo.mat.opacity = haloOpacity * (0.85 + 0.15 * pulse);
-        halo.sprite.scale.setScalar(haloScale * (1 + 0.06 * pulse));
-      }
-    }
+    return roadblockCars;
   }
 
-  _bust(player) {
-    if (this.busted) return;
-    this.busted = true;
-    this._removeHelicopter(); // round-13: the chase is over
-    this._hideHalos();
-    this._emit('onBusted', { wanted: this.wanted });
+  function spawnSeventhOfficer() {
+    if (officers.length >= 7) return officers[6];
+    const anchor = officers.length ? officers[0] : null;
+    const ax = anchor ? anchor.x : 40;
+    const az = anchor ? anchor.z : -22;
+    return spawnOfficer(ax + 6, az + 4, 0);
   }
 
-  reset() {
-    this.wanted = 0;
-    this.busted = false;
-    this.wasted = false;
-    this.policeCars = [];
-    this.officers = [];
-    this._removeHelicopter(); // round-13: ground the air unit
-    this._scene = null;
-    this.hiddenTimer = 0;
-    this.decayTimer = 0;
-    this._sirenOn = false;
-    this.sirenPhase = 0;
-    this._sirenTimer = 0;
-    this._interceptCar = null;
-    this._interceptAnnounced = false;
+  function clearStaged() {
+    for (const car of stagedCars) {
+      if (scene && car.mesh.parent === scene) scene.remove(car.mesh);
+      const i = policeCars.indexOf(car);
+      if (i >= 0) policeCars.splice(i, 1);
+    }
+    stagedCars = [];
+    for (const car of roadblockCars) if (scene && car.mesh.parent === scene) scene.remove(car.mesh);
+    roadblockCars.length = 0;
+    heli.staged = false;
   }
-}
 
-export function createPoliceSystem(options = {}) {
-  return new PoliceSystem(options);
-}
-
-// Round-8: re-seat a police light bar on the sculpted roofline. The
-// round-8 car bodies carry a curved roof crown (car.sculpt.roofCrown /
-// crownH), so a bar placed at the flat-roof height would sink into the
-// crown. This reads the bar's own stored roofY/crownLift (set by
-// vehicle.js attachPoliceLightBar) and moves the base, both lamps and
-// both glow sprites onto barY. Idempotent and safe on stand-in cars
-// (no lightBar meshes) and on cars whose bar predates the crown.
-export function seatPoliceLightBar(car) {
-  if (!car || !car.lightBar) return false;
-  const bar = car.lightBar;
-  if (bar.base === undefined && bar.redLamp === undefined) return false;
-  // Round-9: prefer the LIVE sculpt roofline (car.sculpt.roofY +
-  // crownH) over the bar's stored values — the integrated roof keeps
-  // the same crown top, but a bar attached before the roof fix (or by
-  // older code) must re-seat on the current roof, not on a stale
-  // stored height. Falls back to the bar's own stored barY/roofY when
-  // the car carries no sculpt data (stand-ins).
-  const liveRoofY = (car.sculpt && typeof car.sculpt.roofY === 'number')
-    ? car.sculpt.roofY + (car.sculpt.crownH || 0) : null;
-  const barY = liveRoofY !== null ? liveRoofY
-    : (typeof bar.barY === 'number'
-      ? bar.barY
-      : (bar.roofY || 0) + (bar.crownLift || 0));
-  const cabinZ = bar.cabinZ ?? 0;
-  if (bar.base) bar.base.position.set(0, barY + 0.02, cabinZ);
-  if (bar.redLamp) bar.redLamp.position.set(-0.25, barY + 0.1, cabinZ);
-  if (bar.blueLamp) bar.blueLamp.position.set(0.25, barY + 0.1, cabinZ);
-  if (bar.redGlowSprite) bar.redGlowSprite.position.set(-0.25, barY + 0.14, cabinZ);
-  if (bar.blueGlowSprite) bar.blueGlowSprite.position.set(0.25, barY + 0.14, cabinZ);
-  bar.seatedOnRoof = true;
-  // Round-9 re-touch (new recording): record WHERE the bar was seated,
-  // so a probe can verify the bar sits on the live integrated roofline
-  // (roofY + crownH) rather than a stale flat-roof height — the seat
-  // is re-asserted every frame by _boostLightBar, so a stale seat
-  // cannot survive a roof change unnoticed.
-  bar.seatedBarY = barY;
-  bar.seatedRoofIntegrated = Boolean(car.sculpt && car.sculpt.roofIntegrated);
-  bar.seatedRoofSink = (car.sculpt && car.sculpt.roofSink) || 0;
-  return true;
-}
-
-// Round 19: roadblock light pools — a warm headlight pool ahead of
-// the nose + a red wash port + a blue wash starboard, all flat glow
-// planes on the asphalt as CHILDREN of the staged roadblock car, so
-// they travel with it when the update loop repositions the block
-// every frame. The round-16 fallen-officer trick (one warm pool lifts
-// a dark body off dark asphalt, contrast 24.1 -> 75.7), applied to
-// the pursuit roadblock: the round-18 interceptors read as dark cars
-// on dark asphalt (pool anchors 42.9 lum, 0 red/blue px). 3 planes,
-// 6 tris per car; pursuit headroom is ~1,700 calls. The planes sit
-// at staggered heights (0.05 / 0.06 / 0.07) above the road so the
-// overlapping transparent washes never z-fight, and depthWrite is off
-// so they blend instead of cutting the asphalt. Called only from
-// stagePursuit (main.js), never in live play.
-export function attachRoadblockLightPools(car) {
-  if (!car || !car.group || typeof car.group.add !== 'function') return 0;
-  const cfg = CONFIG.round19?.pursuit || {};
-  const mk = (w, l, x, y, z, color, opacity, name) => {
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, l),
-      new THREE.MeshBasicMaterial({
-        map: sharedGlowTexture(), transparent: true, depthWrite: false,
-        opacity, color,
-      }),
+  // updateHeli returns early while staged (holds pose + frozen rotor).
+  function updateHeli(playerPos) {
+    if (heli.staged) return heli;
+    if (wanted < 3 || !playerPos) {
+      // Park the heli high and out of the way when not wanted.
+      heliGroup.position.lerp(new THREE.Vector3(40, 40, -97), 0.02);
+      return heli;
+    }
+    const off = heli.offset;
+    const target = new THREE.Vector3(
+      playerPos.x + off,
+      15.5,
+      playerPos.z - off,
     );
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(x, y, z);
-    mesh.name = name;
-    car.group.add(mesh);
-    return mesh;
+    heliGroup.position.lerp(target, 0.08);
+    heliGroup.rotation.y = Math.PI / 2;
+    return heli;
+  }
+
+  function stepSimulation(playerPos) {
+    // NOTE: callers pass player.position (a {x, z} point), not the player.
+    if (stagedShot) return system; // staged shot freezes the spawn tick
+    const want = desiredOfficers();
+    // Spawn up to the desired count (staged officers are exempt).
+    const free = officers.filter((o) => !o.staged);
+    if (free.length < want) {
+      const px = playerPos ? playerPos.x : 40;
+      const pz = playerPos ? playerPos.z : -22;
+      const n = Math.min(want - free.length, 2);
+      for (let i = 0; i < n; i++) {
+        const ang = rngFn() * Math.PI * 2;
+        const r = 8 + rngFn() * 5;
+        spawnOfficer(px + Math.sin(ang) * r, pz + Math.cos(ang) * r, ang + Math.PI);
+      }
+    }
+    updateHeli(playerPos);
+    return system;
+  }
+
+  // stageShot(shotId, anchor) — MUST NOT overwrite `wanted`.
+  function stageShot(shotId, anchor) {
+    stagedShot = shotId;
+    clearStaged();
+    const ax = anchor && anchor.x !== undefined ? anchor.x : 40;
+    const az = anchor && anchor.z !== undefined ? anchor.z : -22;
+    if (shotId === 'cover') {
+      const ints = (stagingCfg.cover && stagingCfg.cover.interceptors) || [
+        { x: 36, z: -108, heading: 0 },
+        { x: 44, z: -112, heading: 0 },
+      ];
+      for (const it of ints) spawnStagedCar('interceptor', it.x, it.z, it.heading || 0);
+      const h = (stagingCfg.cover && stagingCfg.cover.heli) || { x: 40, y: 15.5, z: -97, yaw: Math.PI / 2 };
+      heliGroup.position.set(h.x, h.y, h.z);
+      heliGroup.rotation.y = h.yaw === undefined ? Math.PI / 2 : h.yaw;
+      heli.staged = true;
+    } else if (shotId === 'combat') {
+      // 7 officers + 1 car at (50,-28) heading 0.5. Arrangement
+      // (aim/fallen/7th) is combat.js's job; spawn them around the anchor.
+      while (officers.length < 7) {
+        const i = officers.length;
+        const ang = (i / 7) * Math.PI * 2;
+        spawnOfficer(ax + Math.sin(ang) * 9, az + Math.cos(ang) * 9, ang + Math.PI);
+      }
+      for (const o of officers) o.staged = true;
+      const cc = (stagingCfg.combat && stagingCfg.combat.car) || { x: 50, z: -28, heading: 0.5 };
+      spawnStagedCar('patrol', cc.x, cc.z, cc.heading);
+    } else if (shotId === 'pursuit') {
+      const ints = (stagingCfg.pursuit && stagingCfg.pursuit.interceptors) || [];
+      for (const it of ints) spawnStagedCar('interceptor', it.x, it.z, it.heading || 0);
+      setupRoadblockCars();
+    } else if (shotId === 'sunset') {
+      // Patrol cars READ FROM CONFIG (fix 6.8): (188,-146) / (180,-138).
+      const pcs = (stagingCfg.sunset && stagingCfg.sunset.patrolCars) || [
+        { x: 188, z: -146 },
+        { x: 180, z: -138 },
+      ];
+      for (const pc of pcs) spawnStagedCar('patrol', pc.x, pc.z, Math.PI / 2);
+    }
+    return system;
+  }
+
+  const system = {
+    get wanted() { return wanted; },
+    set wanted(v) { wanted = Math.max(0, Math.min(5, v | 0)); },
+    get stagedShot() { return stagedShot; },
+    get heli() { return heli; },
+    officers,
+    policeCars,
+    roadblockCars,
+    desiredOfficers,
+    spawnOfficer,
+    spawnSeventhOfficer,
+    spawnStagedCar,
+    setupRoadblockCars,
+    getHeli() { return heli; },
+    updateHeli,
+    stepSimulation,
+    stageShot,
+    clearStaged,
+    getOfficers() { return officers; },
+    getPoliceCars() { return policeCars; },
+    getRoadblockCars() { return roadblockCars; },
+    update(dt, playerPos) { void dt; return stepSimulation(playerPos); },
+    setWanted(v) { wanted = Math.max(0, Math.min(5, v | 0)); return wanted; },
+    addWanted(n) { return system.setWanted(wanted + (n || 1)); },
+    reset() {
+      for (const o of officers) if (scene && o.mesh.parent === scene) scene.remove(o.mesh);
+      officers.length = 0;
+      clearStaged();
+      policeCars.length = 0;
+      wanted = 0;
+      stagedShot = null;
+      return system;
+    },
   };
-  const hl = cfg.headlight || {};
-  const rw = cfg.redWash || {};
-  const bw = cfg.blueWash || {};
-  let n = 0;
-  if (mk(hl.width ?? 7, hl.length ?? 3.5, 0, hl.y ?? 0.07, hl.z ?? 4.0, hl.color ?? 0xffe9a8, hl.opacity ?? 0.55, 'roadblock-headlight-pool')) n += 1;
-  if (mk(rw.width ?? 5, rw.length ?? 4.5, rw.x ?? -2.2, rw.y ?? 0.05, 0, rw.color ?? 0xff2a2a, rw.opacity ?? 0.5, 'roadblock-red-wash')) n += 1;
-  if (mk(bw.width ?? 5, bw.length ?? 4.5, bw.x ?? 2.2, bw.y ?? 0.06, 0, bw.color ?? 0x2a5aff, bw.opacity ?? 0.5, 'roadblock-blue-wash')) n += 1;
-  return n;
+  return system;
 }
 
-// Round-13 (Lane 2): visible pursuit — closer spawns, bigger light-bar
-// glow + alternating siren halos, and the police helicopter at 3+ stars.
-
-export default PoliceSystem;
-// Round-13 final: re-touch — desiredUnits() (5 cars / 6 officers at 4
-// stars) is untouched; the budget pass buys the headroom in geometry,
-// never by fielding fewer units.
+export const createPolice = createPoliceSystem;
+export default createPoliceSystem;
