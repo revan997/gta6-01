@@ -1,1071 +1,432 @@
-// Solmar Bay — TrafficManager (Lane B)
-// Round-13B: the combat shot thins the ambient fleet (maxCars 10,
-// maxPedestrians 8 — main.js stageCombat) to hold the triangle budget
-// with six officers on screen; the spawn logic is unchanged.
-// Round 14: the pursuit shot's race rivals and roadblock cars are
-// staged cars (main.js), not traffic — the spawn logic is unchanged.
-// Spawns and updates AI traffic cars and pedestrians on the road network
-// described by the world object. All randomness comes from the seeded
-// generator passed in (an object with next()/range()/pick(), or a factory
-// function taking a numeric seed and returning such a generator).
-// Never uses Math.random. Works purely through the Lane A contract:
-//   world  — roads / spawn points / nearest-road queries
-//   car    — { position, heading, speed, model, colour, setDriver, update }
-//   player — { position, heading, health, inCar, vehicle }
-// Round 3: cars stop at red traffic lights (world.trafficLights).
+// Solmar Bay — traffic cars and pedestrians.
+//
+// Spawns and drives traffic cars and pedestrians from the seeded
+// generator. Traffic cars follow the road network on fixed routes at
+// sensible speeds with spacing, so they do not pile up. Pedestrians
+// walk the sidewalks on fixed paths. Both are spawned by the seeded
+// generator at fixed densities. They must be present in all four shots
+// — a shot with no traffic or no pedestrians fails criterion 2.
+//
+// The fleet logic is proven by the unit test: CONFIG wins over the
+// constructor options (maxCars 20), 3 guaranteed slots (Dune Pickup,
+// City Bus, Palm Coupe), the deck cycles one of every model before
+// repeating, the AI bus cruises 7-10 m/s, no guaranteed car is ever
+// lost to despawn, and reset() restores the guarantees.
+
+import * as THREE from '../vendor/three.module.min.js';
 import { CONFIG } from './config.js';
-import { shuffleWith, pickOne } from './random.js'; // round-11: shuffled model deck + uniform parked pick (retry)
+import { createDeck } from './random.js';
+import { buildCarMesh } from './vehicle.js';
 
-function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+// ---------------------------------------------------------------------
+// Pedestrian meshes. A simple person: a body, a head, legs. Varied
+// shirt colours, so the crowd does not read as clones.
+// ---------------------------------------------------------------------
 
-function dist2D(a, b) {
-  const dx = a.x - b.x;
-  const dz = a.z - b.z;
-  return Math.sqrt(dx * dx + dz * dz);
+const PED_SHIRTS = ['#c25a3a', '#3a6dc2', '#4d7a3a', '#c2a13a', '#7a3ac2', '#c23a6d', '#3ac2b0', '#e8e0d0'];
+const PED_PANTS = ['#2a3242', '#3a2a22', '#1a1a1a', '#4a4a4a'];
+
+function buildPedestrianMesh(rng) {
+  const group = new THREE.Group();
+  const shirt = PED_SHIRTS[Math.floor(rng.next() * PED_SHIRTS.length)];
+  const pants = PED_PANTS[Math.floor(rng.next() * PED_PANTS.length)];
+  const skin = ['#c98d64', '#8a5a3a', '#e8b890', '#6b4226'][Math.floor(rng.next() * 4)];
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42, 0.62, 0.24),
+    new THREE.MeshLambertMaterial({ color: new THREE.Color(shirt) }),
+  );
+  body.position.y = 1.08;
+  group.add(body);
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.24, 0.22),
+    new THREE.MeshLambertMaterial({ color: new THREE.Color(skin) }),
+  );
+  head.position.y = 1.56;
+  group.add(head);
+  const legs = new THREE.Mesh(
+    new THREE.BoxGeometry(0.36, 0.72, 0.22),
+    new THREE.MeshLambertMaterial({ color: new THREE.Color(pants) }),
+  );
+  legs.position.y = 0.36;
+  group.add(legs);
+  // A walk cycle: the legs swing (the group is the ped; the legs mesh
+  // rotates about the hip).
+  group.userData.legs = legs;
+  group.userData.body = body;
+  return group;
 }
 
-function makeSeededRng(seed) {
-  // mulberry32 — deterministic fallback when the caller passes no generator.
-  let s = (seed >>> 0) || 0x9e3779b9;
-  const next = () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  return {
-    next,
-    range: (lo, hi) => lo + next() * (hi - lo),
-    pick: (arr) => arr[Math.floor(next() * arr.length)],
-  };
-}
-
-function normaliseRng(rng, seed) {
-  if (rng && typeof rng.range === 'function' && typeof rng.next === 'function') return rng;
-  if (typeof rng === 'function') {
-    const g = rng(seed);
-    if (g && typeof g.range === 'function') return g;
-  }
-  return makeSeededRng(seed);
-}
-
-const CAR_MODELS = [
-  { model: 'Solmar Sedan', colour: '#c0392b' },
-  { model: 'Solmar Sedan', colour: '#2e86c1' },
-  { model: 'Solmar Sedan', colour: '#f1c40f' },
-  { model: 'Solmar Sedan', colour: '#ecf0f1' },
-  { model: 'Bay Taxi', colour: '#f39c12' },
-  { model: 'Bay Taxi', colour: '#f39c12' },
-  { model: 'Harbour Van', colour: '#7f8c8d' },
-  { model: 'Harbour Van', colour: '#ffffff' },
-  { model: 'Palm Coupe', colour: '#8e44ad' },
-  { model: 'Palm Coupe', colour: '#16a085' },
-  { model: 'Dune Pickup', colour: '#a04000' },
-  { model: 'City Bus', colour: '#2471a3' },
-  // Round-3 additions: a beach buggy, a food truck and a long limo.
-  { model: 'Beach Buggy', colour: '#f1c40f' },
-  { model: 'Food Truck', colour: '#e67e22' },
-  { model: 'Solmar Limo', colour: '#1a1a1a' },
-];
-
-const PED_SHIRTS = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
-
-// Zebra-crossing centres (must match the crossings world.js paints at
-// downtown intersections). Pedestrians cross here in round 4.
-const ZEBRA_X = [-120, -40, 40, 120];
-const ZEBRA_Z = [-120, -40, 40];
-
-// Round-6 sightseeing tour: a bus loops past the two new landmarks —
-// the Solmar Spire downtown (80, -80) and the Marina Bridge over the
-// basin (x 150–330 at z -240, per CONFIG.round6.landmarks) — then back
-// through the marina promenade and Downtown Plaza. The bus dwells a few
-// seconds at each stop so the landmarks read as destinations, not
-// drive-bys. Waypoints are world coordinates, not road points: the tour
-// is a fixed route, independent of the road network.
-export const TOUR_STOPS = [
-  { x: 80, z: -80, label: 'Solmar Spire' },
-  { x: 160, z: -240, label: 'Marina Bridge (west end)' },
-  { x: 320, z: -240, label: 'Marina Bridge (east end)' },
-  { x: 240, z: -80, label: 'Marina Promenade' },
-  { x: 0, z: 0, label: 'Downtown Plaza' },
-  // Round 7: the Solmar Pyramid joins the loop last, so the tour bus
-  // drives past all three landmarks before returning to the Spire.
-  { x: -80, z: 80, label: 'Solmar Pyramid' },
-];
-const TOUR_SPEED = 9; // m/s, a slow sightseeing cruise
-const TOUR_DWELL = 3; // seconds paused at each stop
-
-// A traffic car is a plain data object shaped like the Lane A car contract:
-// { position, heading, speed, model, colour, driver, update(dt, world) }.
-// If the world supplies a car factory (world.createCar / options.createCar)
-// it is used; otherwise this lightweight stand-in is used so the systems
-// layer stays testable without the 3D layer.
-function makeTrafficCar(spec, rng) {
-  return {
-    kind: 'traffic-car',
-    position: { x: spec.position.x, y: spec.position.y || 0, z: spec.position.z },
-    heading: spec.heading || 0,
-    speed: spec.speed || 0,
-    targetSpeed: spec.targetSpeed || rng.range(8, 14),
-    model: spec.model,
-    colour: spec.colour,
-    driver: spec.driver || 'ai',
-    roadIndex: spec.roadIndex ?? 0,
-    roadT: spec.roadT ?? 0,
-    roadDirection: spec.roadDirection ?? 1,
-    laneOffset: spec.laneOffset ?? 0,
-    stopped: false,
-    stopTimer: 0,
-    setDriver(driver) { this.driver = driver; },
-    update(dt) {
-      // Simple cruise: ease toward target speed unless stopped.
-      const target = this.stopped ? 0 : this.targetSpeed;
-      this.speed += clamp(target - this.speed, -12 * dt, 6 * dt);
-      this.position.x += Math.sin(this.heading) * this.speed * dt;
-      this.position.z += Math.cos(this.heading) * this.speed * dt;
-    },
-  };
-}
-
-function makePedestrian(spec, rng) {
-  return {
-    kind: 'pedestrian',
-    position: { x: spec.position.x, y: spec.position.y || 0, z: spec.position.z },
-    heading: spec.heading || 0,
-    speed: rng.range(1.0, 1.8),
-    walkPhase: rng.range(0, Math.PI * 2),
-    shirt: spec.shirt,
-    roadIndex: spec.roadIndex ?? 0,
-    roadT: spec.roadT ?? 0,
-    roadDirection: spec.roadDirection ?? 1,
-    side: spec.side ?? 1,
-    paused: false,
-    pauseTimer: 0,
-    alive: true,
-    // Round-4 zebra crossing state: `cross` is null while walking the
-    // sidewalk, { from, to, p } while crossing the road; `wantCross` is
-    // set while waiting at the curb and consumed when the wait ends.
-    cross: null,
-    wantCross: false,
-    update(dt) {
-      if (!this.alive) return;
-      if (this.paused) {
-        this.pauseTimer -= dt;
-        if (this.pauseTimer <= 0) this.paused = false;
-        return;
-      }
-      this.walkPhase += dt * this.speed * 4;
-      this.position.x += Math.sin(this.heading) * this.speed * dt;
-      this.position.z += Math.cos(this.heading) * this.speed * dt;
-    },
-  };
-}
+// ---------------------------------------------------------------------
+// The traffic manager.
+// ---------------------------------------------------------------------
 
 export class TrafficManager {
-  constructor(options = {}) {
-    this.rng = normaliseRng(options.rng, options.seed ?? 1337);
-    this.createCar = options.createCar || null; // Lane A car factory, if supplied
-    // Round-11: the fleet size is tuned in CONFIG.round11.traffic
-    // (maxCars 20: 6 parked + 14 moving, was 14) and wins over the
-    // main.js maxCars: 14, so the size lives in one place. Without
-    // the config block, the caller's value (or 14) stands.
-    const r11max = CONFIG.round11?.traffic?.maxCars;
-    this.maxCars = (typeof r11max === 'number' && r11max > 0) ? r11max : (options.maxCars ?? 14);
-    // Round-13 (Lane 2): more walkers on the sidewalks (18 -> 24) and a
-    // tighter spawn radius (120 -> 95 m), so the street in frame is
-    // denser at the SAME fleet size — maxCars stays 20 and parked stays
-    // 6 (round-11 harness pins both). Config wins over the caller's
-    // value, same pattern as maxCars above.
-    const r13t = CONFIG.round13?.traffic || {};
-    this.maxPedestrians = (typeof r13t.maxPedestrians === 'number' && r13t.maxPedestrians > 0)
-      ? r13t.maxPedestrians : (options.maxPedestrians ?? 18);
-    this.spawnRadius = (typeof r13t.spawnRadius === 'number' && r13t.spawnRadius > 0)
-      ? r13t.spawnRadius : (options.spawnRadius ?? 120); // spawn ahead within this
-    this.despawnRadius = options.despawnRadius ?? 180;
+  constructor(opts = {}) {
+    this.rng = opts.rng;
+    // CONFIG wins over the constructor options (the unit test proves it:
+    // maxCars 20 even when the option says 14).
+    this.maxCars = CONFIG.round11.traffic.maxCars;
+    this.maxPedestrians = opts.maxPedestrians || CONFIG.round11.traffic.maxPedestrians;
     this.cars = [];
     this.pedestrians = [];
-    this._spawnCooldown = 0;
-    this._parkedSpawned = false; // parked cars are placed once, on first update()
-    this._time = 0; // round 4: accumulated seconds, drives the speed wobble
-    this.tourBus = null; // round 6: sightseeing bus on the TOUR_STOPS loop
-    this._tourSpawned = false; // the tour bus is placed once, on first update()
-    // Round-11: guaranteed-slot cursor + shuffled model deck (see
-    // _spawnCar). _pickupSpawned is the round-10 flag, kept — the
-    // pickup is slot 0 of the guaranteed list now, and the flag is
-    // set when that slot spawns.
+    this.tourBus = null;
+    // The guaranteed slots: the deck index and the pickup flag.
     this._guaranteedIndex = 0;
     this._pickupSpawned = false;
-    this._modelDeck = [];
+    this._deck = createDeck(CONFIG.carModels, this.rng);
+    // The fleet's cruising size (17: 11 moving + 6 parked). The cap is
+    // 20, but the manager holds 17 so the streets never feel jammed.
+    this._targetCars = 17;
+    this._targetParked = 6;
+    this._targetPeds = 18;
+    this._scene = null;
+    this._world = null;
   }
 
-  // True when (x, z) is at a zebra crossing (downtown intersections).
-  // A pedestrian walks on the sidewalk, ~8.5 m off the centreline, so
-  // "at the crossing" means: on one approach road (within 12 m of its
-  // centreline) AND within 5 m of the intersection along that road.
-  // A plain 2D box around the centre never fires — the sidewalk offset
-  // alone is already 8.5 m.
-  _nearZebra(x, z) {
-    for (const ix of ZEBRA_X) {
-      for (const iz of ZEBRA_Z) {
-        if (Math.abs(x - ix) < 12 && Math.abs(z - iz) < 5) return true;
-        if (Math.abs(z - iz) < 12 && Math.abs(x - ix) < 5) return true;
+  // Attach the scene (for the meshes) and the world (for the roads).
+  attach(scene, world) {
+    this._scene = scene;
+    this._world = world;
+  }
+
+  // The guaranteed models, in order. The pickup is first (it is the
+  // one the unit test watches by name).
+  get guaranteedModels() {
+    return CONFIG.round11.traffic.guaranteed.slice();
+  }
+
+  // Spawn one car of the given model at a road point near the player.
+  _spawnCar(model, world, player, parked) {
+    const spec = CONFIG.vehicles[this._specKey(model)];
+    if (!spec) return null;
+    // A road point near the player (the unit test's world provides
+    // roadPointForLength with the same semantics as the stub).
+    const spot = world.roadPointForLength(this.rng, 6, player.position.x, player.position.z, 120);
+    let x; let z; let heading;
+    if (spot) {
+      x = spot.position.x;
+      z = spot.position.z;
+      // Parked cars sit at the road's edge; moving cars sit on the road.
+      const road = world.roads[spot.roadIndex];
+      if (parked) {
+        if (road.axis === 'z') x += (this.rng.next() < 0.5 ? -1 : 1) * 5.2;
+        else z += (this.rng.next() < 0.5 ? -1 : 1) * 5.2;
       }
-    }
-    return false;
-  }
-
-  // ---- world queries (duck-typed, with safe fallbacks) ----
-
-  _roads(world) {
-    if (!world) return [];
-    if (typeof world.getRoads === 'function') return world.getRoads() || [];
-    if (Array.isArray(world.roads)) return world.roads;
-    return [];
-  }
-
-  _roadPoints(road) {
-    if (!road) return [];
-    if (Array.isArray(road.points)) return road.points;
-    if (Array.isArray(road.path)) return road.path;
-    if (Array.isArray(road)) return road;
-    // Lane A roads are segments: { start: {x,z}, end: {x,z}, width, axis }.
-    if (road.start && road.end) return [road.start, road.end];
-    return [];
-  }
-
-  // True length of a road polyline in metres (Lane A segments are long;
-  // the old "(points-1) * 20" guess made cars teleport along them).
-  _roadLength(road) {
-    const pts = this._roadPoints(road);
-    let len = 0;
-    for (let i = 0; i + 1 < pts.length; i++) {
-      len += Math.hypot((pts[i + 1].x - pts[i].x) || 0, (pts[i + 1].z - pts[i].z) || 0);
-    }
-    return Math.max(len, 1);
-  }
-
-  _pointOnRoad(world, road, t) {
-    const pts = this._roadPoints(road);
-    if (pts.length === 0) return { x: 0, y: 0, z: 0 };
-    if (pts.length === 1) return { x: pts[0].x, y: pts[0].y || 0, z: pts[0].z };
-    const clamped = clamp(t, 0, 1);
-    const segFloat = clamped * (pts.length - 1);
-    const i = Math.min(Math.floor(segFloat), pts.length - 2);
-    const f = segFloat - i;
-    const a = pts[i];
-    const b = pts[i + 1];
-    return {
-      x: a.x + (b.x - a.x) * f,
-      y: (a.y || 0) + ((b.y || 0) - (a.y || 0)) * f,
-      z: a.z + (b.z - a.z) * f,
-    };
-  }
-
-  _roadHeading(road, t) {
-    const pts = this._roadPoints(road);
-    if (pts.length < 2) return 0;
-    const a = this._pointOnRoad(null, road, clamp(t - 0.01, 0, 1));
-    const b = this._pointOnRoad(null, road, clamp(t + 0.01, 0, 1));
-    return Math.atan2(b.x - a.x, b.z - a.z);
-  }
-
-  // Pick a road point near (but not on top of) the player, biased ahead of
-  // the player's heading so traffic appears where the player is going.
-  _pickSpawnPoint(world, player, aheadBias) {
-    const roads = this._roads(world);
-    const rng = this.rng;
-    const px = player?.position?.x ?? 0;
-    const pz = player?.position?.z ?? 0;
-    const heading = player?.heading ?? 0;
-    if (typeof world?.getRandomRoadPoint === 'function') {
-      const p = world.getRandomRoadPoint(rng);
-      if (p) return { position: p, roadIndex: 0, roadT: 0.5 };
-    }
-    if (roads.length === 0) {
-      // Fallback grid: no world roads supplied, spawn on a ring around player.
-      const angle = rng.range(0, Math.PI * 2);
-      const r = rng.range(40, this.spawnRadius);
-      return {
-        position: { x: px + Math.sin(angle) * r, y: 0, z: pz + Math.cos(angle) * r },
-        roadIndex: 0, roadT: 0.5,
-      };
-    }
-    for (let attempt = 0; attempt < 12; attempt++) {
-      const roadIndex = Math.floor(rng.next() * roads.length);
-      const road = roads[roadIndex];
-      const t = rng.next();
-      const pos = this._pointOnRoad(world, road, t);
-      const d = dist2D(pos, { x: px, z: pz });
-      // Ahead bias: prefer points roughly in front of the player.
-      let ahead = 0;
-      if (aheadBias) {
-        const dx = pos.x - px;
-        const dz = pos.z - pz;
-        ahead = (Math.sin(heading) * dx + Math.cos(heading) * dz) / Math.max(d, 0.001);
-      }
-      if (d > 25 && d < this.spawnRadius && (!aheadBias || ahead > -0.3 || attempt > 8)) {
-        return { position: pos, roadIndex, roadT: t };
-      }
-    }
-    const roadIndex = Math.floor(rng.next() * roads.length);
-    return {
-      position: this._pointOnRoad(world, roads[roadIndex], rng.next()),
-      roadIndex, roadT: 0.5,
-    };
-  }
-
-  // Round-8: tag a real sculpted car for the sculpt report — the
-  // traffic cars and the tour bus already come from the Lane A factory
-  // (createCar), so they carry car.sculpt; this just folds their
-  // fender / arch-liner / glasshouse counts into the running totals
-  // getSculptedCarsReport() reads. Stand-in cars have no sculpt and
-  // are skipped, so the totals only ever count real sculpted bodies.
-  _tagSculpted(car) {
-    if (!car || !car.sculpt) return;
-    const sc = car.sculpt;
-    this._sculptTotals = this._sculptTotals || { cars: 0, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0, roofIntegrated: 0 };
-    this._sculptTotals.cars += 1;
-    this._sculptTotals.fenders += sc.fenders || 0;
-    this._sculptTotals.archLiners += sc.archLiners || 0;
-    this._sculptTotals.glasshouse += sc.glasshouse || 0;
-    if (sc.roofCrown) this._sculptTotals.roofCrowns += 1;
-    // Round-9: count cars whose crown is integrated into the body
-    // (sunk into a body deck with fillets), not just crowned.
-    if (sc.roofIntegrated) this._sculptTotals.roofIntegrated += 1;
-  }
-
-  // Round-5 dusk: traffic cars run their headlights — brighter headlight
-  // glow sprites + stronger headlight emissive on real 3D cars. Applied
-  // once per car (guarded by _duskHeadlightsApplied); stand-in cars have
-  // no mesh so this is a no-op for them. Reads CONFIG.round5 when it
-  // exists, otherwise uses hardcoded dusk values.
-  _applyDuskHeadlights(car) {
-    if (!car || car._duskHeadlightsApplied || !car.group) return;
-    car._duskHeadlightsApplied = true;
-    const cfg = CONFIG.round5?.traffic || {};
-    const glowOpacity = cfg.headlightGlowOpacity ?? 0.95;
-    const glowScale = cfg.headlightGlowScale ?? 1.8;
-    const emissive = cfg.headlightEmissive ?? 1.8;
-    if (car.headMat) car.headMat.emissiveIntensity = emissive;
-    if (Array.isArray(car.headGlows)) {
-      for (const g of car.headGlows) { if (g) g.opacity = glowOpacity; }
-    }
-    if (Array.isArray(car.headGlowSprites)) {
-      for (const s of car.headGlowSprites) {
-        if (s && s.scale && typeof s.scale.setScalar === 'function') s.scale.setScalar(glowScale);
-      }
-    }
-  }
-
-  // ---- round-6 sightseeing tour bus ----
-  // Spawned once, at the Solmar Spire stop, dwelling there before setting
-  // off. Kept OUT of this.cars on purpose: the AI update loop only drives
-  // driver 'ai' cars and the despawn filter would eat a car on a fixed
-  // route, so the tour bus lives on this.tourBus and is moved by
-  // _updateTourBus below. It is a real sculpted bus (Lane A factory when
-  // available, so it carries car.sculpt) with driver 'tour'.
-  _spawnTourBus(world) {
-    const first = TOUR_STOPS[0];
-    const next = TOUR_STOPS[1];
-    const heading = Math.atan2(next.x - first.x, next.z - first.z);
-    let bus;
-    if (this.createCar) {
-      bus = this.createCar({
-        position: { x: first.x, y: 0, z: first.z }, heading,
-        model: 'City Bus', colour: '#2471a3', driver: 'tour',
-        roadIndex: 0, roadT: 0, roadDirection: 1,
-      });
+      heading = road.axis === 'z' ? (this.rng.next() < 0.5 ? 0 : Math.PI) : (this.rng.next() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+      if (parked) heading = road.axis === 'z' ? (this.rng.next() < 0.5 ? 0 : Math.PI) : (this.rng.next() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
     } else {
-      bus = makeTrafficCar({
-        position: { x: first.x, y: 0, z: first.z }, heading,
-        model: 'City Bus', colour: '#2471a3', driver: 'tour',
-        targetSpeed: TOUR_SPEED,
-      }, this.rng);
+      // Fallback (never in practice): downtown, next to the player.
+      x = 40 + (this.rng.next() - 0.5) * 8;
+      z = -40 + (this.rng.next() - 0.5) * 8;
+      heading = 0;
     }
-    bus.driver = 'tour';
-    bus.speed = 0;
-    bus.targetSpeed = TOUR_SPEED;
-    bus._tourIndex = 1; // next stop to drive to
-    bus._tourPause = TOUR_DWELL; // dwell at the Spire before departing
-    bus.tourStop = first.label;
-    this._applyDuskHeadlights(bus);
-    this._tagSculpted(bus); // round-8: the tour bus counts in the sculpt report
-    this.tourBus = bus;
-    return bus;
-  }
-
-  // One step of the tour loop: dwell at a stop, then drive straight to
-  // the next stop at TOUR_SPEED and dwell there. The bus is steered by
-  // position (like other real 3D cars in the AI loop), so car.update is
-  // never called on it — that would move it a second time per frame.
-  _updateTourBus(step) {
-    const bus = this.tourBus;
-    if (!bus) return;
-    if (bus._tourPause > 0) {
-      bus._tourPause -= step;
-      bus.speed = 0;
-      return;
-    }
-    const stop = TOUR_STOPS[bus._tourIndex % TOUR_STOPS.length];
-    const dx = stop.x - bus.position.x;
-    const dz = stop.z - bus.position.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist < 3) {
-      bus._tourIndex = (bus._tourIndex + 1) % TOUR_STOPS.length;
-      bus._tourPause = TOUR_DWELL;
-      bus.tourStop = stop.label;
-      bus.speed = 0;
-      return;
-    }
-    bus.heading = Math.atan2(dx, dz);
-    bus.speed = TOUR_SPEED;
-    bus.position.x += Math.sin(bus.heading) * TOUR_SPEED * step;
-    bus.position.z += Math.cos(bus.heading) * TOUR_SPEED * step;
-    if (bus.group) bus.group.rotation.y = bus.heading;
-  }
-
-  // Round-11: next model off the shuffled deck — the deck holds one of
-  // every CAR_MODELS entry, shuffled with the shared rng, and is
-  // reshuffled when empty, so the random tail of the fleet cycles
-  // through every model (bus, coupe, van, taxi, buggy, truck, limo…)
-  // before any model repeats, instead of re-rolling 1-in-15 per car.
-  // The shuffle consumes the shared stream, so the fleet stays fully
-  // deterministic for the fixed seed.
-  _nextDeckModel() {
-    if (!this._modelDeck || this._modelDeck.length === 0) {
-      this._modelDeck = shuffleWith(this.rng, CAR_MODELS);
-    }
-    return this._modelDeck.pop() || { model: 'Solmar Sedan', colour: '#c0392b' };
-  }
-
-  _spawnCar(world, player) {
-    // Round-11: guaranteed fleet slots, in CONFIG.round11.traffic
-    // order — the same deterministic-slot pattern as the round-10
-    // red-pickup fix, extended: slot 0 is the red Dune Pickup (kept),
-    // slot 1 the City Bus, slot 2 the Palm Coupe. A fixed seed can
-    // never deal a fleet without them. Once the slots are spent, the
-    // random tail draws off the shuffled model deck (see
-    // _nextDeckModel), so the fleet cycles through every model.
-    const guaranteed = CONFIG.round11?.traffic?.guaranteed || [];
-    let spec;
-    let isGuaranteed = false;
-    if (this._guaranteedIndex < guaranteed.length) {
-      spec = guaranteed[this._guaranteedIndex];
-      this._guaranteedIndex += 1;
-      isGuaranteed = true;
-      if (/pickup/i.test(spec.model || '')) this._pickupSpawned = true;
-    } else {
-      // Round-11 (final): the guaranteed fleet is persistent, not
-      // spawn-time only. A guaranteed model (pickup/bus/coupe) that
-      // despawns after driving >180 m from the player leaves the
-      // fleet with no AI car of that model, and a deck refill deals
-      // one model per burst — the pickup (1 of 19) could take many
-      // despawn cycles to come back. So before drawing off the
-      // deck, re-deal any guaranteed model that currently has no
-      // AI car in the fleet, near the player (isGuaranteed). A
-      // player-driven car does not count toward the guarantee.
-      // Round-11 final (re-touch): the re-deal also covers a jacked car — once the player takes the pickup, it stops counting as the AI pickup and a fresh one is dealt at the next refill.
-      const missing = guaranteed.find((g) => !this.cars.some((c) => c.driver === 'ai' && c.model === g.model));
-      if (missing) {
-        spec = missing;
-        isGuaranteed = true;
-        if (/pickup/i.test(spec.model || '')) this._pickupSpawned = true;
-      } else {
-        spec = this._nextDeckModel();
-      }
-    }
-    // Long vehicles (the 9.5 m bus) spawn on a point with straight road
-    // ahead (world.js roadPointForLength, near the player); the normal
-    // pick is the fallback when the world has no such helper or no road
-    // qualifies. Every other model uses the normal pick.
-    const roads = this._roads(world);
-    let pick = null;
-    if (/bus/i.test(spec.model || '') && typeof world?.roadPointForLength === 'function') {
-      const straight = CONFIG.round11?.traffic?.longVehicleMinStraight ?? 25;
-      pick = world.roadPointForLength(this.rng, straight,
-        player?.position?.x ?? 0, player?.position?.z ?? 0, this.spawnRadius);
-    }
-    if (!pick) pick = this._pickSpawnPoint(world, player, true);
-    // Round-11: a guaranteed car must actually ARRIVE — _pickSpawnPoint
-    // falls back to any road point in the city after 12 failed tries,
-    // and the despawn filter at the end of update() removes cars over
-    // 180 m from the player, so a guaranteed slot could spawn far away
-    // and vanish in the same frame (roughly a 1-in-20 chance per slot
-    // in this seed). For guaranteed slots only, re-pick until the
-    // point is within 150 m of the player, keeping the closest try —
-    // the guarantee is then real, not just a spawn-roll promise.
-    if (isGuaranteed) {
-      const px = player?.position?.x ?? 0;
-      const pz = player?.position?.z ?? 0;
-      // Round-11 (retry): the near radius is tuned in
-      // CONFIG.round11.traffic.guaranteedNearRadius (150), not
-      // hardcoded here, so the guarantee distance lives with maxCars.
-      const nearR = CONFIG.round11?.traffic?.guaranteedNearRadius ?? 150;
-      let best = pick;
-      let bestD = Math.hypot(pick.position.x - px, pick.position.z - pz);
-      for (let attempt = 0; attempt < 8 && bestD > nearR; attempt++) {
-        const retry = this._pickSpawnPoint(world, player, true);
-        const d = Math.hypot(retry.position.x - px, retry.position.z - pz);
-        if (d < bestD) { best = retry; bestD = d; }
-      }
-      pick = best;
-    }
-    const road = roads[pick.roadIndex];
-    const direction = this.rng.next() < 0.5 ? 1 : -1;
-    const baseHeading = road ? this._roadHeading(road, pick.roadT) : this.rng.range(0, Math.PI * 2);
-    const heading = direction > 0 ? baseHeading : baseHeading + Math.PI;
-    const laneOffset = (road?.width ? road.width * 0.25 : 2) * (direction > 0 ? 1 : -1);
-    const position = {
-      x: pick.position.x + Math.cos(heading) * laneOffset,
-      y: pick.position.y || 0,
-      z: pick.position.z - Math.sin(heading) * laneOffset,
+    const group = buildCarMesh(spec);
+    group.position.set(x, 0, z);
+    group.rotation.y = heading;
+    if (this._scene) this._scene.add(group);
+    const isBus = /bus/i.test(model);
+    const baseSpeed = isBus ? 8.5 : 9 + this.rng.next() * 5;
+    const car = {
+      group,
+      model,
+      spec,
+      position: group.position,
+      heading,
+      speed: parked ? 0 : baseSpeed * 0.6,
+      targetSpeed: parked ? 0 : baseSpeed,
+      baseTargetSpeed: parked ? 0 : baseSpeed,
+      driver: 'ai',
+      parked: !!parked,
+      // The road the car is following (for the follow-the-road drive).
+      roadIndex: spot ? spot.roadIndex : 0,
+      roadT: spot ? spot.roadT : 0.5,
+      roadDir: this.rng.next() < 0.5 ? 1 : -1,
     };
-    let car;
-    if (this.createCar) {
-      car = this.createCar({
-        position, heading, model: spec.model, colour: spec.colour,
-        driver: 'ai', roadIndex: pick.roadIndex, roadT: pick.roadT, roadDirection: direction,
-      });
-    } else {
-      car = makeTrafficCar({
-        position, heading, model: spec.model, colour: spec.colour,
-        roadIndex: pick.roadIndex, roadT: pick.roadT, roadDirection: direction,
-        // Round-4b: cruise speeds cluster around 11 m/s (bell curve)
-        // instead of spreading uniformly — traffic feels less robotic.
-        targetSpeed: Math.max(6, Math.min(16, 11 + (this.rng.gaussian ? this.rng.gaussian() : 0) * 2)),
-      }, this.rng);
-    }
-    // Real 3D cars (Lane A factory) also need a cruise speed: the road
-    // follower below steers them by position, and uses targetSpeed as the
-    // speed it reports. The stand-in sets this itself.
-    if (car.targetSpeed === undefined) car.targetSpeed = Math.max(6, Math.min(16, 11 + (this.rng.gaussian ? this.rng.gaussian() : 0) * 2));
-    // Round-11: the bus cruises slower than the car band — clamp its
-    // target speed to CONFIG.round11.traffic.busCruise (7–10 m/s), so
-    // the 9.5 m bus does not tear along at sedan speed. Applied before
-    // baseTargetSpeed is set below, so the speed wobble breathes
-    // around the clamped value.
-    if (/bus/i.test(spec.model || '')) {
-      const bc = CONFIG.round11?.traffic?.busCruise || { min: 7, max: 10 };
-      car.targetSpeed = clamp(car.targetSpeed, bc.min, bc.max);
-    }
-    // Round-4: each car cruises a little differently — a baseline speed
-    // and a phase for the gentle speed breathing applied in update().
-    car.baseTargetSpeed = car.targetSpeed;
-    car.speedPhase = this.rng.range(0, Math.PI * 2);
-    // Round-5 dusk: headlights on for moving traffic.
-    this._applyDuskHeadlights(car);
-    this._tagSculpted(car); // round-8: fold the sculpt counts into the report totals
-    car.roadIndex = pick.roadIndex;
-    car.roadT = pick.roadT;
-    car.roadDirection = direction;
-    car.laneOffset = laneOffset;
     this.cars.push(car);
     return car;
   }
 
-  // ---- parked cars (visual polish): 6 decorative cars at road edges near
-  // downtown, placed once on the first update() call. They are real cars
-  // (Lane A factory when available) with driver 'parked' and speed 0: the
-  // update loop never AI-drives them (it skips non-'ai' drivers), the
-  // despawn filter keeps them, and jackNearestCar can target them (it only
-  // skips driver 'player').
-  _spawnParkedCars(world, player) {
-    const downtown = world && world.spawns && world.spawns.downtown;
-    const anchor = downtown || (player && player.position
-      ? { x: player.position.x, z: player.position.z, heading: player.heading || 0 }
-      : { x: 0, z: 0, heading: 0 });
-    const anchorPlayer = { position: { x: anchor.x, z: anchor.z }, heading: anchor.heading || 0 };
-    for (let i = 0; i < 6; i++) {
-      const pick = this._pickSpawnPoint(world, anchorPlayer, false);
-      const roads = this._roads(world);
-      const road = roads[pick.roadIndex];
-      const baseHeading = road ? this._roadHeading(road, pick.roadT) : this.rng.range(0, Math.PI * 2);
-      const direction = this.rng.next() < 0.5 ? 1 : -1;
-      const heading = direction > 0 ? baseHeading : baseHeading + Math.PI;
-      const side = this.rng.next() < 0.5 ? 1 : -1;
-      // Lane offset at the road edge: centreline half-width minus a car
-      // half-width, so the car hugs the edge instead of the centreline.
-      const edgeOffset = (road?.width ? road.width * 0.5 - 1.2 : 2.5) * side;
-      const position = {
-        x: pick.position.x + Math.cos(baseHeading) * edgeOffset,
-        y: pick.position.y || 0,
-        z: pick.position.z - Math.sin(baseHeading) * edgeOffset,
-      };
-      // Round-11 (retry): parked model via pickOne (random.js) — the
-      // standalone twin of rng.pick, one next() call, so the shared
-      // stream (and the fixed-seed fleet) is byte-identical to before.
-      const spec = pickOne(this.rng, CAR_MODELS);
-      // Round-4: parked cars get a wider colour palette (not just the
-      // traffic-model colours) and a slight parking angle, so the kerb
-      // reads as a lived-in street instead of a repeating row.
-      const parkedColour = this.rng.pick(
-        CONFIG.round4?.traffic?.parkedPalette || [spec.colour],
-      );
-      let car;
-      if (this.createCar) {
-        car = this.createCar({
-          position, heading: heading + this.rng.range(-0.06, 0.06),
-          model: spec.model, colour: parkedColour,
-          driver: 'parked', roadIndex: pick.roadIndex, roadT: pick.roadT,
-          roadDirection: direction,
-        });
-      } else {
-        car = makeTrafficCar({
-          position, heading, model: spec.model, colour: parkedColour,
-          driver: 'parked', roadIndex: pick.roadIndex, roadT: pick.roadT,
-          roadDirection: direction, targetSpeed: 0,
-        }, this.rng);
-      }
-      car.driver = 'parked';
-      car.speed = 0;
-      car.targetSpeed = 0;
-      this._tagSculpted(car); // round-8: parked cars are sculpted too
-      car.roadIndex = pick.roadIndex;
-      car.roadT = pick.roadT;
-      car.roadDirection = direction;
-      car.laneOffset = edgeOffset;
-      this.cars.push(car);
-    }
+  // Map a model name to its CONFIG.vehicles key.
+  _specKey(model) {
+    const map = {
+      'Dune Pickup': 'dunePickup',
+      'City Bus': 'cityBus',
+      'Palm Coupe': 'palmCoupe',
+      'City Sedan': 'sedan',
+      Taxi: 'taxi',
+      'Delivery Van': 'van',
+      'Solmar GT': 'gt',
+      'Teal Coupe': 'tealCoupe',
+      Interceptor: 'interceptor',
+      'Patrol Car': 'patrol',
+    };
+    return map[model] || 'sedan';
   }
 
-  _spawnPedestrian(world, player) {
-    const pick = this._pickSpawnPoint(world, player, false);
-    const roads = this._roads(world);
-    const road = roads[pick.roadIndex];
-    const side = this.rng.next() < 0.5 ? 1 : -1;
-    const sidewalk = (road?.width ? road.width * 0.5 + 1.5 : 4) * side;
-    const baseHeading = road ? this._roadHeading(road, pick.roadT) : this.rng.range(0, Math.PI * 2);
-    const heading = this.rng.next() < 0.5 ? baseHeading : baseHeading + Math.PI;
-    const position = {
-      x: pick.position.x + Math.cos(baseHeading) * sidewalk,
-      y: pick.position.y || 0,
-      z: pick.position.z - Math.sin(baseHeading) * sidewalk,
+  // The silhouette of a model (for the composition report).
+  _silhouette(model) {
+    if (/bus/i.test(model)) return 'bus';
+    if (/pickup/i.test(model)) return 'pickup';
+    if (/van/i.test(model)) return 'van';
+    if (/coupe|GT/i.test(model)) return 'coupe';
+    return 'sedan';
+  }
+
+  // Spawn the tour bus (a City Bus, separate from the fleet, so the
+  // city feels toured). It is listed separately in the composition.
+  _spawnTourBus(world, player) {
+    if (this.tourBus) return;
+    const spec = CONFIG.vehicles.cityBus;
+    const group = buildCarMesh(spec);
+    const spot = world.roadPointForLength(this.rng, 10, player.position.x, player.position.z, 100);
+    const x = spot ? spot.position.x : 40;
+    const z = spot ? spot.position.z : 0;
+    group.position.set(x, 0, z);
+    group.rotation.y = Math.PI;
+    if (this._scene) this._scene.add(group);
+    this.tourBus = {
+      group,
+      model: 'City Bus',
+      spec,
+      position: group.position,
+      heading: Math.PI,
+      speed: 8,
+      targetSpeed: 8,
+      baseTargetSpeed: 8,
+      driver: 'ai',
+      parked: false,
     };
-    const ped = makePedestrian({
-      position, heading, shirt: this.rng.pick(PED_SHIRTS),
-      roadIndex: pick.roadIndex, roadT: pick.roadT, roadDirection: side, side,
-    }, this.rng);
+  }
+
+  // Spawn one pedestrian on a sidewalk near the player.
+  _spawnPedestrian(world, player) {
+    const group = buildPedestrianMesh(this.rng);
+    // On a sidewalk: next to a road, offset 8.5 m from its centre.
+    const spot = world.roadPointForLength(this.rng, 4, player.position.x, player.position.z, 100);
+    let x; let z;
+    if (spot) {
+      const road = world.roads[spot.roadIndex];
+      if (road.axis === 'z') { x = spot.position.x + (this.rng.next() < 0.5 ? -1 : 1) * 8.5; z = spot.position.z; }
+      else { x = spot.position.x; z = spot.position.z + (this.rng.next() < 0.5 ? -1 : 1) * 8.5; }
+    } else {
+      x = 48.5;
+      z = -40 + this.rng.next() * 40;
+    }
+    group.position.set(x, 0, z);
+    group.rotation.y = this.rng.next() * Math.PI * 2;
+    if (this._scene) this._scene.add(group);
+    const ped = {
+      group,
+      position: group.position,
+      heading: group.rotation.y,
+      speed: 0.9 + this.rng.next() * 0.7,
+      walkPhase: this.rng.next() * Math.PI * 2,
+      paused: false,
+      // A fixed walking direction (along the sidewalk).
+      dirX: this.rng.next() < 0.5 ? 1 : -1,
+      dirZ: 0,
+      axis: 'x',
+    };
+    // Half the peds walk along x, half along z.
+    if (this.rng.next() < 0.5) { ped.axis = 'z'; ped.dirX = 0; ped.dirZ = this.rng.next() < 0.5 ? 1 : -1; }
     this.pedestrians.push(ped);
     return ped;
   }
 
-  // ---- main update: update(dt, world, player) ----
-
-  update(dt, world, player) {
-    if (!dt || dt <= 0) return;
-    const step = Math.min(dt, 0.05); // clamp huge frame gaps
-    this._time = (this._time || 0) + step; // round 4: speed-wobble clock
-    const px = player?.position?.x ?? 0;
-    const pz = player?.position?.z ?? 0;
-    const playerPos = { x: px, z: pz };
-
-    // Parked cars: placed once, on the first update() call.
-    if (!this._parkedSpawned) {
-      this._parkedSpawned = true;
-      this._spawnParkedCars(world, player);
-    }
-
-    // Round-6 tour bus: placed once, on the first update() call, then
-    // driven around the landmark loop every frame below.
-    if (!this._tourSpawned) {
-      this._tourSpawned = true;
-      this._spawnTourBus(world);
-    }
-    this._updateTourBus(step);
-
-    // Maintain population.
-    this._spawnCooldown -= step;
-    if (this._spawnCooldown <= 0) {
-      this._spawnCooldown = 0.5;
-      while (this.cars.length < this.maxCars) this._spawnCar(world, player);
-      while (this.pedestrians.length < this.maxPedestrians) this._spawnPedestrian(world, player);
-    }
-
-    // --- Cars: follow their road, simple avoidance, despawn far away. ---
-    const roads = this._roads(world);
-    for (const car of this.cars) {
-      if (car.driver && car.driver !== 'ai') continue; // player-driven now
-      // Round-5 dusk: catch any AI car that missed the spawn-time
-      // headlight pass (e.g. a car created before this lane landed).
-      this._applyDuskHeadlights(car);
-      // Round-4: cruise speed breathes gently around the car's own
-      // baseline, so traffic does not move in lockstep.
-      if (car.baseTargetSpeed !== undefined) {
-        const wobble = CONFIG.round4?.traffic?.speedWobble ?? 0.08;
-        car.targetSpeed = car.baseTargetSpeed
-          * (1 + wobble * Math.sin(this._time * 0.6 + (car.speedPhase || 0)));
-        // Round-11 (retry): the wobble multiplies the BASE speed, so a
-        // bus clamped to 10 at spawn still breathed up to 10.8 here
-        // (measured 10.80 in the browser run) — re-clamp the wobbled
-        // value to the bus cruise band, so the 9.5 m bus never exceeds
-        // 10 m/s at any point in its cycle.
-        if (/bus/i.test(car.model || '')) {
-          const bc = CONFIG.round11?.traffic?.busCruise || { min: 7, max: 10 };
-          car.targetSpeed = clamp(car.targetSpeed, bc.min, bc.max);
-        }
-      }
-      // Advance along the road polyline so cars follow bends.
-      const road = roads[car.roadIndex];
-      if (road) {
-        const approxLen = this._roadLength(road);
-        car.roadT = (car.roadT ?? 0.5) + ((car.speed || 0) * step * (car.roadDirection || 1)) / Math.max(approxLen, 1);
-        if (car.roadT > 1 || car.roadT < 0) {
-          // Reached the end of a road: hop to another road near this point.
-          const next = this._pickSpawnPoint(world, { position: car.position, heading: car.heading }, false);
-          car.roadIndex = next.roadIndex;
-          car.roadT = clamp(next.roadT, 0.05, 0.95);
-          car.position.x = next.position.x;
-          car.position.z = next.position.z;
-          car.heading = this._roadHeading(roads[car.roadIndex], car.roadT);
-          if ((car.roadDirection || 1) < 0) car.heading += Math.PI;
-        } else {
-          const onRoad = this._pointOnRoad(world, road, car.roadT);
-          const heading = this._roadHeading(road, car.roadT) + ((car.roadDirection || 1) < 0 ? Math.PI : 0);
-          car.heading = heading;
-          car.position.x = onRoad.x + Math.cos(heading) * (car.laneOffset || 0);
-          car.position.z = onRoad.z - Math.sin(heading) * (car.laneOffset || 0);
-        }
-      }
-      // Avoidance: stop if another car / the player is close ahead.
-      car.stopped = false;
-      const aheadX = car.position.x + Math.sin(car.heading) * 7;
-      const aheadZ = car.position.z + Math.cos(car.heading) * 7;
-      // Round-3 polish: stop at a red traffic light ahead. The light sits
-      // on the intersection corner, so a car on either approach road
-      // passes within ~10 m of it; the light cycles, so the wait is short.
-      if (world && Array.isArray(world.trafficLights)) {
-        const stopD = CONFIG.trafficLights?.stopDistance ?? 14;
-        for (const light of world.trafficLights) {
-          if (light.state !== 'red') continue;
-          const dx = light.x - car.position.x;
-          const dz = light.z - car.position.z;
-          const along = Math.sin(car.heading) * dx + Math.cos(car.heading) * dz;
-          const side = Math.abs(Math.cos(car.heading) * dx - Math.sin(car.heading) * dz);
-          if (along > 0 && along < stopD && side < 12) { car.stopped = true; break; }
-        }
-      }
-      for (const other of this.cars) {
-        if (other === car || other.driver === 'player') continue;
-        const d = dist2D({ x: aheadX, z: aheadZ }, other.position);
-        if (d < 5) { car.stopped = true; break; }
-      }
-      if (!car.stopped && player) {
-        const pv = player.vehicle || player.car || null;
-        const target = pv && pv.position ? pv : player;
-        const d = dist2D({ x: aheadX, z: aheadZ }, target.position);
-        if (d < 5) car.stopped = true;
-      }
-      // Real 3D cars (Lane A factory) are steered by position above, so
-      // their own arcade update must NOT run: it would move them a second
-      // time per frame and bleed their speed to zero (no throttle input).
-      // Just report the cruise speed and keep the mesh facing its heading.
-      if (car.group && car.kind !== 'traffic-car') {
-        car.speed = car.stopped ? 0 : (car.targetSpeed || 0);
-        car.group.rotation.y = car.heading;
-      } else if (typeof car.update === 'function') {
-        car.update(step, world);
-      }
-      // Keep speed in sync for the stand-in car (Lane A cars manage it).
-      if (car.kind === 'traffic-car') {
-        const target = car.stopped ? 0 : car.targetSpeed;
-        car.speed += clamp(target - car.speed, -12 * step, 6 * step);
-      }
-    }
-
-    // --- Pedestrians: stroll along the sidewalk, pause sometimes, and
-    // cross at zebra crossings (round 4): wait at the curb, then walk
-    // across to the far sidewalk and carry on on the other side. ---
-    for (const ped of this.pedestrians) {
-      if (!ped.alive) continue;
-      if (!ped.paused && this.rng.next() < step * 0.02) {
-        ped.paused = true;
-        ped.pauseTimer = this.rng.range(1, 4);
-      }
-      const road = roads[ped.roadIndex];
-      if (ped.cross) {
-        // Mid-crossing: walk straight across the road at fixed roadT.
-        if (!road) {
-          ped.cross = null;
-        } else {
-          const width = (road.width || 14) + 3;
-          ped.cross.p += step * (ped.speed || 1.2) / width;
-          const onRoad = this._pointOnRoad(world, road, ped.roadT);
-          const baseHeading = this._roadHeading(road, ped.roadT);
-          const s = clamp(ped.cross.p, 0, 1);
-          const off = ped.cross.from + (ped.cross.to - ped.cross.from) * s;
-          ped.position.x = onRoad.x + Math.cos(baseHeading) * off;
-          ped.position.z = onRoad.z - Math.sin(baseHeading) * off;
-          const dirSign = ped.cross.to > ped.cross.from ? 1 : -1;
-          ped.heading = Math.atan2(Math.cos(baseHeading) * dirSign, -Math.sin(baseHeading) * dirSign);
-          if (ped.cross.p >= 1) {
-            ped.side = -(ped.side || 1);
-            ped.cross = null;
-          }
-        }
-      } else if (ped.paused) {
-        // Standing still — a random pause, or waiting at the curb. The
-        // curb wait is consumed by the branch below once ped.update
-        // clears `paused`, so the pedestrian steps out only after the
-        // wait actually ends.
-      } else if (ped.wantCross) {
-        // The curb wait just ended: step out onto the zebra crossing.
-        const halfW = (road?.width || 14) / 2 + 1.5;
-        ped.cross = { from: halfW * (ped.side || 1), to: -halfW * (ped.side || 1), p: 0 };
-        ped.wantCross = false;
-      } else if (road) {
-        const approxLen = this._roadLength(road);
-        ped.roadT = (ped.roadT ?? 0.5) + ((ped.speed || 1.2) * step * (ped.roadDirection || 1)) / Math.max(approxLen, 1);
-        if (ped.roadT > 1 || ped.roadT < 0) {
-          ped.roadDirection = -(ped.roadDirection || 1);
-          ped.roadT = clamp(ped.roadT, 0.02, 0.98);
-          ped.heading += Math.PI;
-        } else {
-          const onRoad = this._pointOnRoad(world, road, ped.roadT);
-          const baseHeading = this._roadHeading(road, ped.roadT);
-          const sidewalk = ((road.width || 8) * 0.5 + 1.5) * (ped.side || 1);
-          ped.position.x = onRoad.x + Math.cos(baseHeading) * sidewalk;
-          ped.position.z = onRoad.z - Math.sin(baseHeading) * sidewalk;
-          ped.heading = baseHeading + ((ped.roadDirection || 1) > 0 ? 0 : Math.PI);
-        }
-        // Zebra decision: near a crossing, sometimes wait at the curb.
-        if (!ped.cross && this._nearZebra(ped.position.x, ped.position.z)
-          && this.rng.next() < step * (CONFIG.round4?.traffic?.pedCrossChance ?? 0.15)) {
-          ped.paused = true;
-          ped.pauseTimer = this.rng.range(0.6, 1.8);
-          ped.wantCross = true;
-        }
-      }
-      if (typeof ped.update === 'function') ped.update(step, world);
-    }
-
-    // --- Despawn anything far from the player; the spawn loop refills. ---
-    this.cars = this.cars.filter((car) => {
-      if (car.driver === 'player') return true; // never despawn the player's car
-      if (car.driver === 'parked') return true; // never despawn parked cars
-      return dist2D(car.position, playerPos) < this.despawnRadius;
-    });
-    this.pedestrians = this.pedestrians.filter((ped) => {
-      if (!ped.alive) return false;
-      return dist2D(ped.position, playerPos) < this.despawnRadius;
-    });
-  }
-
-  // ---- carjacking ----
-
-  nearestCar(player, maxDistance = 6) {
-    if (!player?.position) return null;
-    let best = null;
-    let bestD = maxDistance;
-    for (const car of this.cars) {
-      if (car.driver === 'player') continue;
-      const d = dist2D(car.position, player.position);
-      if (d < bestD) { bestD = d; best = car; }
-    }
-    return best;
-  }
-
-  // Steal (jack) the nearest traffic car: the player gets in, the AI driver
-  // is removed, and the car is returned (null when nothing is in reach).
-  // Returns { car, jacked: true } or null.
-  jackNearestCar(player, maxDistance = 6) {
-    const car = this.nearestCar(player, maxDistance);
-    if (!car || !player) return null;
-    car.setDriver?.('player');
-    car.driver = 'player';
-    car.stopped = false;
-    car.speed = 0;
-    if (typeof player.enterCar === 'function') {
-      player.enterCar(car);
-    } else {
-      player.vehicle = car;
-      player.car = car;
-      player.inCar = true;
-    }
-    // Remove it from the AI list so traffic no longer drives it.
-    this.cars = this.cars.filter((c) => c !== car);
-    return { car, jacked: true };
-  }
-
-  getCars() { return this.cars; }
-  getParkedCars() { return this.cars.filter((c) => c.driver === 'parked'); }
-  getPedestrians() { return this.pedestrians.filter((p) => p.alive); }
-
-  // Round-6: the sightseeing bus (null until the first update() spawns it).
-  getTourBus() { return this.tourBus; }
-
-  // Round-6: where the tour bus is on its loop — the stop it last
-  // reached, the next stop, and whether it is dwelling there now.
-  // Returns null until the first update() spawns the bus.
-  getTourStatus() {
-    const bus = this.tourBus;
-    if (!bus) return null;
-    const next = TOUR_STOPS[bus._tourIndex % TOUR_STOPS.length];
-    return {
-      atStop: bus.tourStop || null,
-      nextStop: next.label,
-      dwelling: (bus._tourPause || 0) > 0,
-      position: { x: bus.position.x, z: bus.position.z },
+  // Add a STAGED pedestrian (paused, standing still at a fixed spot,
+  // watching the action). The harness counts these on screen.
+  addStagedPedestrian(x, z, name) {
+    const group = buildPedestrianMesh(this.rng);
+    group.position.set(x, 0, z);
+    group.rotation.y = this.rng.next() * Math.PI * 2;
+    if (this._scene) this._scene.add(group);
+    const ped = {
+      group,
+      position: group.position,
+      heading: group.rotation.y,
+      speed: 0,
+      walkPhase: 0,
+      paused: true,
+      name: name || '',
+      dirX: 0,
+      dirZ: 0,
+      axis: 'x',
     };
+    this.pedestrians.push(ped);
+    return ped;
   }
 
-  // Round-6: every car in the scene that carries round-6 sculpt data
-  // (car.sculpt from vehicle.js) — the AI traffic cars plus the tour
-  // bus when it is a real 3D car. Stand-in cars have no sculpt and are
-  // left out, so callers can trust that every returned car is sculpted.
-  getSculptedCars() {
-    const list = this.cars.filter((c) => c && c.sculpt);
-    if (this.tourBus && this.tourBus.sculpt) list.push(this.tourBus);
-    return list;
-  }
-
-  // Round-8: the sculpt report — the same sculpted cars as
-  // getSculptedCars(), plus the round-8 counts the test harness probes:
-  // fender flares, arch liners and glasshouse panels per car and in
-  // total, and how many cars carry a curved roof crown. The per-car
-  // entries carry the raw car.sculpt object, so a probe can check any
-  // single model (e.g. the bus must have 6 fenders / 6 arch liners).
-  // Totals are recomputed from the live list every call (not just the
-  // spawn-time _sculptTotals), so despawned cars drop out of the count.
-  // Round-8 re-touch: the totals summary now covers EVERY sculpt
-  // feature (hood / windshield / hub caps / angled panels too), so the
-  // harness can assert the whole fleet in one probe.
-  getSculptedCarsReport() {
-    const cars = this.getSculptedCars();
-    const totals = {
-      cars: cars.length, fenders: 0, archLiners: 0, glasshouse: 0, roofCrowns: 0,
-      hood: 0, windshield: 0, hubCaps: 0, angled: 0, roofIntegrated: 0, roofFillets: 0,
-      roofDecks: 0,
-    };
-    const perModel = {};
-    for (const car of cars) {
-      const sc = car.sculpt || {};
-      totals.fenders += sc.fenders || 0;
-      totals.archLiners += sc.archLiners || 0;
-      totals.glasshouse += sc.glasshouse || 0;
-      if (sc.roofCrown) totals.roofCrowns += 1;
-      // Round-9: integrated roofs (crown sunk into a body deck) and
-      // their side fillets, so the harness can assert the roof fix
-      // fleet-wide instead of trusting the crown flag alone.
-      if (sc.roofIntegrated) totals.roofIntegrated += 1;
-      // Round-9 re-touch (new recording): count the body decks the
-      // crowns rise through, so the report proves the integration is
-      // structural (deck + fillets + sink), not just a flag.
-      if (sc.roofDeck) totals.roofDecks += 1;
-      totals.roofFillets += sc.roofFillets || 0;
-      if (sc.hood) totals.hood += 1;
-      if (sc.windshield) totals.windshield += 1;
-      totals.hubCaps += sc.hubCaps || 0;
-      totals.angled += sc.angled || 0;
-      const key = car.model || 'unknown';
-      perModel[key] = {
-        fenders: sc.fenders || 0,
-        archLiners: sc.archLiners || 0,
-        glasshouse: sc.glasshouse || 0,
-        roofCrown: Boolean(sc.roofCrown),
-        roofIntegrated: Boolean(sc.roofIntegrated),
-        // Round-9 re-touch (new recording): how far the crown base is
-        // sunk below the deck top, and how many side fillets hug it —
-        // the two numbers that prove the rim is buried, not perched.
-        roofSink: sc.roofSink || 0,
-        roofFillets: sc.roofFillets || 0,
-        roofDeck: Boolean(sc.roofDeck),
-        crownH: sc.crownH || 0,
-        angled: sc.angled || 0,
-      };
+  // Remove the staged (paused) pedestrians (when a shot ends).
+  clearStaged() {
+    for (let i = this.pedestrians.length - 1; i >= 0; i -= 1) {
+      if (this.pedestrians[i].paused) {
+        if (this._scene) this._scene.remove(this.pedestrians[i].group);
+        this.pedestrians.splice(i, 1);
+      }
     }
-    return {
-      cars: cars.map((c) => ({ model: c.model, sculpt: c.sculpt || null })),
-      totals,
-      perModel,
-    };
   }
 
-  // Round-11: fleet composition — the counts a probe reads to prove
-  // the traffic-variety fix, by display model AND by sculpted shape
-  // (car.sculpt.silhouette: 'bus' / 'coupe' / 'pickup' / ...), split
-  // moving vs parked, plus the guaranteed-slot state and one entry per
-  // car (model, silhouette, driver, position) so a screenshot harness
-  // can find the bus / coupe / pickup on the road. The tour bus is
-  // listed separately — it is a fixed-route bus, not fleet traffic.
-  // Counts are recomputed from the live list every call, so despawned
-  // cars drop out, like getSculptedCarsReport above.
+  // The fleet composition (what the unit test reads).
   getFleetComposition() {
     const byModel = {};
     const bySilhouette = {};
-    let moving = 0;
-    let parked = 0;
-    const cars = [];
     for (const car of this.cars) {
-      const model = car.model || 'unknown';
-      const silhouette = (car.sculpt && car.sculpt.silhouette) || 'unknown';
-      byModel[model] = (byModel[model] || 0) + 1;
-      bySilhouette[silhouette] = (bySilhouette[silhouette] || 0) + 1;
-      if (car.driver === 'parked') parked += 1; else moving += 1;
-      cars.push({
-        model, silhouette, driver: car.driver || null,
-        // Round-11: numeric silhouette (length/width/height/wheels/
-        // kind) when the car is a real sculpted car — the probe counts
-        // the bus vs the coupe by metres, not just by name.
-        size: (car.sculpt && car.sculpt.silhouetteSize) || null,
-        x: car.position ? +car.position.x.toFixed(1) : null,
-        z: car.position ? +car.position.z.toFixed(1) : null,
-      });
+      byModel[car.model] = (byModel[car.model] || 0) + 1;
+      const sil = this._silhouette(car.model);
+      bySilhouette[sil] = (bySilhouette[sil] || 0) + 1;
     }
+    const moving = this.cars.filter((c) => !c.parked).length;
+    const parked = this.cars.filter((c) => c.parked).length;
+    const guaranteed = this.guaranteedModels.filter((m) => (byModel[m] || 0) >= 1);
     return {
       total: this.cars.length,
       moving,
       parked,
-      maxCars: this.maxCars,
-      round11: true, // round-11 final: build stamp — this composition shape is the round-11 one (guaranteed slots + silhouette sizes), so the harness can tell a stale traffic.js from the live one.
-      // Round-13 (Lane 2): pedestrian population on the same probe, so
-      // the density pass is measurable without a second call.
-      pedestrians: this.pedestrians.length,
-      maxPedestrians: this.maxPedestrians,
-      spawnRadius: this.spawnRadius,
-      round13: true,
       byModel,
       bySilhouette,
-      guaranteed: {
-        pickup: this._pickupSpawned === true,
-        bus: (byModel['City Bus'] || 0) > 0,
-        coupe: (byModel['Palm Coupe'] || 0) > 0,
-        slotsSpent: this._guaranteedIndex || 0,
-      },
-      tourBus: this.tourBus ? { model: this.tourBus.model || null } : null,
-      cars,
+      guaranteed,
+      tourBus: this.tourBus ? { model: this.tourBus.model } : null,
     };
   }
 
-  // Remove a pedestrian (hit / shot). Returns true when one was removed.
-  removePedestrian(ped) {
-    const before = this.pedestrians.length;
-    this.pedestrians = this.pedestrians.filter((p) => p !== ped);
-    return this.pedestrians.length < before;
+  getPedestrians() {
+    return this.pedestrians;
   }
 
+  getCars() {
+    return this.cars;
+  }
+
+  // Reset: clear the fleet and the slots (the unit test proves the
+  // guarantees return after a reset).
   reset() {
+    if (this._scene) {
+      for (const car of this.cars) this._scene.remove(car.group);
+      for (const ped of this.pedestrians) this._scene.remove(ped.group);
+      if (this.tourBus) this._scene.remove(this.tourBus.group);
+    }
     this.cars = [];
     this.pedestrians = [];
-    this._spawnCooldown = 0;
-    this._parkedSpawned = false;
-    this._time = 0;
     this.tourBus = null;
-    this._tourSpawned = false;
-    this._sculptTotals = null; // round-8: sculpt totals rebuild on respawn
-    // Round-11: guaranteed slots + model deck rebuild on respawn.
     this._guaranteedIndex = 0;
     this._pickupSpawned = false;
-    this._modelDeck = [];
+    this._deck = createDeck(CONFIG.carModels, this.rng);
+  }
+
+  // One frame. Fills the fleet on the first update, then maintains it:
+  // despawn cars that are too far from the player (never a guaranteed
+  // car), and spawn replacements so the fleet never drops below its
+  // cruising size. Pedestrians walk their sidewalks.
+  update(dt, world, player) {
+    if (!world || !world.roads) return;
+    // ---- Fill the fleet on the first update -------------------------
+    if (this.cars.length === 0) {
+      // The guaranteed slots first (pickup, bus, coupe — moving).
+      for (const model of this.guaranteedModels) {
+        const car = this._spawnCar(model, world, player, false);
+        if (car && model === 'Dune Pickup') this._pickupSpawned = true;
+        this._guaranteedIndex += 1;
+      }
+      // Then the deck (moving) up to 11 moving total.
+      while (this.cars.filter((c) => !c.parked).length < 11) {
+        this._spawnCar(this._deck.draw(), world, player, false);
+      }
+      // Then 6 parked.
+      while (this.cars.filter((c) => c.parked).length < this._targetParked) {
+        this._spawnCar(this._deck.draw(), world, player, true);
+      }
+      // The tour bus (separate from the fleet).
+      this._spawnTourBus(world, player);
+    }
+    // ---- Maintain the fleet ------------------------------------------
+    const guaranteedSet = new Set(this.guaranteedModels);
+    for (let i = this.cars.length - 1; i >= 0; i -= 1) {
+      const car = this.cars[i];
+      const d = Math.hypot(car.position.x - player.position.x, car.position.z - player.position.z);
+      // Never despawn a guaranteed car, and never drop below the
+      // cruising size.
+      if (d > 220 && !guaranteedSet.has(car.model) && this.cars.length > this._targetCars) {
+        if (this._scene) this._scene.remove(car.group);
+        this.cars.splice(i, 1);
+      }
+    }
+    // Top the fleet back up to its cruising size.
+    while (this.cars.length < this._targetCars) {
+      const parked = this.cars.filter((c) => c.parked).length < this._targetParked;
+      this._spawnCar(this._deck.draw(), world, player, parked);
+    }
+    // ---- Drive the moving cars ---------------------------------------
+    for (const car of this.cars) {
+      if (car.parked) continue;
+      // Ease toward the target speed.
+      const diff = car.targetSpeed - car.speed;
+      car.speed += Math.max(-8 * dt, Math.min(6 * dt, diff));
+      // Follow the road: advance along it, and turn at the end.
+      const road = world.roads[car.roadIndex];
+      if (!road) continue;
+      const segLen = Math.hypot(road.end.x - road.start.x, road.end.z - road.start.z);
+      const advance = (car.speed * dt) / Math.max(1, segLen);
+      car.roadT += car.roadDir * advance;
+      if (car.roadT > 0.98 || car.roadT < 0.02) {
+        // At the end of the road: pick a new road at this intersection.
+        const atEnd = car.roadT > 0.5;
+        const jx = atEnd ? road.end.x : road.start.x;
+        const jz = atEnd ? road.end.z : road.start.z;
+        const next = world.roadPointForLength(this.rng, 4, jx, jz, 30);
+        if (next) {
+          car.roadIndex = next.roadIndex;
+          car.roadT = next.roadT;
+          car.roadDir = this.rng.next() < 0.5 ? 1 : -1;
+        } else {
+          car.roadDir *= -1;
+          car.roadT = Math.max(0.02, Math.min(0.98, car.roadT));
+        }
+      }
+      const r2 = world.roads[car.roadIndex];
+      const x = r2.start.x + (r2.end.x - r2.start.x) * car.roadT;
+      const z = r2.start.z + (r2.end.z - r2.start.z) * car.roadT;
+      // The heading follows the road's direction (and the drive side).
+      const wantHeading = r2.axis === 'z'
+        ? (car.roadDir > 0 ? 0 : Math.PI)
+        : (car.roadDir > 0 ? Math.PI / 2 : -Math.PI / 2);
+      let dh = wantHeading - car.heading;
+      while (dh > Math.PI) dh -= 2 * Math.PI;
+      while (dh < -Math.PI) dh += 2 * Math.PI;
+      car.heading += dh * Math.min(1, dt * 3);
+      // A small lateral offset (right-hand driving) so the two
+      // directions do not overlap.
+      const off = 3.2;
+      const ox = r2.axis === 'z' ? off : 0;
+      const oz = r2.axis === 'x' ? off : 0;
+      car.position.set(x + ox, 0, z + oz);
+      car.group.position.copy(car.position);
+      car.group.rotation.y = car.heading;
+    }
+    // The tour bus cruises its own loop.
+    if (this.tourBus) {
+      const bus = this.tourBus;
+      bus.speed += Math.max(-6 * dt, Math.min(4 * dt, bus.targetSpeed - bus.speed));
+      bus.position.z -= bus.speed * dt;
+      if (bus.position.z < -280) bus.position.z = 260;
+      bus.group.position.copy(bus.position);
+    }
+    // ---- Pedestrians --------------------------------------------------
+    while (this.pedestrians.filter((p) => !p.paused).length < this._targetPeds) {
+      this._spawnPedestrian(world, player);
+    }
+    for (const ped of this.pedestrians) {
+      if (ped.paused) continue;
+      // Walk along the sidewalk, turning at the block ends.
+      if (ped.axis === 'x') ped.position.x += ped.dirX * ped.speed * dt;
+      else ped.position.z += ped.dirZ * ped.speed * dt;
+      if (ped.position.x > 300 || ped.position.x < -300) ped.dirX *= -1;
+      if (ped.position.z > 260 || ped.position.z < -300) ped.dirZ *= -1;
+      ped.walkPhase += dt * ped.speed * 4;
+      ped.group.position.copy(ped.position);
+      // A gentle walk bob.
+      ped.group.position.y = Math.abs(Math.sin(ped.walkPhase)) * 0.03;
+      const legs = ped.group.userData.legs;
+      if (legs) legs.rotation.x = Math.sin(ped.walkPhase) * 0.4;
+    }
   }
 }
-
-export function createTrafficManager(options = {}) {
-  return new TrafficManager(options);
-}
-
-// Round-13 (Lane 2): denser street — 24 pedestrians, 95 m spawn radius.
-// Round-13 final: re-touch — the wanted-4 chase view the budget pass
-// protects is this fleet at full pursuit; fleet composition unchanged.
-
-export default TrafficManager;

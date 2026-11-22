@@ -1,304 +1,129 @@
-// Keyboard + mouse input singleton (Lane A).
-// Round-13B: no input change — staged shots are headless; staging calls
-// input.attach but no keys are pressed for any of the four shots.
-// Round 14: no input change — staged shots are headless; the combat
-// crosshair is repositioned by main.js, not by input.
-// Tracks held keys (by e.code), accumulated mouse deltas, and pointer lock.
-// Lane B reads this each frame; nothing here touches the game state itself.
+// Solmar Bay — input (keyboard + mouse).
+//
+// WASD moves (on foot) or drives (in a car). Shift runs. E enters
+// or exits a car. P pauses. Right mouse aims, left mouse fires.
+// The input is a small state machine: the game reads it once per
+// frame, and one-shot actions (E, P) are consumed so they fire once.
 
-const heldKeys = new Set();
-// Keys newly pressed since the last consumePressed() call (pressed-edge
-// detection — a key is added here only when it was not already held).
-const pressedKeys = new Set();
-let mouseDX = 0;
-let mouseDY = 0;
-let pointerLocked = false;
-let attachedCanvas = null;
-let listenersAttached = false;
+import { CONFIG } from './config.js';
 
-function onKeyDown(event) {
-  if (!heldKeys.has(event.code)) pressedKeys.add(event.code);
-  heldKeys.add(event.code);
-  // Round-8: V cycles the chase-camera distance (near / mid / far).
-  // Pressed-edge only (event.repeat is filtered by the game loop's
-  // keydown handler, but this singleton also guards it): holding V
-  // must not spin through the levels. The level is read by main.js
-  // via input.getChaseDistanceLevel() / player.setChaseDistance().
-  if (event.code === 'KeyV' && !event.repeat) cycleChaseDistance();
-  // Keep the page from scrolling on game keys.
-  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Tab'].includes(event.code)) {
-    event.preventDefault();
-  }
-  // Round 7: a key pressed while the tab is unfocused can leave a stale
-  // wheel delta behind — the blur handler clears it (see attach below).
+export function createInput(canvas) {
+  const keys = new Set();
+  const actions = new Set();
+  const input = {
+    // The mouse (for aiming and firing).
+    mouseX: 0,
+    mouseY: 0,
+    aiming: false,
+    firing: false,
+    // The camera-relative movement (set by main.js each frame).
+    cameraHeading: 0,
+
+    // Attach the listeners.
+    attach() {
+      window.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
+        keys.add(e.code);
+        if (e.code === 'KeyE') actions.add('enterExit');
+        if (e.code === 'KeyP') actions.add('pause');
+        if (e.code === 'Escape') actions.add('pause');
+        if (e.code === 'KeyM') actions.add('mute');
+        if (e.code === 'Space') e.preventDefault();
+      });
+      window.addEventListener('keyup', (e) => {
+        keys.delete(e.code);
+      });
+      if (canvas) {
+        canvas.addEventListener('mousedown', (e) => {
+          if (e.button === 2) input.aiming = true;
+          if (e.button === 0) input.firing = true;
+        });
+        window.addEventListener('mouseup', (e) => {
+          if (e.button === 2) input.aiming = false;
+          if (e.button === 0) input.firing = false;
+        });
+        canvas.addEventListener('mousemove', (e) => {
+          input.mouseX = e.clientX;
+          input.mouseY = e.clientY;
+        });
+        canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+      }
+      // Lose the keys when the window blurs (so a stuck key does not
+      // drive the car forever).
+      window.addEventListener('blur', () => {
+        keys.clear();
+        input.aiming = false;
+        input.firing = false;
+      });
+    },
+
+    // Consume a one-shot action (returns true once, then false).
+    consumeAction(name) {
+      if (actions.has(name)) {
+        actions.delete(name);
+        return true;
+      }
+      return false;
+    },
+
+    // The movement vector (camera-relative): WASD, normalised.
+    // Forward is away from the camera (the camera looks along its
+    // heading), so W moves away from the camera.
+    moveVector() {
+      let x = 0;
+      let z = 0;
+      const h = input.cameraHeading;
+      // The camera's forward (on the ground) and right vectors.
+      const fx = Math.sin(h);
+      const fz = Math.cos(h);
+      const rx = Math.cos(h);
+      const rz = -Math.sin(h);
+      if (keys.has('KeyW') || keys.has('ArrowUp')) { x += fx; z += fz; }
+      if (keys.has('KeyS') || keys.has('ArrowDown')) { x -= fx; z -= fz; }
+      if (keys.has('KeyD') || keys.has('ArrowRight')) { x += rx; z += rz; }
+      if (keys.has('KeyA') || keys.has('ArrowLeft')) { x -= rx; z -= rz; }
+      const len = Math.hypot(x, z);
+      if (len > 0) { x /= len; z /= len; }
+      return { x, z };
+    },
+
+    // The drive controls: throttle (0..1), brake (0..1), steer
+    // (-1..1, +1 = right). This matches the car's update() exactly:
+    // it reads controls.throttle, controls.brake, controls.steer.
+    driveControls() {
+      const throttle = (keys.has('KeyW') || keys.has('ArrowUp') ? 1 : 0);
+      const brake = (keys.has('KeyS') || keys.has('ArrowDown') || keys.has('Space') ? 1 : 0);
+      const steer = (keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0)
+        - (keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0);
+      return { throttle, brake, steer };
+    },
+
+    isRunning() {
+      return keys.has('ShiftLeft') || keys.has('ShiftRight');
+    },
+
+    isAiming() {
+      return input.aiming;
+    },
+
+    isFiring() {
+      return input.firing;
+    },
+
+    isPaused() {
+      return actions.has('pause');
+    },
+
+    // For the tests: inject a key press without a real keyboard.
+    press(code) {
+      keys.add(code);
+      if (code === 'KeyE') actions.add('enterExit');
+      if (code === 'KeyP') actions.add('pause');
+    },
+
+    release(code) {
+      keys.delete(code);
+    },
+  };
+  return input;
 }
-
-function onKeyUp(event) {
-  heldKeys.delete(event.code);
-}
-
-function onMouseMove(event) {
-  if (!pointerLocked) return;
-  mouseDX += event.movementX || 0;
-  mouseDY += event.movementY || 0;
-}
-
-// Round-5: mouse-wheel delta (pixels, deltaY), accumulated until the game
-// loop consumes it — the chase camera zooms in/out per notch.
-let wheelDelta = 0;
-function onWheel(event) {
-  wheelDelta += event.deltaY || 0;
-}
-
-// Round-11 (Lane A): the landmark-look key, named in one place so the
-// HUD hint in index.html and the main.js handler can never drift apart.
-// main.js reads it off the input singleton (input.landmarkLookKey).
-export const LANDMARK_LOOK_KEY = 'KeyL';
-// Round-11 final: the look now frames the landmark from a clear
-// viewpoint (occlusion solver), so the help names what L actually
-// does — a clear framed view, not just a camera swing.
-export const LANDMARK_LOOK_HELP = 'L — look at landmark (clear framed view)';
-// Round-11 final (re-touch): the help text is the contract — the consolidated harness holds the game to it on all 12 landmark directions (3 landmarks x N/S/E/W), settled snapshot plus screenshot.
-
-// Round-8: chase-camera distance level (0 near / 1 mid / 2 far), cycled
-// by the V key. The level lives here so the game loop can read it every
-// frame without owning input state; player.js setChaseDistance() is the
-// same three levels expressed as distance/height multipliers, and
-// main.js applies whichever side it reads (input.chaseDistanceLevel).
-// In-game help line (the controls hint in index.html is owned by
-// another lane — the coordinator adds "V camera distance" there; this
-// export is the same text, kept next to the binding so it cannot drift):
-//   V — chase camera near / mid / far
-export const CHASE_DISTANCE_HELP = 'V — chase camera near / mid / far';
-let chaseDistanceLevel = 1; // 'mid', matching player.js DEFAULT_CHASE_DISTANCE_LEVEL
-function cycleChaseDistance() {
-  chaseDistanceLevel = (chaseDistanceLevel + 1) % 3;
-  notifyChaseDistanceListeners();
-  return chaseDistanceLevel;
-}
-// Round-8 re-touch: chase-distance listeners — main.js registers one to
-// show the level name in the HUD when V cycles. Each listener is called
-// with the new level name ('near' / 'mid' / 'far'). Returns an
-// unsubscribe function; a throwing listener is swallowed so a HUD bug
-// can never break input. Only the V cycle notifies — programmatic
-// setChaseDistanceLevel() (load / restore) stays silent.
-const chaseDistanceListeners = new Set();
-function setChaseDistanceListener(fn) {
-  if (typeof fn !== 'function') return null;
-  chaseDistanceListeners.add(fn);
-  return () => { chaseDistanceListeners.delete(fn); };
-}
-function notifyChaseDistanceListeners() {
-  const name = CHASE_DISTANCE_NAMES[chaseDistanceLevel];
-  for (const fn of [...chaseDistanceListeners]) {
-    try { fn(name); } catch (_) { /* listener errors must not break input */ }
-  }
-}
-function getChaseDistanceLevel() { return chaseDistanceLevel; }
-function setChaseDistanceLevel(level) {
-  // Round-10: clamp out-of-range levels to the nearest valid level
-  // instead of silently ignoring them — a caller passing 5 used to
-  // leave a stale level behind with no indication anything was wrong.
-  const n = Math.round(level);
-  chaseDistanceLevel = Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : chaseDistanceLevel;
-  return chaseDistanceLevel;
-}
-const CHASE_DISTANCE_NAMES = ['near', 'mid', 'far'];
-function getChaseDistanceName() { return CHASE_DISTANCE_NAMES[chaseDistanceLevel]; }
-
-function onPointerLockChange() {
-  pointerLocked = document.pointerLockElement === attachedCanvas;
-  if (!pointerLocked) {
-    mouseDX = 0;
-    mouseDY = 0;
-  }
-}
-
-function attach(canvas) {
-  if (listenersAttached) return;
-  attachedCanvas = canvas || null;
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', () => { resetInput(); });
-  document.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('wheel', onWheel, { passive: true }); // round 5: camera zoom
-  document.addEventListener('pointerlockchange', onPointerLockChange);
-  listenersAttached = true;
-}
-
-// Round-9: reset all transient input state — held keys, pressed edges,
-// mouse deltas and the wheel accumulator. The blur handler calls it so
-// a key held when the tab loses focus can never stick, and the pause
-// menu (or a test) can call input.reset() to the same effect. The
-// chase-distance level and its listeners are NOT touched: the V-key
-// preference is a setting, not transient state.
-// Round-9 fix folded in: the old blur handler cleared keys and wheel
-// but left mouseDX/mouseDY behind, so a mouse move made while the tab
-// was unfocused could swing the camera on return.
-function resetInput() {
-  heldKeys.clear();
-  pressedKeys.clear();
-  mouseDX = 0;
-  mouseDY = 0;
-  wheelDelta = 0;
-}
-
-function requestPointerLock(canvas) {
-  const target = canvas || attachedCanvas;
-  if (!target) return;
-  attach(target);
-  if (document.pointerLockElement !== target) {
-    try {
-      const result = target.requestPointerLock();
-      if (result && typeof result.catch === 'function') result.catch(() => {});
-    } catch (err) {
-      // Pointer lock can be refused (e.g. iframe permissions); game still runs.
-    }
-  }
-}
-
-function exitPointerLock() {
-  if (document.pointerLockElement) document.exitPointerLock();
-}
-
-// Is the named key currently held? Accepts e.code values such as 'KeyW',
-// 'Space', 'ShiftLeft', 'ArrowUp'. Also accepts single letters ('w', 'W').
-function isDown(code) {
-  if (heldKeys.has(code)) return true;
-  if (typeof code === 'string' && code.length === 1) {
-    return heldKeys.has('Key' + code.toUpperCase());
-  }
-  return false;
-}
-
-// Round-3 polish: true when ANY of the given codes is held. The game
-// loop uses it to tell throttle input apart from coasting (FOV kick).
-function isDownAny(...codes) {
-  for (const code of codes) if (isDown(code)) return true;
-  return false;
-}
-
-// Movement helpers used by the player / vehicle update.
-// Forward is W / ArrowUp, back is S / ArrowDown, left A, right D.
-function moveVector() {
-  let x = 0;
-  let y = 0;
-  if (isDown('KeyW') || isDown('ArrowUp')) y += 1;
-  if (isDown('KeyS') || isDown('ArrowDown')) y -= 1;
-  if (isDown('KeyA') || isDown('ArrowLeft')) x -= 1;
-  if (isDown('KeyD') || isDown('ArrowRight')) x += 1;
-  return { x, y };
-}
-
-// Consume and return the mouse movement accumulated since the last call.
-function consumeMouseDelta() {
-  const out = { dx: mouseDX, dy: mouseDY };
-  mouseDX = 0;
-  mouseDY = 0;
-  return out;
-}
-
-// Round-5: consume and return the accumulated wheel delta (pixels,
-// deltaY) since the last call, then clear it. Positive = scrolled down.
-function consumeWheelDelta() {
-  const out = wheelDelta;
-  wheelDelta = 0;
-  return out;
-}
-
-// Round-6: consume and return which of the given codes were pressed
-// since the last consumePressed() — a multi-code pressed-edge check for
-// one-shot keys that share the press queue (the landmark-focus key L
-// and the camera toggle C both read the same queue in main.js).
-function consumePressedCodes(...codes) {
-  const hit = [];
-  for (const code of codes) {
-    const alt = typeof code === 'string' && code.length === 1 ? 'Key' + code.toUpperCase() : null;
-    if (pressedKeys.has(code) || (alt && pressedKeys.has(alt))) {
-      pressedKeys.delete(code);
-      if (alt) pressedKeys.delete(alt);
-      hit.push(code);
-    }
-  }
-  return hit;
-}
-
-// Consume and return the e.code values pressed since the last call,
-// then clear the set. A held key is reported once, on its first keydown.
-function consumePressed() {
-  const out = [...pressedKeys];
-  pressedKeys.clear();
-  return out;
-}
-
-// Round 4: peek whether a key was pressed since the last consumePressed()
-// WITHOUT consuming it — for toggles and one-shot checks that share the
-// press queue with the game loop. Accepts e.code values and single
-// letters, like isDown(). anyPressed() is true when any code matches.
-function pressed(code) {
-  if (pressedKeys.has(code)) return true;
-  if (typeof code === 'string' && code.length === 1) {
-    return pressedKeys.has('Key' + code.toUpperCase());
-  }
-  return false;
-}
-
-function anyPressed(...codes) {
-  for (const code of codes) if (pressed(code)) return true;
-  return false;
-}
-
-// Round-4b: check AND consume a single pressed code — so two consumers
-// (the game loop and a menu handler) do not both act on the same press.
-// Accepts e.code values and single letters, like isDown().
-function consumePressedCode(code) {
-  const alt = typeof code === 'string' && code.length === 1 ? 'Key' + code.toUpperCase() : null;
-  if (pressedKeys.has(code) || (alt && pressedKeys.has(alt))) {
-    pressedKeys.delete(code);
-    if (alt) pressedKeys.delete(alt);
-    return true;
-  }
-  return false;
-}
-
-export { consumePressed, setChaseDistanceListener };
-
-export const input = {
-  attach,
-  reset: resetInput, // round-9: clear all transient input state
-  requestPointerLock,
-  exitPointerLock,
-  isDown,
-  isDownAny,
-  pressed,
-  anyPressed,
-  consumePressedCode,
-  consumePressedCodes,
-  moveVector,
-  consumeMouseDelta,
-  consumeWheelDelta,
-  consumePressed,
-  cycleChaseDistance,
-  getChaseDistanceLevel,
-  setChaseDistanceLevel,
-  getChaseDistanceName,
-  setChaseDistanceListener,
-  chaseDistanceHelp: CHASE_DISTANCE_HELP,
-  landmarkLookKey: LANDMARK_LOOK_KEY, // round-11: L looks at the nearest landmark
-  landmarkLookHelp: LANDMARK_LOOK_HELP,
-  get chaseDistanceLevel() {
-    return chaseDistanceLevel;
-  },
-  get pointerLocked() {
-    return pointerLocked;
-  },
-  get keys() {
-    return heldKeys;
-  },
-};
-
-// Round-13 final: re-touch — no new keys; the staged shots drive the
-// game through the same input paths (E carjack, F punch/shoot, L look,
-// P pause) the harness presses, input intact.
-
-export default input;
