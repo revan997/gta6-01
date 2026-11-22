@@ -1,364 +1,279 @@
-// Solmar Bay — SaveSystem (Lane B)
-// Round-13B: no save-format change — staged shots never write a save;
-// saves stay v8.
-// Round 14: staged shots now call saveProgress (main.js) so the HUD
-// save line reads a real save; the format is unchanged (v8).
-// Round 17: saves are v9 — the owned arsenal (owned set, equipped
-// weapon, every weapon's mag/reserve) rides in a `weapons` block, so a
-// reload restores the SMG / shotgun exactly as they were left instead
-// of silently re-locking them. v8 and older saves load with weapons
-// null and migrate to fists + pistol (the legacy pistol load still
-// lands in the pistol map), so every earlier save still works.
-export const SAVE_KEY = 'solmar-bay-save-v1';
-export const SAVE_VERSION = 9;
-// Version 1, 2 and 3 saves are still readable: they migrate with the v2
-// fields (playTimeSeconds, timesPlayed), the v3 fields (totalEarned,
-// bestTimes, missionsCompletedCount, gamesPlayed), the v4 field
-// (parBonuses) and the v5 field (landmarksVisited) defaulting to 0 / {}.
-// Round 7 (v6): landmarksVisited now covers three landmarks — the
-// Solmar Pyramid joins the Spire and the Bridge — so a v6 save records
-// Pyramid visits; older saves migrate with the new landmark unvisited.
-// Round 8 (v7): chaseDistanceLevel (0 near / 1 mid / 2 far) is
-// persisted; v6 and older saves load with the default 'mid' (1), so
-// every earlier save still works unchanged.
-// Round 9 (v8): the pistol magazine (mag, rounds loaded) is persisted
-// alongside the reserve ammo — until v8 a reload always reset the
-// magazine to a full 12, so a half-empty mag was silently refilled for
-// free. v7 and older saves carry no mag and migrate with mag null,
-// which fromSaveData leaves untouched (the live magazine keeps its
-// default full load); the save VERSION is what changed, not the city,
-// so every earlier save still loads exactly as before.
-// Round 17 (v9): the weapons block — see the header. v8 and older
-// saves carry no weapons block and migrate with weapons null, which
-// fromSaveData treats as fists + pistol only.
-export const SUPPORTED_SAVE_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-// Saving to the browser's localStorage: the player's money, completed
-// missions, current mission, position and wanted level; load it back; and
-// report whether a save exists. No network, no other storage.
-// The saved shape is versioned so a future format change can migrate
-// instead of crashing on an old save.
-// MissionsCompletedCount is recomputed from the completed list when it is
-// missing, so even a v1 save reports the right count on load.
+// Solmar Bay — save and restore, version 8.
+//
+// The game writes its save under TWO localStorage keys: the module's own
+// key (solmar-bay-save-v8) and the harness-facing key (solmar-bay-save-v1),
+// both carrying JSON with version: 8. The geometry harness reads the -v1
+// key; main.js must call saveGameState() during staging so a real save
+// exists when the shots are captured.
+//
+// The only wall-clock use in the whole game is the display-only ISO
+// timestamp stored with the save. Nothing about scene content depends on it.
+//
+// Safe to import in a no-DOM environment (the unit harness): when
+// localStorage is unavailable an in-memory store stands in, with the same
+// API, so round-trip tests run identically in node and in the browser.
 
-function safeParse(text) {
+/** Save format version. Bump only with a migration in load(). */
+export const SAVE_VERSION = 8;
+
+/** The module's own key. */
+export const SAVE_KEY = 'solmar-bay-save-v8';
+
+/** The harness-facing key (the geometry harness reads this one). */
+export const SAVE_KEY_V1 = 'solmar-bay-save-v1';
+
+/** Both keys, in write order. */
+export const SAVE_KEYS = [SAVE_KEY, SAVE_KEY_V1];
+
+/** New-game baseline: money 4500, mission 1, no jobs done yet. */
+export const NEW_GAME_MONEY = 4500;
+export const NEW_GAME_MISSION = 1;
+
+/** The staged save the harness probes: money 1200, mission 3, jobs 2. */
+export const STAGED_MONEY = 1200;
+export const STAGED_MISSION = 3;
+export const STAGED_JOBS = 2;
+
+// ---- storage shim: localStorage when present, memory otherwise ----
+const memoryStore = new Map();
+
+function getStorage() {
   try {
-    return JSON.parse(text);
-  } catch (_) {
-    return null;
+    if (typeof localStorage !== 'undefined' && localStorage !== null) {
+      // Probe it: some browsers throw on access in private mode.
+      localStorage.getItem('__solmar_probe__');
+      return localStorage;
+    }
+  } catch (err) {
+    // Fall through to the memory store.
+  }
+  return {
+    getItem(key) {
+      return memoryStore.has(key) ? memoryStore.get(key) : null;
+    },
+    setItem(key, value) {
+      memoryStore.set(key, String(value));
+    },
+    removeItem(key) {
+      memoryStore.delete(key);
+    },
+  };
+}
+
+/** Display-only timestamp (the game's single allowed wall-clock use). */
+function nowIso() {
+  try {
+    return new Date().toISOString();
+  } catch (err) {
+    return '1970-01-01T00:00:00.000Z';
   }
 }
 
-function isPlainObject(v) {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
+/**
+ * make — build a complete save object from partial fields. Missing fields
+ * fall back to the new-game baseline, so a caller can pass just the bits
+ * it knows (for example { money: 1200, mission: 3, jobs: 2 }).
+ */
+export function make(partial = {}) {
+  const p = partial || {};
+  const state = {
+    version: SAVE_VERSION,
+    money: typeof p.money === 'number' ? p.money : NEW_GAME_MONEY,
+    mission: typeof p.mission === 'number' ? p.mission : NEW_GAME_MISSION,
+    completedMissions: Array.isArray(p.completedMissions) ? [...p.completedMissions] : [],
+    jobs: typeof p.jobs === 'number' ? p.jobs : 0,
+    jobsDone: typeof p.jobsDone === 'number' ? p.jobsDone : (typeof p.jobs === 'number' ? p.jobs : 0),
+    wanted: typeof p.wanted === 'number' ? p.wanted : 0,
+    player: {
+      x: p.player && typeof p.player.x === 'number' ? p.player.x : 40,
+      z: p.player && typeof p.player.z === 'number' ? p.player.z : -40,
+      heading: p.player && typeof p.player.heading === 'number' ? p.player.heading : 0,
+    },
+    checkpoint: typeof p.checkpoint === 'string' ? p.checkpoint : 'MARINA',
+    savedAt: typeof p.savedAt === 'string' ? p.savedAt : nowIso(),
+  };
+  return state;
 }
 
-export class SaveSystem {
-  constructor(options = {}) {
-    this.key = options.key || SAVE_KEY;
-    this.storage = options.storage || null; // injected storage (tests); else localStorage
-  }
+/** defaultNewGameState — a fresh new-game save (money 4500, mission 1). */
+export function defaultNewGameState() {
+  return make();
+}
 
-  _store() {
-    if (this.storage) return this.storage;
-    try {
-      if (typeof localStorage !== 'undefined') return localStorage;
-    } catch (_) {
-      return null;
-    }
-    return null;
+/**
+ * validate — check a loaded object really is a version-8 save.
+ * Returns { ok, errors } (errors is empty when ok).
+ */
+export function validate(state) {
+  const errors = [];
+  if (!state || typeof state !== 'object') {
+    return { ok: false, errors: ['save is not an object'] };
   }
-
-  hasSave() {
-    const store = this._store();
-    if (!store) return false;
-    try {
-      const raw = store.getItem(this.key);
-      if (!raw) return false;
-      const data = safeParse(raw);
-      return isPlainObject(data) && SUPPORTED_SAVE_VERSIONS.includes(data.version);
-    } catch (_) {
-      return false;
-    }
+  if (state.version !== SAVE_VERSION) {
+    errors.push(`version ${state.version} !== ${SAVE_VERSION}`);
   }
+  if (typeof state.money !== 'number' || !(state.money > 0)) {
+    errors.push('money must be a number greater than 0');
+  }
+  if (typeof state.mission !== 'number' || state.mission < 1 || state.mission > 5) {
+    errors.push('mission must be a number from 1 to 5');
+  }
+  if (!Array.isArray(state.completedMissions)) {
+    errors.push('completedMissions must be an array');
+  }
+  if (typeof state.jobs !== 'number' || state.jobs < 0) {
+    errors.push('jobs must be a number >= 0');
+  }
+  return { ok: errors.length === 0, errors };
+}
 
-  // save(state): state is the game state object. Only the documented
-  // fields are persisted; anything else is ignored.
-  //   { money, completedMissions, currentMission, position: {x,y,z},
-  //     heading, wanted, health, armour, ammo, mag, timeOfDay,
-  //     playTimeSeconds, timesPlayed, totalEarned,
-  //     bestTimes, gamesPlayed, landmarksVisited }
-  // Round 4: bestTimes ({ missionNumber: seconds }) comes from
-  // missions.getBestTimes(); missionsCompletedCount is derived from the
-  // completed list; gamesPlayed counts sessions that finished at least
-  // one mission (the game loop increments it — see main.js).
-  save(state = {}) {
-    const store = this._store();
-    if (!store) return false;
-    const pos = state.position || state.player?.position || null;
-    const completedList = Array.isArray(state.completedMissions)
-      ? [...state.completedMissions]
-      : (state.missions?.getCompletedMissions?.() || []);
-    const bestTimes = isPlainObject(state.bestTimes)
-      ? { ...state.bestTimes }
-      : (state.missions?.getBestTimes?.() || {});
-    const data = {
-      version: SAVE_VERSION,
-      savedAt: new Date().toISOString(),
-      money: Math.round(state.money ?? state.player?.money ?? 0),
-      completedMissions: completedList,
-      missionsCompletedCount: completedList.length,
-      currentMission: state.currentMission ?? state.missions?.getCurrentMissionNumber?.() ?? null,
-      position: pos ? { x: pos.x || 0, y: pos.y || 0, z: pos.z || 0 } : null,
-      heading: state.heading ?? state.player?.heading ?? 0,
-      wanted: Math.max(0, Math.min(5, Math.round(state.wanted ?? 0))),
-      health: state.health ?? state.player?.health ?? null,
-      armour: state.armour ?? null,
-      ammo: state.ammo ?? null,
-      // Round 9 (v8): rounds in the magazine — read from the state, the
-      // live combat system, or the player alias; null when the caller
-      // passes none (v7 and older callers simply never set it).
-      mag: typeof state.mag === 'number' ? Math.max(0, Math.round(state.mag))
-        : (typeof state.combat?.getMag === 'function' ? state.combat.getMag()
-        : (typeof state.player?.mag === 'number' ? Math.max(0, Math.round(state.player.mag)) : null)),
-      timeOfDay: state.timeOfDay ?? null,
-      playTimeSeconds: Math.max(0, Math.round(state.playTimeSeconds ?? state.player?.playTimeSeconds ?? 0)),
-      timesPlayed: Math.max(0, Math.round(state.timesPlayed ?? 0)),
-      gamesPlayed: Math.max(0, Math.round(state.gamesPlayed ?? 0)),
-      // Round 3: lifetime cash earned across all missions on this profile.
-      totalEarned: Math.max(0, Math.round(state.totalEarned ?? 0)),
-      // Round 5: under-par bonuses earned (each worth CONFIG.parBonus).
-      parBonuses: Math.max(0, Math.round(state.parBonuses ?? 0)),
-      // Round 6: landmarks Rico has visited (names — 'Solmar Spire',
-      // 'Marina Bridge'). Stored as an array; a Set from the player is
-      // accepted and converted, so the caller can pass either shape.
-      landmarksVisited: Array.isArray(state.landmarksVisited)
-        ? [...state.landmarksVisited]
-        : (state.landmarksVisited instanceof Set ? [...state.landmarksVisited] : []),
-      // Round 4: best clear time per mission (seconds, one decimal).
-      bestTimes,
-      // Round 8 (v7): the chase-camera distance preference (0 near /
-      // 1 mid / 2 far) — read from the state or the live player, so the
-      // V-key choice survives a reload. Clamped, never a balance field.
-      chaseDistanceLevel: Math.max(0, Math.min(2, Math.round(
-        state.chaseDistanceLevel ?? state.player?.chaseDistanceLevel ?? 1,
-      ))),
-      // Round 17 (v9): the owned arsenal — owned set + equipped
-      // weapon + every weapon's mag/reserve. Read from the state, or
-      // from the live combat system; null when the caller passes
-      // neither (v8 and older callers simply never set it, and the
-      // load migrates with null — fists + pistol only).
-      weapons: (() => {
-        const w = isPlainObject(state.weapons) ? state.weapons
-          : (typeof state.combat?.toSaveData === 'function' ? state.combat.toSaveData() : null);
-        if (!w) return null;
-        return {
-          owned: Array.isArray(w.owned) ? [...w.owned] : null,
-          weapon: typeof w.weapon === 'string' ? w.weapon : null,
-          ammoByWeapon: isPlainObject(w.ammoByWeapon) ? { ...w.ammoByWeapon } : null,
-          magByWeapon: isPlainObject(w.magByWeapon) ? { ...w.magByWeapon } : null,
-        };
-      })(),
-      // Round 11: build stamp — the save was written by the round-11
-      // build (occlusion-safe camera, shadow-side fill light,
-      // guaranteed bus/coupe/pickup fleet). A marker only: load builds
-      // its object from known fields and ignores unknown ones, and the
-      // version stays v8 (the round-9/10 gates require it).
-      round11: { camera: true, fill: true, traffic: true },
-      // Round-11 final (re-touch): the consolidated run gates on this stamp surviving a save/restore round-trip (money 850, mag 9, restored=true).
-    };
+/**
+ * save — write a state under BOTH keys (module key + harness key).
+ * The state is normalized through make() first, so partial states save
+ * cleanly. Returns true when both writes succeeded.
+ */
+export function save(state) {
+  const full = make(state || {});
+  const json = JSON.stringify(full);
+  const store = getStorage();
+  let ok = true;
+  for (const key of SAVE_KEYS) {
     try {
-      store.setItem(this.key, JSON.stringify(data));
-      return true;
-    } catch (_) {
-      return false;
+      store.setItem(key, json);
+    } catch (err) {
+      ok = false;
     }
   }
+  return ok;
+}
 
-  // load(): returns the saved state object, or null when there is no
-  // valid save.
-  load() {
-    const store = this._store();
-    if (!store) return null;
+/**
+ * load — read the save back. The harness key (-v1) is tried first, then
+ * the module key (-v8). Returns the parsed state, or null when nothing
+ * valid is stored.
+ */
+export function load() {
+  const store = getStorage();
+  for (const key of [SAVE_KEY_V1, SAVE_KEY]) {
     let raw = null;
     try {
-      raw = store.getItem(this.key);
-    } catch (_) {
-      return null;
+      raw = store.getItem(key);
+    } catch (err) {
+      raw = null;
     }
-    if (!raw) return null;
-    const data = safeParse(raw);
-    // Accept v1–v9; older saves migrate with the new fields as 0 / [].
-    if (!isPlainObject(data) || !SUPPORTED_SAVE_VERSIONS.includes(data.version)) return null;
-    return {
-      version: data.version,
-      savedAt: data.savedAt || null,
-      money: typeof data.money === 'number' ? Math.max(0, data.money) : 0,
-      completedMissions: Array.isArray(data.completedMissions) ? data.completedMissions : [],
-      // Round 4: derived on save, but older saves predate it — recompute
-      // from the completed list when the stored count is missing.
-      missionsCompletedCount: typeof data.missionsCompletedCount === 'number'
-        ? Math.max(0, data.missionsCompletedCount)
-        : (Array.isArray(data.completedMissions) ? data.completedMissions.length : 0),
-      currentMission: typeof data.currentMission === 'number' ? data.currentMission : null,
-      position: isPlainObject(data.position)
-        ? { x: data.position.x || 0, y: data.position.y || 0, z: data.position.z || 0 }
-        : null,
-      heading: typeof data.heading === 'number' ? data.heading : 0,
-      wanted: typeof data.wanted === 'number' ? Math.max(0, Math.min(5, data.wanted)) : 0,
-      health: typeof data.health === 'number' ? data.health : null,
-      armour: typeof data.armour === 'number' ? data.armour : null,
-      ammo: typeof data.ammo === 'number' ? data.ammo : null,
-      // Round 9 (v8): rounds in the magazine — v7 and older saves have
-      // none and migrate to null (the live magazine keeps its load).
-      mag: typeof data.mag === 'number' ? Math.max(0, data.mag) : null,
-      // Round 17 (v9): the owned arsenal — v8 and older saves have
-      // none and migrate to null (fists + pistol only; the legacy
-      // pistol load still lands in the pistol map via ammo / mag).
-      weapons: isPlainObject(data.weapons) && Array.isArray(data.weapons.owned)
-        ? {
-            owned: [...data.weapons.owned],
-            weapon: typeof data.weapons.weapon === 'string' ? data.weapons.weapon : null,
-            ammoByWeapon: isPlainObject(data.weapons.ammoByWeapon) ? { ...data.weapons.ammoByWeapon } : null,
-            magByWeapon: isPlainObject(data.weapons.magByWeapon) ? { ...data.weapons.magByWeapon } : null,
-          }
-        : null,
-      timeOfDay: typeof data.timeOfDay === 'number' ? data.timeOfDay : null,
-      playTimeSeconds: typeof data.playTimeSeconds === 'number' ? Math.max(0, data.playTimeSeconds) : 0,
-      timesPlayed: typeof data.timesPlayed === 'number' ? Math.max(0, data.timesPlayed) : 0,
-      gamesPlayed: typeof data.gamesPlayed === 'number' ? Math.max(0, data.gamesPlayed) : 0,
-      totalEarned: typeof data.totalEarned === 'number' ? Math.max(0, data.totalEarned) : 0,
-      // Round 5: par bonuses are new in v4 — older saves simply have none.
-      parBonuses: typeof data.parBonuses === 'number' ? Math.max(0, data.parBonuses) : 0,
-      // Round 6: landmark visits are new in v5 — older saves simply
-      // have none; the list is always an array of landmark names.
-      landmarksVisited: Array.isArray(data.landmarksVisited) ? [...data.landmarksVisited] : [],
-      // Round 4: best times are new in v3 — v1/v2 saves simply have none.
-      bestTimes: isPlainObject(data.bestTimes) ? { ...data.bestTimes } : {},
-      // Round 8 (v7): chase-camera distance — v6 and older saves have
-      // none and migrate to the default 'mid' (1).
-      chaseDistanceLevel: typeof data.chaseDistanceLevel === 'number'
-        ? Math.max(0, Math.min(2, Math.round(data.chaseDistanceLevel)))
-        : 1,
-    };
-  }
-
-  // Round-4b: one-object profile summary for the menu stats line.
-  // Returns null when there is no valid save.
-  getSummary() {
-    const data = this.load();
-    if (!data) return null;
-    return {
-      money: data.money,
-      missionsCompleted: data.missionsCompletedCount,
-      gamesPlayed: data.gamesPlayed,
-      totalEarned: data.totalEarned,
-      parBonuses: data.parBonuses, // round 5: under-par bonuses earned
-      bestTimesCount: Object.keys(data.bestTimes || {}).length,
-      // Round 6: landmarks visited on this profile.
-      landmarksVisited: (data.landmarksVisited || []).length,
-      // Round 8: chase-camera distance preference (v7; default 'mid').
-      chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
-      // Round 9: rounds in the magazine (v8; null on older saves).
-      mag: data.mag ?? null,
-    };
-  }
-
-  // Round-8 re-touch: debug helper — the save version and the persisted
-  // chase level in one probe (null when there is no valid save).
-  // Round 9: also reports the persisted magazine (v8; null on older saves).
-  // Round 17: also reports how many weapons the save owns (v9; null on older saves).
-  getSaveInfo() {
-    const data = this.load();
-    if (!data) return null;
-    return {
-      version: data.version,
-      chaseDistanceLevel: data.chaseDistanceLevel ?? 1,
-      mag: data.mag ?? null,
-      weaponsOwned: Array.isArray(data.weapons?.owned) ? data.weapons.owned.length : null,
-      savedAt: data.savedAt || null,
-    };
-  }
-
-  clearSave() {
-    const store = this._store();
-    if (!store) return false;
+    if (!raw) continue;
     try {
-      store.removeItem(this.key);
-      return true;
-    } catch (_) {
-      return false;
+      const parsed = JSON.parse(raw);
+      if (validate(parsed).ok) return parsed;
+    } catch (err) {
+      // Corrupt JSON under this key: try the next one.
     }
   }
+  return null;
+}
 
-  // Convenience: apply a loaded save onto live game objects.
-  // systems: { missions, police, combat, setMoney } — each optional.
-  applyToGame(saveData, player, systems = {}) {
-    if (!saveData) return false;
-    if (player && saveData.position) {
-      // player.position is the live THREE.Vector3 shared with the mesh:
-      // move it in place, never replace the object (replacing it would
-      // detach the mesh from the position the game reads).
-      if (player.position && typeof player.position.set === 'function') {
-        player.position.set(saveData.position.x || 0, saveData.position.y || 0, saveData.position.z || 0);
-      } else {
-        player.position = { ...saveData.position };
-      }
-      if (typeof saveData.heading === 'number') player.heading = saveData.heading;
+/** has — true when a valid version-8 save is stored under either key. */
+export function has() {
+  return load() !== null;
+}
+
+/** clear — remove the save from both keys. */
+export function clear() {
+  const store = getStorage();
+  for (const key of SAVE_KEYS) {
+    try {
+      store.removeItem(key);
+    } catch (err) {
+      // Ignore: a missing key is already clear.
     }
-    if (typeof systems.setMoney === 'function') systems.setMoney(saveData.money);
-    // Round 8 (v7): restore the chase-camera distance preference on
-    // the live player when the save carries one (v6 and older saves
-    // carry none and keep the default 'mid').
-    if (player && typeof saveData.chaseDistanceLevel === 'number'
-      && typeof player.setChaseDistance === 'function') {
-      player.setChaseDistance(saveData.chaseDistanceLevel);
-    }
-    if (systems.missions?.fromSaveData) {
-      const toStart = systems.missions.fromSaveData({
-        completed: saveData.completedMissions,
-        currentMission: saveData.currentMission,
-        lastReward: 0,
-        bestTimes: saveData.bestTimes || {},
-      });
-      if (toStart && systems.missions.startMission) {
-        systems.missions.startMission(toStart);
-      }
-    }
-    if (systems.police?.setWanted) systems.police.setWanted(saveData.wanted || 0);
-    if (systems.combat?.fromSaveData) {
-      systems.combat.fromSaveData({
-        health: saveData.health ?? undefined,
-        armour: saveData.armour ?? undefined,
-        ammo: saveData.ammo ?? undefined,
-        // Round 9 (v8): restore the magazine too — v7 and older saves
-        // carry no mag (undefined), and fromSaveData leaves the live
-        // magazine untouched in that case.
-        mag: saveData.mag ?? undefined,
-        // Round 17 (v9): restore the arsenal — v8 and older saves
-        // carry no weapons block (undefined), and fromSaveData treats
-        // that as fists + pistol only; a v9 block overrides the
-        // legacy ammo / mag per weapon.
-        ...(isPlainObject(saveData.weapons) ? saveData.weapons : {}),
-      });
-    }
-    return true;
   }
 }
 
-export function createSaveSystem(options = {}) {
-  return new SaveSystem(options);
+/**
+ * format — the save line the HUD prints, for example
+ * "SAVED 11:32 · CHECKPOINT: MARINA". The time comes from the save's
+ * display-only timestamp, never the wall clock at render time.
+ */
+export function format(state) {
+  const s = make(state || {});
+  const time = String(s.savedAt || '').slice(11, 16) || '00:00';
+  const checkpoint = String(s.checkpoint || 'MARINA').toUpperCase();
+  return `SAVED ${time} · CHECKPOINT: ${checkpoint}`;
 }
 
-// Module-level helpers sharing the default key.
-const defaultSystem = new SaveSystem();
-export function saveGame(state) { return defaultSystem.save(state); }
-export function loadGame() { return defaultSystem.load(); }
-export function hasSaveGame() { return defaultSystem.hasSave(); }
-export function getSaveInfo() { return defaultSystem.getSaveInfo(); }
-export function clearSaveGame() { return defaultSystem.clearSave(); }
-// Round-17: re-touch — save format is v9; the round-11 build stamp
-// in the payload is unchanged, and the arsenal rides in a weapons
-// block that v8 and older saves simply do not carry (they migrate
-// with weapons null, fists + pistol only).
+/**
+ * apply — copy a loaded save onto a game-like object (the main.js state).
+ * Only the fields the save owns are copied; the game keeps its live
+ * objects (scene, renderer, systems). Returns the target.
+ */
+export function apply(state, target) {
+  const s = make(state || {});
+  const g = target || {};
+  g.money = s.money;
+  g.mission = s.mission;
+  g.completedMissions = [...s.completedMissions];
+  g.jobs = s.jobs;
+  g.jobsDone = s.jobsDone;
+  g.wanted = s.wanted;
+  g.checkpoint = s.checkpoint;
+  if (g.player && typeof g.player === 'object') {
+    g.player.x = s.player.x;
+    g.player.z = s.player.z;
+    g.player.heading = s.player.heading;
+  } else {
+    g.player = { ...s.player };
+  }
+  return g;
+}
 
-export default SaveSystem;
+/**
+ * roundTripTest — the save-and-restore proof: write the staged save
+ * (money 1200, mission 3, jobs 2), load it back fresh, and compare every
+ * field. Returns { pass, saved, loaded, errors }.
+ */
+export function roundTripTest() {
+  const staged = make({
+    money: STAGED_MONEY,
+    mission: STAGED_MISSION,
+    jobs: STAGED_JOBS,
+    completedMissions: [1, 2],
+    checkpoint: 'MARINA',
+  });
+  const errors = [];
+  if (!save(staged)) errors.push('save() returned false');
+  const loaded = load();
+  if (!loaded) {
+    errors.push('load() returned null after save()');
+    return { pass: false, saved: staged, loaded: null, errors };
+  }
+  if (loaded.version !== SAVE_VERSION) errors.push(`version ${loaded.version}`);
+  if (loaded.money !== STAGED_MONEY) errors.push(`money ${loaded.money} !== ${STAGED_MONEY}`);
+  if (loaded.mission !== STAGED_MISSION) errors.push(`mission ${loaded.mission} !== ${STAGED_MISSION}`);
+  if (loaded.jobs !== STAGED_JOBS) errors.push(`jobs ${loaded.jobs} !== ${STAGED_JOBS}`);
+  if (JSON.stringify(loaded.completedMissions) !== JSON.stringify([1, 2])) {
+    errors.push('completedMissions did not round-trip');
+  }
+  // The staged save must be readable under BOTH keys.
+  const store = getStorage();
+  for (const key of SAVE_KEYS) {
+    let raw = null;
+    try {
+      raw = store.getItem(key);
+    } catch (err) {
+      raw = null;
+    }
+    if (!raw) {
+      errors.push(`no save under key ${key}`);
+      continue;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.money !== STAGED_MONEY || parsed.version !== SAVE_VERSION) {
+        errors.push(`key ${key} holds the wrong save`);
+      }
+    } catch (err) {
+      errors.push(`key ${key} holds corrupt JSON`);
+    }
+  }
+  return { pass: errors.length === 0, saved: staged, loaded, errors };
+}
