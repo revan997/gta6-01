@@ -1,74 +1,97 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Solmar Bay</title>
-<link rel="icon" href="favicon.ico" />
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solmar Bay — Open-World Crime</title>
+<link rel="icon" href="./favicon.ico">
 <style>
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: "Segoe UI", system-ui, sans-serif; }
-  #game-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-  #hud { position: absolute; inset: 0; pointer-events: none; color: #fff; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1526; font-family: 'Segoe UI', Arial, sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
   .hidden { display: none !important; }
-  #start-screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.45); pointer-events: auto; }
-  #start-screen h1 { margin: 0 0 8px; font-size: 64px; letter-spacing: 4px; color: #ffd24a; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.8); }
-  #start-screen p { margin: 0 0 24px; font-size: 18px; color: #fff; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8); }
-  #start-button { pointer-events: auto; cursor: pointer; font-size: 22px; font-weight: bold; padding: 14px 44px; border: 2px solid #ffd24a; background: #ff2a1a; color: #fff; border-radius: 6px; }
-  #pause-menu { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.55); pointer-events: auto; }
-  #pause-menu h2 { font-size: 42px; color: #ffd24a; margin: 0 0 12px; }
-  #pause-menu p { color: #fff; }
-  #hud-dialogue { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: 640px; background: rgba(0, 0, 0, 0.65); border-left: 4px solid #ffd24a; padding: 8px 14px; font-size: 16px; line-height: 1.4; }
-  #hud-radio { position: absolute; left: 14px; bottom: 12px; font-size: 14px; font-weight: bold; color: #ffd24a; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
-  #clock-time { position: absolute; right: 14px; top: 12px; font-size: 20px; font-weight: bold; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
-  #hud-mission-panel { position: absolute; left: 14px; top: 12px; background: rgba(0, 0, 0, 0.55); padding: 8px 12px; font-size: 14px; line-height: 1.5; max-width: 420px; }
-  #hud-respect { position: absolute; left: 14px; top: 86px; font-size: 13px; font-weight: bold; color: #7dff9e; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
-  #hud-vehicle-panel { position: absolute; left: 14px; bottom: 48px; font-size: 13px; font-weight: bold; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
-  #hud-police-response { position: absolute; right: 14px; top: 46px; font-size: 13px; font-weight: bold; color: #ff8a7a; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); text-align: right; }
-  #hud-crew-panel { position: absolute; right: 14px; bottom: 48px; font-size: 13px; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); text-align: right; }
-  #hud-district-panel { position: absolute; right: 14px; bottom: 12px; font-size: 13px; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); text-align: right; }
-  #hud-minimap { position: absolute; right: 14px; top: 84px; width: 168px; height: 168px; border: 2px solid rgba(255, 255, 255, 0.5); background: rgba(0, 0, 0, 0.35); }
-  #message { position: absolute; left: 50%; top: 96px; transform: translateX(-50%); font-size: 18px; font-weight: bold; color: #ffd24a; text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
-  #controls-hint { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); font-size: 13px; color: rgba(255, 255, 255, 0.75); text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8); }
-  #shot-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 34px; font-weight: bold; letter-spacing: 3px; color: #ff2a1a; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9); }
-  #crosshair { position: absolute; width: 28px; height: 28px; margin: -14px 0 0 -14px; pointer-events: none; }
-  #crosshair::before, #crosshair::after { content: ""; position: absolute; background: #ff2a1a; }
-  #crosshair::before { left: 13px; top: 0; width: 2px; height: 28px; }
-  #crosshair::after { top: 13px; left: 0; width: 28px; height: 2px; }
-  #speed, #hud-ammo { display: none; }
+  .hud-root { position: fixed; inset: 0; pointer-events: none; z-index: 10; color: #fff; }
+  .hud-panel { position: absolute; background: rgba(8, 14, 28, 0.72); border: 1px solid rgba(255, 210, 74, 0.45); border-radius: 8px; padding: 10px 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+  .hud-panel-title { font-size: 11px; letter-spacing: 2px; color: #ffd24a; font-weight: 700; margin-bottom: 6px; }
+  /* Mission panel, top-left */
+  .hud-mission-panel { top: 14px; left: 14px; width: 300px; }
+  .hud-chapter { font-size: 12px; letter-spacing: 3px; color: #ffd24a; font-weight: 800; }
+  .hud-job-title { font-size: 24px; font-weight: 800; line-height: 1.1; text-shadow: 0 2px 4px rgba(0,0,0,0.8); }
+  .hud-stage-bar { height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; margin: 8px 0 6px; overflow: hidden; }
+  .hud-stage-fill { height: 100%; width: 0%; background: #ffd24a; border-radius: 4px; }
+  .hud-next { font-size: 13px; color: #bfe3ff; font-weight: 600; }
+  .hud-clock { font-size: 20px; font-weight: 800; margin-top: 6px; }
+  .hud-saved, .hud-jobs, .hud-cash, .hud-air-row, .hud-garage, .hud-race { font-size: 13px; line-height: 1.5; }
+  .hud-saved { color: #7dff9a; font-weight: 700; }
+  .hud-air-row { color: #ff9a8a; font-weight: 700; }
+  .hud-race { color: #ffd24a; font-weight: 800; }
+  /* Money block, top-right */
+  .hud-money-block { top: 14px; right: 14px; text-align: right; min-width: 190px; }
+  .hud-cash-big { font-size: 34px; font-weight: 900; line-height: 1; text-shadow: 0 2px 6px rgba(0,0,0,0.8); }
+  .hud-stars { font-size: 22px; color: #ffd24a; letter-spacing: 3px; margin-top: 4px; }
+  .hud-time { font-size: 12px; color: #bfe3ff; margin-top: 4px; }
+  /* Police panel, right */
+  .hud-police-response { top: 150px; right: 14px; width: 250px; }
+  .hud-police-row { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; line-height: 1.7; }
+  .hud-police-name { font-weight: 700; }
+  .hud-police-dist { color: #bfe3ff; }
+  .hud-police-chip { background: #ff2a1a; color: #fff; border-radius: 3px; padding: 0 5px; font-size: 10px; font-weight: 800; }
+  /* Weapons, right under police */
+  .hud-weapons { top: 430px; right: 14px; width: 250px; }
+  .hud-weapon-slot { display: flex; gap: 8px; align-items: center; font-size: 13px; line-height: 1.8; opacity: 0.65; }
+  .hud-weapon-slot.active { opacity: 1; background: rgba(255, 210, 74, 0.18); border-radius: 4px; padding: 0 4px; }
+  .hud-weapon-icon { display: inline-block; width: 20px; height: 20px; line-height: 20px; text-align: center; background: #ffd24a; color: #111; font-weight: 900; border-radius: 4px; font-size: 12px; }
+  .hud-weapon-ammo { margin-left: auto; font-weight: 700; }
+  /* Crew, right under weapons */
+  .hud-crew-panel { top: 590px; right: 14px; width: 250px; }
+  .hud-crew-row { display: flex; gap: 8px; align-items: center; font-size: 13px; line-height: 1.9; }
+  .hud-crew-face { display: inline-block; width: 22px; height: 22px; line-height: 22px; text-align: center; background: #3a86ff; color: #fff; font-weight: 900; border-radius: 50%; font-size: 12px; }
+  /* Minimap, bottom-left, circular */
+  .hud-minimap-wrap { position: absolute; left: 14px; bottom: 64px; width: 168px; }
+  .hud-minimap { width: 168px; height: 168px; border-radius: 50%; border: 3px solid #ffd24a; background: #12203a; display: block; box-shadow: 0 2px 12px rgba(0,0,0,0.6); }
+  .hud-bar { height: 10px; background: rgba(255,255,255,0.18); border-radius: 5px; margin-top: 6px; overflow: hidden; }
+  .hud-bar-fill { height: 100%; border-radius: 5px; }
+  .hud-health-fill { background: #37d67a; width: 100%; }
+  .hud-armour-fill { background: #3a86ff; width: 50%; }
+  /* District + respect + vehicle, bottom-left */
+  .hud-district-panel { left: 14px; bottom: 14px; }
+  .hud-district-name { font-size: 14px; font-weight: 800; }
+  .hud-district-standing { font-size: 12px; color: #7dff9a; }
+  .hud-respect { left: 200px; bottom: 14px; font-size: 13px; font-weight: 800; color: #ffd24a; }
+  .hud-vehicle-panel { left: 360px; bottom: 112px; font-size: 13px; font-weight: 800; }
+  /* Dialogue, bottom-centre, with portrait */
+  .hud-dialogue { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 12px; align-items: center; background: rgba(8, 14, 28, 0.82); border: 1px solid rgba(255, 210, 74, 0.6); border-radius: 10px; padding: 12px 16px; max-width: 520px; box-shadow: 0 4px 16px rgba(0,0,0,0.6); }
+  .hud-portrait { width: 52px; height: 52px; line-height: 52px; text-align: center; border-radius: 50%; background: #ff7a3d; color: #fff; font-size: 26px; font-weight: 900; flex-shrink: 0; }
+  .hud-dialogue-speaker { font-size: 12px; letter-spacing: 1px; color: #ffd24a; font-weight: 800; }
+  .hud-dialogue-text { font-size: 16px; font-weight: 600; line-height: 1.35; }
+  /* Speed block, bottom-right */
+  .hud-speed-block { right: 14px; bottom: 14px; text-align: right; min-width: 170px; }
+  .hud-speed-number { font-size: 56px; font-weight: 900; line-height: 0.95; text-shadow: 0 2px 8px rgba(0,0,0,0.8); }
+  .hud-speed-unit { font-size: 13px; letter-spacing: 3px; color: #bfe3ff; }
+  .hud-speed-car { font-size: 14px; font-weight: 800; margin-top: 4px; }
+  .hud-condition { height: 8px; background: rgba(255,255,255,0.18); border-radius: 4px; margin-top: 6px; overflow: hidden; }
+  .hud-condition-fill { height: 100%; background: #ffd24a; width: 92%; }
+  .hud-radio { font-size: 13px; color: #7dff9a; font-weight: 700; margin-top: 6px; }
+  /* Crosshair, banner, hints */
+  .crosshair { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); font-size: 34px; font-weight: 900; color: #fff; text-shadow: 0 0 6px #000, 0 0 2px #ff2a1a; }
+  .hud-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); background: #ff2a1a; color: #fff; font-size: 26px; font-weight: 900; letter-spacing: 3px; padding: 8px 22px; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.6); }
+  .hud-message { position: absolute; left: 50%; top: 60%; transform: translateX(-50%); font-size: 15px; }
+  .hud-controls-hint { position: absolute; left: 14px; top: 46%; font-size: 12px; color: #bfe3ff; }
+  .hud-legacy { display: none; }
+  /* Start screen */
+  .start-screen { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(180deg, rgba(13,21,38,0.55), rgba(13,21,38,0.88)); pointer-events: auto; z-index: 20; }
+  .start-title { font-size: 72px; font-weight: 900; letter-spacing: 6px; color: #ffd24a; margin: 0; text-shadow: 0 4px 18px rgba(0,0,0,0.8); }
+  .start-sub { font-size: 18px; color: #dfeaff; max-width: 560px; text-align: center; }
+  .start-button { pointer-events: auto; margin-top: 18px; font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #111; background: #ffd24a; border: none; border-radius: 10px; padding: 14px 44px; cursor: pointer; box-shadow: 0 4px 18px rgba(0,0,0,0.6); }
+  .start-button:hover { background: #ffe27a; }
+  .start-save, .start-controls { font-size: 14px; color: #bfe3ff; margin-top: 14px; }
+  .pause-menu { position: absolute; left: 50%; top: 40%; transform: translateX(-50%); font-size: 22px; font-weight: 800; color: #fff; background: rgba(8,14,28,0.8); border: 1px solid rgba(255,210,74,0.5); border-radius: 8px; padding: 12px 24px; z-index: 15; }
 </style>
-</head>
-<body>
-<canvas id="game-canvas"></canvas>
-<div id="hud">
-  <div id="hud-mission-panel"></div>
-  <div id="hud-respect"></div>
-  <div id="hud-vehicle-panel"></div>
-  <div id="hud-police-response"></div>
-  <div id="hud-crew-panel"></div>
-  <div id="hud-district-panel"></div>
-  <canvas id="hud-minimap" width="168" height="168"></canvas>
-  <div id="clock-time"></div>
-  <div id="hud-radio">SOLMAR FM 101.5</div>
-  <div id="hud-dialogue" style="display: none"></div>
-  <div id="message"></div>
-  <div id="controls-hint">WASD drive &middot; Space brake &middot; P pause &middot; R radio</div>
-  <div id="shot-banner" style="display: none"></div>
-  <div id="crosshair" class="hidden"></div>
-  <span id="speed" style="display: none"></span>
-  <span id="hud-ammo" style="display: none"></span>
-</div>
-<div id="start-screen">
-  <h1>SOLMAR BAY</h1>
-  <p>Four stars. One harbour. No way out but through.</p>
-  <button id="start-button">START ENGINE</button>
-</div>
-<div id="pause-menu" class="hidden">
-  <h2>PAUSED</h2>
-  <p>Press P to resume.</p>
-</div>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
 </script>
+</head>
+<body>
+<canvas id="game" aria-label="Solmar Bay: drive the GT through the coastal city, outrun the police, finish the jobs"></canvas>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

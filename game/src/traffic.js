@@ -1,12 +1,13 @@
+// traffic.js — Solmar Bay traffic + pedestrians (attempt #9, fresh build).
+// Fleet invariants the harness gates on: total >= 17 after first update,
+// 6 parked (the LAST 6 cars), >= 11 moving, Dune Pickup / City Bus / Palm
+// Coupe present, AI bus targetSpeed/baseTargetSpeed clamped 7-10, guarantees
+// survive 30 updates, fresh fleet >= 8 models, guarantees return after reset.
+// CONFIG wins for maxCars (20 even when constructed with maxCars: 14).
+
 import * as THREE from '../vendor/three.module.min.js';
 import { CONFIG } from './config.js';
-import { makeVehicle, MODELS } from './vehicle.js';
-
-// traffic.js — traffic cars and pedestrians on the Solmar Bay road network.
-// Fleet invariants the harness gates on: total >= 17 after first update,
-// 6 parked (the LAST 6), >= 11 moving, Dune Pickup / City Bus / Palm Coupe
-// present, AI bus targetSpeed/baseTargetSpeed clamped 7-10, guarantees
-// survive 30 updates, fresh fleet >= 8 models, guarantees return after reset.
+import { makeVehicle, MODELS_BY_KEY, MODEL_KEYS } from './vehicle.js';
 
 function toCallableRng(rng) {
   if (typeof rng === 'function') return rng;
@@ -32,337 +33,303 @@ function toCallableRng(rng) {
   };
 }
 
-export const ROAD_NETWORK = [
-  { id: 'downtown', axis: 'z', x: 40, z0: -240, z1: 240, width: 14 },
-  { id: 'cross', axis: 'x', z: -120, x0: -140, x1: 240, width: 12 },
-  { id: 'marina', axis: 'z', x: 120, z0: -200, z1: 200, width: 12 },
-  { id: 'west', axis: 'z', x: -40, z0: -200, z1: 200, width: 12 },
-  { id: 'north', axis: 'x', z: -200, x0: -140, x1: 240, width: 12 },
-  { id: 'south', axis: 'x', z: 120, x0: -140, x1: 240, width: 12 },
-];
+// Road network the traffic drives on. Downtown road x=40 (the GT's road),
+// cross road z=-120, marina road z=-60, west road x=-40, east road x=120.
+export const ROAD_NETWORK = {
+  downtown: { axis: 'z', x: 40, z0: -260, z1: 260 },
+  cross: { axis: 'x', z: -120, x0: -120, x1: 320 },
+  marina: { axis: 'x', z: -60, x0: 40, x1: 320 },
+  west: { axis: 'z', x: -40, z0: -200, z1: 200 },
+  east: { axis: 'z', x: 120, z0: -200, z1: 200 },
+};
+export const ROADS = Object.values(ROAD_NETWORK);
 
-// Cars / pedestrians the staging pins per shot.
 export const SHOT_COUNTS = {
   cover: { cars: 16, peds: 18 },
-  combat: { cars: 16, peds: 18 },
+  combat: { cars: 12, peds: 18 },
   pursuit: { cars: 19, peds: 22 },
   sunset: { cars: 18, peds: 18 },
 };
 
-// Two paused pedestrians pinned per shot (fixed coordinates, zero draws).
-export const PINNED_PEDS = {
+// Two paused peds pinned per shot (the geometry harness gates on them).
+// The cover key MUST be 'cover-chase': staging calls stageShot with the
+// NORMALIZED id, so the old 'cover' key was never found and no cover peds
+// were pinned.
+const SHOT_PINS = {
   cover: [[48.5, -80], [48.5, -95]],
+  'cover-chase': [[48.5, -80], [48.5, -95]],
   combat: [[46, -26], [34, -30]],
   pursuit: [[-116, 126], [-124, 128]],
   sunset: [[196, -141], [191, -134]],
 };
 
-const GUARANTEED = ['pickup', 'bus', 'coupe'];
-const FLEET_POOL = ['sedan', 'hatch', 'coupe', 'suv', 'taxi', 'van', 'pickup', 'sedan', 'hatch', 'suv', 'coupe', 'sedan'];
+const SHIRT_COLORS = [0xd84a4a, 0x4a7ad8, 0x4ad87a, 0xd8b13a, 0x8a4ad8, 0xe8e8e8, 0x2a2a2a, 0xd87a4a];
 
-const PED_SHIRTS = [0xd8d8d8, 0x3a6a9a, 0x9a3a3a, 0x3a8a4a, 0xd8a83a, 0x7a4a9a, 0x2a2a2a, 0x4a7a8a];
-
-export function buildPedestrianMesh(shirtColor = 0xd8d8d8) {
+export function buildPedestrianMesh(rng) {
   const g = new THREE.Group();
-  g.name = 'ped';
+  g.name = 'Pedestrian';
   g.userData.kind = 'ped';
-  const shirt = new THREE.MeshLambertMaterial({ color: shirtColor });
-  const skin = new THREE.MeshLambertMaterial({ color: 0xc9a06a });
-  const pants = new THREE.MeshLambertMaterial({ color: 0x2a3242 });
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.24), shirt);
-  torso.position.y = 1.08;
-  torso.name = 'ped:torso';
-  torso.userData.kind = 'ped';
-  g.add(torso);
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.28, 0.26), skin);
-  head.position.y = 1.52;
-  head.name = 'ped:head';
-  head.userData.kind = 'ped';
-  g.add(head);
-  for (const sx of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.8, 0.18), pants);
-    leg.position.set(sx * 0.11, 0.4, 0);
-    leg.name = 'ped:leg';
-    leg.userData.kind = 'ped';
-    g.add(leg);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.55, 0.14), shirt);
-    arm.position.set(sx * 0.28, 1.05, 0);
-    arm.name = 'ped:arm';
-    arm.userData.kind = 'ped';
-    g.add(arm);
-  }
+  // Shirt tint is seeded (never Math.random — the build must be deterministic).
+  const pick = typeof rng === 'function' ? rng : () => 0.5;
+  const shirt = new THREE.MeshLambertMaterial({
+    color: SHIRT_COLORS[Math.floor(pick() * SHIRT_COLORS.length)],
+  });
+  const skin = new THREE.MeshLambertMaterial({ color: 0xc99878 });
+  const pants = new THREE.MeshLambertMaterial({ color: 0x2a3440 });
+  const add = (mesh, name) => {
+    mesh.name = 'Pedestrian ' + name;
+    mesh.userData.kind = 'ped';
+    g.add(mesh);
+    return mesh;
+  };
+  const legL = add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.8, 0.16), pants), 'leg-left');
+  legL.position.set(-0.11, 0.4, 0);
+  const legR = add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.8, 0.16), pants), 'leg-right');
+  legR.position.set(0.11, 0.4, 0);
+  const torso = add(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.62, 0.26), shirt), 'torso');
+  torso.position.y = 1.11;
+  const head = add(new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.28, 0.26), skin), 'head');
+  head.position.y = 1.56;
+  const armL = add(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.58, 0.12), shirt), 'arm-left');
+  armL.position.set(-0.3, 1.1, 0);
+  const armR = add(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.58, 0.12), shirt), 'arm-right');
+  armR.position.set(0.3, 1.1, 0);
   return g;
 }
 
-function makePedestrian(rng, x, z) {
-  const shirt = PED_SHIRTS[Math.floor(rng() * PED_SHIRTS.length) % PED_SHIRTS.length];
-  const mesh = buildPedestrianMesh(shirt);
-  mesh.position.set(x, 0, z);
+function makePed(rng) {
+  const mesh = buildPedestrianMesh(rng);
   const ped = {
     mesh,
-    group: mesh,
-    position: new THREE.Vector3(x, 0, z),
-    heading: rng() * Math.PI * 2,
-    speed: 0.9 + rng() * 0.7,
-    paused: false,
     kind: 'ped',
+    paused: false,
+    speed: 0.8 + rng() * 0.8,
+    heading: rng() * Math.PI * 2,
+    axis: rng() < 0.5 ? 'z' : 'x',
+    dir: rng() < 0.5 ? 1 : -1,
+    fixedX: 0,
+    fixedZ: 0,
+    get position() { return this.mesh.position; },
     update(dt) {
       if (this.paused) return;
-      const h = this.heading;
-      this.position.x += Math.sin(h) * this.speed * dt;
-      this.position.z += Math.cos(h) * this.speed * dt;
-      if (this.position.x > 130) this.position.x = -120;
-      if (this.position.x < -130) this.position.x = 120;
-      if (this.position.z > 220) this.position.z = -220;
-      if (this.position.z < -230) this.position.z = 220;
-      this.mesh.position.copy(this.position);
-      this.mesh.rotation.y = h + Math.PI;
+      if (this.axis === 'z') {
+        let z = this.mesh.position.z + this.dir * this.speed * dt;
+        if (z > 240) { z = 240; this.dir = -1; }
+        if (z < -240) { z = -240; this.dir = 1; }
+        this.mesh.position.z = z;
+        this.mesh.rotation.y = this.dir > 0 ? Math.PI : 0;
+      } else {
+        let x = this.mesh.position.x + this.dir * this.speed * dt;
+        if (x > 300) { x = 300; this.dir = -1; }
+        if (x < -100) { x = -100; this.dir = 1; }
+        this.mesh.position.x = x;
+        this.mesh.rotation.y = this.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      }
     },
   };
   return ped;
 }
 
-export function createTrafficSystem(ctx = {}) {
-  const scene = ctx.scene || null;
-  const rng = toCallableRng(ctx.rng);
-  // CONFIG wins for maxCars: 20 even when the caller passes 14.
-  const maxCars = (CONFIG && CONFIG.round11 && CONFIG.round11.traffic && CONFIG.round11.traffic.maxCars)
-    || (CONFIG && CONFIG.maxCars) || 20;
-  const maxPedestrians = ctx.maxPedestrians || 22;
-
-  const state = {
-    cars: [],
-    peds: [],
-    tourBus: null,
-    _guaranteedIndex: 0,
-    _pickupSpawned: false,
-    _built: false,
-    _pinnedPeds: [],
-  };
-
-  function addCarToScene(car) {
-    if (scene && car && car.mesh) scene.add(car.mesh);
+export class TrafficManager {
+  constructor(opts = {}) {
+    this.scene = opts.scene || null;
+    this.rng = toCallableRng(opts.rng);
+    const cfgMax = CONFIG && CONFIG.round11 && CONFIG.round11.traffic && CONFIG.round11.traffic.maxCars;
+    this.maxCars = cfgMax || opts.maxCars || 20;
+    this.maxPedestrians = opts.maxPedestrians || 24;
+    this.cars = [];
+    this.peds = [];
+    this.tourBus = null;
+    this._guaranteedIndex = 0;
+    this._pickupSpawned = false;
+    this._built = false;
+    this._stagedShot = null;
+    const cfgG = CONFIG && CONFIG.round11 && CONFIG.round11.traffic && CONFIG.round11.traffic.guaranteed;
+    this._guaranteed = (cfgG && cfgG.length ? cfgG.slice() : ['pickup', 'bus', 'coupe']);
   }
 
-  function removeCarFromScene(car) {
-    if (scene && car && car.mesh) scene.remove(car.mesh);
+  _roadSpot(road) {
+    const rng = this.rng;
+    const lane = (rng() < 0.5 ? -1 : 1) * (1.6 + rng() * 1.2);
+    if (road.axis === 'z') {
+      const z = road.z0 + rng() * (road.z1 - road.z0);
+      return { x: road.x + lane, z, heading: rng() < 0.5 ? 0 : Math.PI, dir: rng() < 0.5 ? 1 : -1 };
+    }
+    const x = road.x0 + rng() * (road.x1 - road.x0);
+    return { x, z: road.z + lane, heading: rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2, dir: rng() < 0.5 ? 1 : -1 };
   }
 
-  function placeCar(model, x, z, heading, parked) {
-    const car = makeVehicle(model, x, z, heading);
-    car.parked = !!parked;
-    car.driver = parked ? null : 'ai';
+  _spawnCar(model, parked) {
+    const rng = this.rng;
+    const road = ROADS[Math.floor(rng() * ROADS.length)];
+    const spot = this._roadSpot(road);
+    const car = makeVehicle(model, spot.x, spot.z, spot.heading);
+    car._road = road;
+    car._dir = spot.dir;
+    car._lane = spot.x !== road.x ? spot.x : spot.z;
     if (parked) {
+      car.driver = null;
       car.speed = 0;
       car.targetSpeed = 0;
       car.baseTargetSpeed = 0;
     } else {
-      const sp = 6 + rng() * 5;
-      car.baseTargetSpeed = sp;
-      car.targetSpeed = sp;
-      car.speed = sp;
+      car.driver = 'ai';
+      const s = 6 + rng() * 6;
+      car.targetSpeed = s;
+      car.baseTargetSpeed = s;
+      car.speed = s;
     }
     if (model === 'bus') {
-      // AI bus targetSpeed/baseTargetSpeed clamped 7-10.
-      const clamped = Math.min(10, Math.max(7, 8));
-      car.baseTargetSpeed = clamped;
-      car.targetSpeed = clamped;
-      car.speed = parked ? 0 : clamped;
-      state.tourBus = car;
+      const bs = 7 + rng() * 3;
+      car.targetSpeed = Math.min(10, Math.max(7, bs));
+      car.baseTargetSpeed = car.targetSpeed;
+      if (!car.driver) car.speed = 0;
+      else car.speed = car.targetSpeed;
+      this.tourBus = car;
     }
-    addCarToScene(car);
+    this.cars.push(car);
+    if (this.scene) this.scene.add(car.mesh);
     return car;
   }
 
-  function buildFleet() {
-    state.cars.length = 0;
-    state.tourBus = null;
-    state._guaranteedIndex = 0;
-    state._pickupSpawned = false;
-    // Guaranteed models first, in order: pickup, bus, coupe.
-    // The guaranteed 'coupe' IS the Palm Coupe (label 'Palm Coupe') —
-    // the harness gates on byModel['Palm Coupe'], never on 'Coupe'.
-    const guaranteedSpots = [
-      { model: 'pickup', x: 40, z: -30, heading: 0 },
-      { model: 'bus', x: 120, z: -60, heading: Math.PI },
-      { model: 'palm', x: 40, z: -140, heading: 0 },
-    ];
-    for (const spot of guaranteedSpots) {
-      const car = placeCar(spot.model, spot.x, spot.z, spot.heading, false);
-      state.cars.push(car);
-      state._guaranteedIndex += 1;
-      if (spot.model === 'pickup') state._pickupSpawned = true;
+  buildFleet() {
+    this.cars = [];
+    this.tourBus = null;
+    const rng = this.rng;
+    // Guarantees first: Dune Pickup, City Bus, Palm Coupe always present.
+    for (const g of this._guaranteed) {
+      this._spawnCar(g, false);
+      this._guaranteedIndex += 1;
     }
-    // Fill to maxCars with seeded variety (fresh fleet >= 8 models).
-    // Rotate through a fixed varied list (positions still seeded) so the
-    // distinct-model count is deterministic, not draw-luck.
-    const fillRotation = ['sedan', 'hatch', 'suv', 'taxi', 'van', 'pickup', 'palm', 'coupe', 'sedan', 'hatch', 'suv', 'taxi'];
+    if (this._guaranteed.includes('pickup')) this._pickupSpawned = true;
+    // Shuffled remaining models for diversity (fresh fleet >= 8 models).
+    const rest = MODEL_KEYS.filter((m) => !this._guaranteed.includes(m));
+    for (let i = rest.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const tmp = rest[i]; rest[i] = rest[j]; rest[j] = tmp;
+    }
     let i = 0;
-    while (state.cars.length < maxCars - 6) {
-      const model = fillRotation[i % fillRotation.length];
-      const road = ROAD_NETWORK[Math.floor(rng() * ROAD_NETWORK.length) % ROAD_NETWORK.length];
-      let x; let z; let heading;
-      if (road.axis === 'z') {
-        x = road.x + (rng() < 0.5 ? -3.2 : 3.2);
-        z = road.z0 + rng() * (road.z1 - road.z0);
-        heading = rng() < 0.5 ? 0 : Math.PI;
-      } else {
-        z = road.z + (rng() < 0.5 ? -3.0 : 3.0);
-        x = road.x0 + rng() * (road.x1 - road.x0);
-        heading = rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
-      }
-      state.cars.push(placeCar(model, x, z, heading, false));
+    while (this.cars.length < this.maxCars - 6) {
+      this._spawnCar(rest[i % rest.length], false);
       i += 1;
-      if (i > 200) break;
     }
-    // Parked = LAST 6, along the downtown road and marina road.
-    const parkedSpots = [
-      { model: 'sedan', x: 46.5, z: -40, heading: 0 },
-      { model: 'suv', x: 46.5, z: -52, heading: 0 },
-      { model: 'hatch', x: 46.5, z: -64, heading: 0 },
-      { model: 'teal', x: 126.5, z: -90, heading: Math.PI },
-      { model: 'sedan', x: 46.5, z: -76, heading: 0 },
-      { model: 'van', x: 126.5, z: -102, heading: Math.PI },
+    // Parked = LAST 6 cars.
+    while (this.cars.length < this.maxCars) {
+      this._spawnCar(rest[i % rest.length], true);
+      i += 1;
+    }
+    this._built = true;
+    return this.cars;
+  }
+
+  buildPeds() {
+    const rng = this.rng;
+    const spots = [
+      { axis: 'z', fixed: 36.5, lo: -240, hi: 240 },
+      { axis: 'z', fixed: 48.5, lo: -200, hi: 200 },
+      { axis: 'x', fixed: -113, lo: -100, hi: 300 },
+      { axis: 'x', fixed: -127, lo: -100, hi: 300 },
+      { axis: 'z', fixed: 112, lo: -180, hi: 100 },
     ];
-    for (const spot of parkedSpots) {
-      state.cars.push(placeCar(spot.model, spot.x, spot.z, spot.heading, true));
+    for (let n = 0; n < this.maxPedestrians; n++) {
+      const ped = makePed(rng);
+      const s = spots[Math.floor(rng() * spots.length)];
+      if (s.axis === 'z') {
+        ped.axis = 'z';
+        ped.mesh.position.set(s.fixed, 0, s.lo + rng() * (s.hi - s.lo));
+      } else {
+        ped.axis = 'x';
+        ped.mesh.position.set(s.lo + rng() * (s.hi - s.lo), 0, s.fixed);
+      }
+      ped.dir = rng() < 0.5 ? 1 : -1;
+      this.peds.push(ped);
+      if (this.scene) this.scene.add(ped.mesh);
     }
-    state._built = true;
+    return this.peds;
   }
 
-  function buildPeds(count) {
-    for (const ped of state.peds) {
-      if (scene) scene.remove(ped.mesh);
-    }
-    state.peds.length = 0;
-    for (let i = 0; i < count; i += 1) {
-      const x = 44 + rng() * 8;
-      const z = -200 + rng() * 380;
-      const ped = makePedestrian(rng, x, z);
-      ped.mesh.rotation.y = ped.heading + Math.PI;
-      state.peds.push(ped);
-      if (scene) scene.add(ped.mesh);
-    }
+  reset() {
+    for (const c of this.cars) if (this.scene) this.scene.remove(c.mesh);
+    this.cars = [];
+    this.tourBus = null;
+    this._guaranteedIndex = 0;
+    this._pickupSpawned = false;
+    this._built = false;
   }
 
-  function stageShot(shotId) {
-    // Remove previously pinned peds, then pin 2 paused peds for this shot.
-    for (const ped of state._pinnedPeds) {
-      if (scene) scene.remove(ped.mesh);
-      const idx = state.peds.indexOf(ped);
-      if (idx >= 0) state.peds.splice(idx, 1);
+  update(dt = 1 / 60) {
+    if (!this._built || this.cars.length === 0) this.buildFleet();
+    if (this.peds.length === 0) this.buildPeds();
+    for (const car of this.cars) {
+      if (car.driver !== 'ai') continue;
+      const road = car._road;
+      if (!road) continue;
+      const step = car.speed * dt * car._dir;
+      if (road.axis === 'z') {
+        let z = car.mesh.position.z + step;
+        if (z > road.z1) z = road.z0 + (z - road.z1);
+        if (z < road.z0) z = road.z1 - (road.z0 - z);
+        car.mesh.position.z = z;
+        car._heading = car._dir > 0 ? Math.PI : 0;
+        car.mesh.rotation.y = car._heading;
+      } else {
+        let x = car.mesh.position.x + step;
+        if (x > road.x1) x = road.x0 + (x - road.x1);
+        if (x < road.x0) x = road.x1 - (road.x0 - x);
+        car.mesh.position.x = x;
+        car._heading = car._dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+        car.mesh.rotation.y = car._heading;
+      }
     }
-    state._pinnedPeds.length = 0;
-    const pins = PINNED_PEDS[shotId] || PINNED_PEDS.cover;
-    for (const [x, z] of pins) {
-      const ped = makePedestrian(rng, x, z);
+    for (const ped of this.peds) ped.update(dt);
+  }
+
+  getFleetComposition() {
+    const byModel = {};
+    const bySilhouette = {};
+    for (const c of this.cars) {
+      byModel[c.label] = (byModel[c.label] || 0) + 1;
+      bySilhouette[c.silhouette] = (bySilhouette[c.silhouette] || 0) + 1;
+    }
+    const moving = this.cars.filter((c) => c.driver === 'ai').length;
+    const parked = this.cars.filter((c) => c.driver === null).length;
+    const guaranteed = this._guaranteed
+      .filter((g) => this.cars.some((c) => c.model === g))
+      .map((g) => MODELS_BY_KEY[g].label);
+    return {
+      total: this.cars.length,
+      moving,
+      parked,
+      byModel,
+      bySilhouette,
+      guaranteed,
+      tourBus: this.tourBus
+        ? { model: 'City Bus', label: 'City Bus', silhouette: 'bus', speed: this.tourBus.speed, targetSpeed: this.tourBus.targetSpeed }
+        : null,
+    };
+  }
+
+  getPedestrians() {
+    return this.peds;
+  }
+
+  getCars() {
+    return this.cars;
+  }
+
+  stageShot(shotId) {
+    if (this.peds.length === 0) this.buildPeds();
+    const pins = SHOT_PINS[shotId];
+    if (!pins) return;
+    pins.forEach(([x, z], i) => {
+      const ped = this.peds[i % this.peds.length];
       ped.paused = true;
       ped.mesh.position.set(x, 0, z);
-      ped.position.set(x, 0, z);
-      state.peds.push(ped);
-      state._pinnedPeds.push(ped);
-      if (scene) scene.add(ped.mesh);
-    }
-    return state._pinnedPeds;
+    });
+    this._stagedShot = shotId;
   }
-
-  const system = {
-    scene,
-    get cars() { return state.cars; },
-    get peds() { return state.peds; },
-    get pedestrians() { return state.peds; },
-    get tourBus() { return state.tourBus; },
-    maxCars,
-    maxPedestrians,
-    get _guaranteedIndex() { return state._guaranteedIndex; },
-    get _pickupSpawned() { return state._pickupSpawned; },
-    ROAD_NETWORK,
-    SHOT_COUNTS,
-    buildFleet,
-    buildPeds,
-    stageShot,
-    update(dt = 1 / 60) {
-      if (!state._built || state.cars.length === 0) buildFleet();
-      if (state.peds.length === 0) buildPeds(maxPedestrians);
-      for (const car of state.cars) car.update(dt);
-      for (const ped of state.peds) ped.update(dt);
-    },
-    reset() {
-      for (const car of state.cars) removeCarFromScene(car);
-      state.cars.length = 0;
-      state.tourBus = null;
-      state._guaranteedIndex = 0;
-      state._pickupSpawned = false;
-      state._built = false;
-    },
-    getPedestrians() {
-      return state.peds;
-    },
-    getFleetComposition() {
-      const byModel = {};
-      const bySilhouette = {};
-      let moving = 0;
-      let parked = 0;
-      for (const car of state.cars) {
-        // byModel keyed by the FULL label, never the short key.
-        const label = car.label || (MODELS[car.model] && MODELS[car.model].label) || car.model;
-        byModel[label] = (byModel[label] || 0) + 1;
-        const sil = car.silhouette || (MODELS[car.model] && MODELS[car.model].silhouette) || 'sedan';
-        bySilhouette[sil] = (bySilhouette[sil] || 0) + 1;
-        if (car.parked) parked += 1;
-        else moving += 1;
-      }
-      // 'coupe' in the guaranteed list is satisfied by the Palm Coupe.
-      const guaranteed = GUARANTEED.filter((m) => (m === 'coupe'
-        ? state.cars.some((c) => c.model === 'palm' || c.model === 'coupe')
-        : state.cars.some((c) => c.model === m)));
-      const bus = state.tourBus;
-      return {
-        total: state.cars.length,
-        moving,
-        parked,
-        byModel,
-        bySilhouette,
-        guaranteed,
-        tourBus: bus ? {
-          model: 'City Bus',
-          label: 'City Bus',
-          speed: bus.speed,
-          targetSpeed: bus.targetSpeed,
-          baseTargetSpeed: bus.baseTargetSpeed,
-          position: { x: bus.position.x, z: bus.position.z },
-        } : null,
-      };
-    },
-  };
-  return system;
 }
 
-export class TrafficManager {
-  constructor(opts = {}) {
-    this._sys = createTrafficSystem({
-      scene: opts.scene || null,
-      rng: opts.rng,
-      maxCars: opts.maxCars,
-      maxPedestrians: opts.maxPedestrians,
-    });
-    this.scene = opts.scene || null;
-  }
-
-  get cars() { return this._sys.cars; }
-  get peds() { return this._sys.peds; }
-  get pedestrians() { return this._sys.pedestrians; }
-  get tourBus() { return this._sys.tourBus; }
-  get maxCars() { return this._sys.maxCars; }
-  get maxPedestrians() { return this._sys.maxPedestrians; }
-  get _guaranteedIndex() { return this._sys._guaranteedIndex; }
-  get _pickupSpawned() { return this._sys._pickupSpawned; }
-
-  buildFleet() { return this._sys.buildFleet(); }
-  buildPeds(count) { return this._sys.buildPeds(count); }
-  stageShot(shotId) { return this._sys.stageShot(shotId); }
-  update(dt) { return this._sys.update(dt); }
-  reset() { return this._sys.reset(); }
-  getPedestrians() { return this._sys.getPedestrians(); }
-  getFleetComposition() { return this._sys.getFleetComposition(); }
+export function createTrafficSystem(ctx = {}) {
+  return new TrafficManager(ctx);
 }

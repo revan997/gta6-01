@@ -1,165 +1,171 @@
-// missions.js — chapters, missions, story dialogue, jobs, rewards.
-// Four missions. Chapter 3 is named 'Borrowed Beauty' with chapterTitle
-// 'Heat' (contract §7 wording). Rewards $500 / $800 / $1,200 / $2,500.
+// missions.js — Solmar Bay missions, chapters, story, dialogue
+// (attempt #9, fresh build).
+// Four missions across chapters 1, 2, 3 and 5. Mission ids are 1-based;
+// getCurrentMission returns {number: id, ...} where number is the id.
 
 export const MISSIONS = [
   {
     id: 1,
     number: 1,
     chapter: 1,
-    name: 'First Run',
     chapterTitle: 'First Run',
-    objective: 'Pick up the package at the Marina and bring it to Dante.',
-    location: 'Marina',
+    name: 'First Run',
+    title: 'First Run',
+    objective: 'Pick up the package at the Marina',
     reward: 500,
-    par: 'A',
+    par: { s: 95, a: 80, b: 60, c: 40 },
+    location: 'MARINA',
     dialogue: [
-      { speaker: 'Dante', text: 'Rico. The package is waiting at the Marina. No detours, no heroes.' },
-      { speaker: 'Rico', text: 'On my way. If the cops show up, I was never here.' },
-      { speaker: 'Mama Lou', text: 'Drive like the whole city is watching, mijo. Because it is.' },
+      { speaker: 'Dante', text: 'Rico, the package is at the Marina. No noise, no heat. Just drive.' },
+      { speaker: 'Rico', text: 'Easy. In and out before anyone notices.' },
+      { speaker: 'Mama Lou', text: 'Careful, baby. The Marina is crawling with patrols tonight.' },
     ],
   },
   {
     id: 2,
     number: 2,
     chapter: 2,
-    name: 'Hot Wheels',
     chapterTitle: 'Hot Wheels',
-    objective: 'Steal the Palm Coupe and lose the interceptors on the north road.',
-    location: 'Downtown',
+    name: 'Hot Wheels',
+    title: 'Hot Wheels',
+    objective: 'Steal the Palm Coupe and lose the heat',
     reward: 800,
-    par: 'A',
+    par: { s: 95, a: 80, b: 60, c: 40 },
+    location: 'DOWNTOWN',
     dialogue: [
-      { speaker: 'Dante', text: 'Four stars and a chopper. That coupe better be worth it.' },
-      { speaker: 'Rico', text: 'VEHICLE STOLEN — and they still have not caught me.' },
-      { speaker: 'Mama Lou', text: 'Four stars and counting, Rico. Keep the pedal down.' },
+      { speaker: 'Dante', text: 'Four stars and counting. That coupe is ours — take it and run.' },
+      { speaker: 'Rico', text: 'Four stars and a chopper. This is going to be loud.' },
+      { speaker: 'Mama Lou', text: 'Lose them on the bridge road. Do not bring them home.' },
     ],
   },
   {
     id: 3,
     number: 3,
     chapter: 3,
-    name: 'Borrowed Beauty',
     chapterTitle: 'Heat',
-    objective: 'Hold the line against the responding officers and walk away clean.',
-    location: 'Downtown',
+    name: 'Borrowed Beauty',
+    title: 'Borrowed Beauty',
+    objective: 'Borrow the beauty from the Deco garage',
     reward: 1200,
-    par: 'S',
+    par: { s: 95, a: 80, b: 60, c: 40 },
+    location: 'DECO TOWER',
     dialogue: [
-      { speaker: 'Dante', text: 'Seven of them, Rico. Make every shot count.' },
-      { speaker: 'Rico', text: 'Four stars and counting. They picked the wrong street.' },
-      { speaker: 'Mama Lou', text: 'Golden hour over the Bay — and you are still standing.' },
+      { speaker: 'Dante', text: 'VEHICLE STOLEN — that is the headline. The beauty is ours now.' },
+      { speaker: 'Rico', text: 'Borrowed. I will bring her back with a full tank.' },
+      { speaker: 'Mama Lou', text: 'The Deco garage has two guards and no cameras. Go.' },
     ],
   },
   {
     id: 4,
     number: 4,
     chapter: 5,
-    name: 'Harbour Heist',
     chapterTitle: 'Harbour Heist',
-    objective: 'Meet Dante at the harbour at golden hour and plan the big one.',
-    location: 'Harbour',
+    name: 'Harbour Heist',
+    title: 'Harbour Heist',
+    objective: 'Hit the harbour vault at golden hour',
     reward: 2500,
-    par: 'S',
+    par: { s: 95, a: 80, b: 60, c: 40 },
+    location: 'HARBOUR',
     dialogue: [
-      { speaker: 'Dante', text: 'Golden hour over the Bay. Tomorrow we take the harbour.' },
-      { speaker: 'Rico', text: 'Five-star chase waiting for us. I am ready.' },
-      { speaker: 'Mama Lou', text: 'One more job, mijo. Then we are free.' },
+      { speaker: 'Dante', text: 'Golden hour over the Bay. The vault opens at sunset — be there.' },
+      { speaker: 'Rico', text: 'Harbour Heist. Biggest job of my life.' },
+      { speaker: 'Mama Lou', text: 'Come home rich, baby. Or do not come home at all.' },
     ],
   },
 ];
 
-export const CHAPTERS = MISSIONS.map((m) => ({
-  number: m.chapter,
-  name: m.name,
-  chapterTitle: m.chapterTitle,
-}));
+export const SHOT_MISSIONS = { cover: 1, combat: 2, pursuit: 3, sunset: 4 };
 
-// shotId -> mission number (1-based).
-export const SHOT_MISSIONS = {
-  cover: 1,
-  combat: 2,
-  pursuit: 3,
-  sunset: 4,
-};
+export function getShotContext(shotId) {
+  const id = SHOT_MISSIONS[shotId] || 1;
+  const m = MISSIONS.find((x) => x.id === id) || MISSIONS[0];
+  return {
+    shot: shotId,
+    mission: m.id,
+    number: m.id,
+    chapter: m.chapter,
+    chapterTitle: m.chapterTitle,
+    name: m.name,
+    title: m.title,
+    objective: m.objective,
+    reward: m.reward,
+    location: m.location,
+  };
+}
 
-export const NEXT_MISSIONS = [
-  'Hot Wheels',
-  'Borrowed Beauty',
-  'Harbour Heist',
-  'five-star chase',
-  'five-star chase',
-];
+export function createMissionSystem(ctx = {}) {
+  const sys = {
+    _current: 1,
+    _completed: [],
+    _jobsDone: 0,
 
-export function createMissions(ctx = {}) {
-  let current = 1;
-  let completed = [];
-  let jobsDone = 0;
+    getMission(n) {
+      return MISSIONS.find((m) => m.id === n || m.number === n) || null;
+    },
 
-  function getMission(n) {
-    const m = MISSIONS.find((x) => x.number === n || x.id === n);
-    return m || null;
-  }
-
-  const system = {
-    missions: MISSIONS,
-    chapters: CHAPTERS,
     getCurrentMission() {
-      const m = getMission(current);
-      return m ? { ...m, number: m.number } : null;
+      const m = sys.getMission(sys._current) || MISSIONS[0];
+      return { number: m.id, id: m.id, chapter: m.chapter, chapterTitle: m.chapterTitle, name: m.name, title: m.title, objective: m.objective, reward: m.reward, location: m.location, dialogue: m.dialogue, par: m.par };
     },
-    getMission,
-    getMissionByNumber(n) { return getMission(n); },
-    getCompletedMissions() { return [...completed]; },
+
+    getCompletedMissions() {
+      return sys._completed.slice();
+    },
+
     setCompletedMissions(list) {
-      completed = Array.isArray(list) ? [...list] : [];
-      return completed;
+      sys._completed = Array.isArray(list) ? list.map((n) => Math.floor(n)) : [];
+      return sys._completed;
     },
-    getJobsDone() { return jobsDone; },
+
+    getJobsDone() { return sys._jobsDone; },
+
     setJobsDone(n) {
-      jobsDone = Math.max(0, Math.min(4, Math.round(n || 0)));
-      return jobsDone;
+      sys._jobsDone = Math.max(0, Math.min(4, Math.floor(n)));
+      return sys._jobsDone;
     },
+
     startMission(n) {
-      const m = getMission(n);
+      const m = sys.getMission(n);
       if (!m) return null;
-      current = m.number;
-      return { ...m, number: m.number };
+      sys._current = m.id;
+      return sys.getCurrentMission();
     },
+
     completeMission(n) {
-      const m = getMission(n);
-      if (!m) return false;
-      if (!completed.includes(m.number)) completed.push(m.number);
-      jobsDone = Math.max(jobsDone, completed.length);
-      return true;
+      const m = sys.getMission(n || sys._current);
+      if (!m) return 0;
+      if (!sys._completed.includes(m.id)) sys._completed.push(m.id);
+      sys._jobsDone = Math.max(sys._jobsDone, Math.min(4, sys._completed.length));
+      return m.reward;
     },
-    getShotContext(shotId) {
-      const n = SHOT_MISSIONS[shotId] || 1;
-      const m = getMission(n);
-      return m ? { ...m, number: m.number, shot: shotId } : null;
-    },
+
     getDialogue(n) {
-      const m = getMission(n);
-      return m ? [...m.dialogue] : [];
+      const m = sys.getMission(n || sys._current);
+      return m ? m.dialogue.slice() : [];
     },
+
+    getShotContext(shotId) {
+      return getShotContext(shotId);
+    },
+
     getSaveData() {
-      return {
-        version: 8,
-        currentMission: current,
-        completedMissions: [...completed],
-        jobsDone,
-      };
+      return { version: 8, currentMission: sys._current, completedMissions: sys._completed.slice(), jobsDone: sys._jobsDone };
     },
+
     loadSaveData(data) {
-      if (!data) return false;
-      if (data.version && data.version !== 8) return false;
-      if (typeof data.currentMission === 'number') current = data.currentMission;
-      if (Array.isArray(data.completedMissions)) completed = [...data.completedMissions];
-      if (typeof data.jobsDone === 'number') jobsDone = data.jobsDone;
+      if (!data || typeof data !== 'object') return false;
+      if (data.currentMission) sys._current = Math.floor(data.currentMission);
+      // The top-level save (save.js) carries the mission as `mission`, not
+      // `currentMission` — without this fallback a fresh load reset the
+      // current mission 4 -> 1 (proven by the harness RESTORED probe).
+      else if (data.mission) sys._current = Math.floor(data.mission);
+      if (Array.isArray(data.completedMissions)) sys._completed = data.completedMissions.map((n) => Math.floor(n));
+      if (typeof data.jobsDone === 'number') sys._jobsDone = Math.floor(data.jobsDone);
+      if (Array.isArray(data.jobs)) sys._jobsDone = Math.max(sys._jobsDone, data.jobs.length);
       return true;
     },
   };
-  return system;
+  return sys;
 }
 
-export const createMissionSystem = createMissions;
+export const createMissions = createMissionSystem;

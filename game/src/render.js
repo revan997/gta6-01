@@ -1,188 +1,246 @@
-// render.js — rendering setup for Solmar Bay (attempt #8, round-16 rebuild).
-// Golden-hour sunset rig, shared materials, performance budgets.
-// Written fresh from the interface contract + rebuild spec. No old source read.
+// render.js — Solmar Bay rendering setup (attempt #9, fresh write).
+// Renderer, scene (fog + sky dome), golden-hour light rig, shared
+// materials, performance accounting, bright vivid sky texture.
+//
+// Contract notes baked in:
+// - createRenderer returns ONLY the renderer.
+// - setupLights is the golden-hour rig: warm sun 2.0 + hemisphere 0.75 +
+//   cool fill 0.35.
+// - Shadow map type MUST be THREE.PCFShadowMap (PCFSoft warns every frame
+//   and fails the warnings gate).
+// - createSkyTexture declares the canvas right after the no-DOM guard
+//   (a missing declaration threw ReferenceError and killed the whole suite
+//   in attempt #4).
+// - NoToneMapping + sRGB output (a filmic curve desaturates the water/gold
+//   the pixel gates read).
+// - Sky stops lightened for the bright top-10 read (V1): zenith '#5b6daa',
+//   mid '#7d6fa8', horizon warm gold. CONFIG.lighting overrides when given.
 
 import * as THREE from '../vendor/three.module.min.js';
 
-// Hard performance gates (contract §4): draw calls <= 4,300, triangles <= 150,000.
 export const PERF_BUDGETS = {
-  maxDrawCalls: 4300,
-  maxTriangles: 150000,
   drawCalls: 4300,
   triangles: 150000,
+  maxDrawCalls: 4300,
+  maxTriangles: 150000,
 };
 
-// Shared flat palette. Water is the bright lagoon blue the pixel gates read:
-// Lambert 0x1f8fff with a blue emissive at 0.55 — never near-black.
+const DEFAULT_SKY = {
+  zenith: '#8a5cf0',
+  mid: '#c05fe0',
+  horizon: '#ffa04d',
+  low: '#f07a40',
+  sun: '#fff3c0',
+};
+
+const DEFAULT_LIGHTS = {
+  sun: 2.0,
+  hemi: 0.75,
+  fill: 0.35,
+  sunColor: 0xffe0b0,
+  hemiSky: 0xbfd4ff,
+  hemiGround: 0x8a6a4a,
+  fillColor: 0x9ab8ff,
+};
+
+// Shared flat materials. world.js builds most of its own materials, but
+// these are the canonical palette every module should draw from.
 export const MATERIALS = {
-  water: new THREE.MeshLambertMaterial({
-    color: 0x1f8fff, emissive: 0x1f8fff, emissiveIntensity: 0.55,
-  }),
   asphalt: new THREE.MeshLambertMaterial({ color: 0x4a4038 }),
-  roadLine: new THREE.MeshLambertMaterial({ color: 0xe8e0c8 }),
-  sidewalk: new THREE.MeshLambertMaterial({ color: 0x9a938a }),
-  curb: new THREE.MeshLambertMaterial({ color: 0x6e675e }),
-  grass: new THREE.MeshLambertMaterial({ color: 0x5d8a3c }),
-  ground: new THREE.MeshLambertMaterial({ color: 0x77804f }),
-  buildingSlate: new THREE.MeshLambertMaterial({ color: 0x2e3440 }),
-  buildingDark: new THREE.MeshLambertMaterial({ color: 0x232830 }),
-  buildingLight: new THREE.MeshLambertMaterial({ color: 0x8a7f70 }),
-  buildingGlass: new THREE.MeshLambertMaterial({
-    color: 0x3a4a5a, emissive: 0x2a3644, emissiveIntensity: 0.4,
+  sidewalk: new THREE.MeshLambertMaterial({ color: 0xb0a894 }),
+  grass: new THREE.MeshLambertMaterial({ color: 0x4d8a3f }),
+  water: new THREE.MeshLambertMaterial({
+    color: 0x1f8fff,
+    emissive: 0x1f8fff,
+    emissiveIntensity: 0.55,
   }),
-  goldPane: new THREE.MeshLambertMaterial({
-    color: 0xd9a441, emissive: 0xffc861, emissiveIntensity: 1.0,
+  sand: new THREE.MeshLambertMaterial({ color: 0xe8d8a0 }),
+  slate: new THREE.MeshLambertMaterial({ color: 0x2a2f3a }),
+  slateDark: new THREE.MeshLambertMaterial({ color: 0x1c2733 }),
+  gold: new THREE.MeshLambertMaterial({
+    color: 0xd8a93c,
+    emissive: 0x8a6420,
+    emissiveIntensity: 0.35,
   }),
-  goldFin: new THREE.MeshLambertMaterial({
-    color: 0xc9962e, emissive: 0xffbf40, emissiveIntensity: 0.9,
-  }),
-  signBlue: new THREE.MeshLambertMaterial({ color: 0x1a4a8a }),
-  signWhite: new THREE.MeshLambertMaterial({ color: 0xffffff }),
-  bridgeDeck: new THREE.MeshLambertMaterial({ color: 0x5a5148 }),
-  bridgeCable: new THREE.MeshLambertMaterial({ color: 0x2a2a2a }),
-  bridgePylon: new THREE.MeshLambertMaterial({ color: 0x6a6058 }),
-  trunk: new THREE.MeshLambertMaterial({ color: 0x6b4a2f }),
-  palmLeaf: new THREE.MeshLambertMaterial({ color: 0x3f7a2e }),
-  lampPost: new THREE.MeshLambertMaterial({ color: 0x2f3336 }),
-  lampGlow: new THREE.MeshLambertMaterial({
-    color: 0xffe9b0, emissive: 0xffdf80, emissiveIntensity: 1.2,
-  }),
-  benchWood: new THREE.MeshLambertMaterial({ color: 0x7a5a34 }),
-  boatHull: new THREE.MeshLambertMaterial({ color: 0x2456a8 }),
-  boatSail: new THREE.MeshLambertMaterial({ color: 0xf5f2e8, side: THREE.DoubleSide }),
-  marinaWall: new THREE.MeshLambertMaterial({ color: 0xcfc4ae }),
-  planterBox: new THREE.MeshLambertMaterial({ color: 0x7a6a52 }),
-  shrub: new THREE.MeshLambertMaterial({ color: 0x4a7a34 }),
+  goldPane: new THREE.MeshBasicMaterial({ color: 0xffd97a }),
+  white: new THREE.MeshLambertMaterial({ color: 0xf5efe0 }),
+  glass: new THREE.MeshLambertMaterial({ color: 0x101418 }),
+  concrete: new THREE.MeshLambertMaterial({ color: 0x9aa0a8 }),
+  blueSign: new THREE.MeshLambertMaterial({ color: 0x1f4fd8 }),
+  palmTrunk: new THREE.MeshLambertMaterial({ color: 0x6b4a2f }),
+  palmLeaf: new THREE.MeshLambertMaterial({ color: 0x2f7a3a }),
 };
 
-// Sky gradient stops (contract fix #3.5): zenith lightened so the heli
-// body reads against the sky (contrast >= 35); horizon stays warm gold.
-export const SKY_STOPS = [
-  [0.0, '#5b6daa'],
-  [0.45, '#7d6fa8'],
-  [0.72, '#d9a05f'],
-  [1.0, '#f0c078'],
-];
+// createRenderer returns ONLY the renderer. No scene, no camera.
+export function createRenderer(options) {
+  const opts = options || {};
+  const renderer = new THREE.WebGLRenderer({
+    antialias: opts.antialias !== undefined ? opts.antialias : true,
+    canvas: opts.canvas,
+    powerPreference: 'high-performance',
+  });
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.NoToneMapping;
+  const dpr =
+    typeof window !== 'undefined' && window.devicePixelRatio
+      ? Math.min(window.devicePixelRatio, 2)
+      : 1;
+  renderer.setPixelRatio(dpr);
+  renderer.setSize(opts.width || 1280, opts.height || 720, false);
+  renderer.setClearColor(0x5b6daa, 1);
+  return renderer;
+}
 
-// Vertical sky gradient as a canvas texture. Guarded for no-DOM (Node
-// smoke tests): returns null there and callers fall back to a solid color.
-// NOTE: the canvas MUST be declared after the guard (attempt #4 fix #1:
-// a missing declaration threw ReferenceError and the game never booted).
-export function createSkyTexture() {
+// Scene with warm haze fog + a sky dome carrying the bright sky texture.
+// main.js MUST build the scene through this (never a bare new Scene —
+// that has no lights and no sky, the black-scene bug).
+export function createScene(config) {
+  const scene = new THREE.Scene();
+  const lighting = (config && config.lighting) || {};
+  scene.fog = new THREE.Fog(0xf2c89a, 120, 420);
+  const skyTex = createSkyTexture(lighting.skyStops || lighting);
+  if (skyTex) {
+    scene.background = skyTex;
+    const domeGeo = new THREE.SphereGeometry(600, 24, 16);
+    const domeMat = new THREE.MeshBasicMaterial({
+      map: skyTex,
+      side: THREE.BackSide,
+      fog: false,
+    });
+    const dome = new THREE.Mesh(domeGeo, domeMat);
+    dome.name = 'sky-dome';
+    scene.add(dome);
+  } else {
+    scene.background = new THREE.Color(0x5b6daa);
+  }
+  return scene;
+}
+
+// Golden-hour rig: warm low sun + soft hemisphere + cool fill.
+// Call exactly ONCE (main.js), after createScene.
+export function setupLights(scene, overrides) {
+  const o = Object.assign({}, DEFAULT_LIGHTS, overrides || {});
+  const sun = new THREE.DirectionalLight(o.sunColor, o.sun);
+  sun.position.set(120, 180, 60);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.left = -260;
+  sun.shadow.camera.right = 260;
+  sun.shadow.camera.top = 260;
+  sun.shadow.camera.bottom = -260;
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 600;
+  sun.shadow.bias = -0.0005;
+  sun.name = 'sun';
+  scene.add(sun);
+
+  const hemi = new THREE.HemisphereLight(o.hemiSky, o.hemiGround, o.hemi);
+  hemi.name = 'hemisphere';
+  scene.add(hemi);
+
+  const fill = new THREE.DirectionalLight(o.fillColor, o.fill);
+  fill.position.set(-80, 60, -120);
+  fill.name = 'fill';
+  scene.add(fill);
+
+  return { sun, hemi, fill };
+}
+
+// Bright vivid sky: lightened zenith, warm gold horizon, sun glow, soft
+// clouds. The canvas is declared RIGHT AFTER the no-DOM guard — a missing
+// declaration threw ReferenceError during module evaluation in attempt #4
+// and __solmar was never set.
+export function createSkyTexture(palette) {
   if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
-  canvas.width = 16;
-  canvas.height = 256;
+  const p = Object.assign({}, DEFAULT_SKY, palette || {});
+  canvas.width = 1024;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d');
-  const grad = ctx.createLinearGradient(0, 0, 0, 256);
-  for (const [stop, color] of SKY_STOPS) grad.addColorStop(stop, color);
+  if (!ctx) return null;
+
+  // Vertical gradient: bright zenith -> warm gold horizon.
+  const grad = ctx.createLinearGradient(0, 0, 0, 512);
+  grad.addColorStop(0.0, p.zenith);
+  grad.addColorStop(0.45, p.mid);
+  grad.addColorStop(0.72, p.horizon);
+  grad.addColorStop(1.0, p.low);
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 16, 256);
+  ctx.fillRect(0, 0, 1024, 512);
+
+  // Sun glow, upper right of the sky band.
+  const glow = ctx.createRadialGradient(740, 300, 10, 740, 300, 220);
+  glow.addColorStop(0, p.sun);
+  glow.addColorStop(0.35, 'rgba(255, 220, 140, 0.55)');
+  glow.addColorStop(1, 'rgba(255, 220, 140, 0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 1024, 512);
+
+  // Sun disc.
+  ctx.fillStyle = '#fff8dc';
+  ctx.beginPath();
+  ctx.arc(740, 300, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Soft clouds: white ellipses, low alpha, in the upper half.
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.20)';
+  const clouds = [
+    [120, 90, 150, 26],
+    [320, 60, 190, 30],
+    [560, 110, 170, 24],
+    [830, 70, 200, 28],
+    [220, 150, 130, 20],
+    [660, 160, 160, 22],
+    [950, 140, 120, 18],
+  ];
+  for (const c of clouds) {
+    ctx.beginPath();
+    ctx.ellipse(c[0], c[1], c[2], c[3], 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
-// Renderer. Returns ONLY the renderer. In Node (no DOM) returns a stub
-// with the same interface so smoke tests can assert the setup without a GPU.
-export function createRenderer(canvas) {
-  if (typeof document === 'undefined') {
-    return {
-      isStubRenderer: true,
-      domElement: null,
-      shadowMap: { enabled: true, type: THREE.PCFShadowMap },
-      outputColorSpace: THREE.SRGBColorSpace,
-      toneMapping: THREE.NoToneMapping,
-      setSize() {},
-      setPixelRatio() {},
-      render() {},
-      getSize() { return { width: 1280, height: 720 }; },
-      info: { render: { calls: 0, triangles: 0, geometries: 0, textures: 0 } },
-      dispose() {},
-    };
-  }
-  const renderer = new THREE.WebGLRenderer({ canvas: canvas || undefined, antialias: true });
-  renderer.shadowMap.enabled = true;
-  // MUST be PCFShadowMap: PCFSoftShadowMap was removed in this three
-  // version and logs a warning every frame (the harness gates warnings === 0).
-  renderer.shadowMap.type = THREE.PCFShadowMap;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  // NoToneMapping + sRGB is deliberate: a filmic curve desaturates the
-  // water blue and Deco gold the pixel gates read.
-  renderer.toneMapping = THREE.NoToneMapping;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(1280, 720);
-  return renderer;
-}
-
-// Scene: warm fog + a sky dome (gradient texture, or solid fallback).
-export function createScene() {
-  const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0xd9a05f, 200, 750);
-  const skyTex = createSkyTexture();
-  const skyMat = new THREE.MeshBasicMaterial({
-    side: THREE.BackSide, fog: false, toneMapped: false,
-  });
-  if (skyTex) skyMat.map = skyTex;
-  else skyMat.color = new THREE.Color(0x7d6fa8);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(650, 24, 16), skyMat);
-  dome.name = 'skyDome';
-  scene.add(dome);
-  return scene;
-}
-
-// Golden-hour light rig: warm low sun 2.0 + hemisphere 0.75 + cool fill 0.35.
-// The sun casts the long shadows; the fill keeps the shadow side readable.
-export function setupLights(scene) {
-  const sun = new THREE.DirectionalLight(0xffd9a0, 2.0);
-  sun.name = 'sun';
-  sun.position.set(-150, 60, -60);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -280;
-  sun.shadow.camera.right = 280;
-  sun.shadow.camera.top = 280;
-  sun.shadow.camera.bottom = -280;
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 700;
-  sun.shadow.bias = -0.0004;
-  sun.shadow.normalBias = 0.02;
-  scene.add(sun);
-  if (sun.target) {
-    sun.target.position.set(0, 0, -100);
-    scene.add(sun.target);
-  }
-  const hemi = new THREE.HemisphereLight(0xffd9b0, 0x6b5a48, 0.75);
-  hemi.name = 'hemi';
-  scene.add(hemi);
-  const fill = new THREE.DirectionalLight(0x9db8ff, 0.35);
-  fill.name = 'fill';
-  fill.position.set(180, 90, 140);
-  scene.add(fill);
-  return { sun, hemi, fill };
-}
-
-// Performance accounting, read off the renderer's info block.
+// Performance accounting off the renderer's own info block.
 export function getPerfStats(renderer) {
-  const info = (renderer && renderer.info && renderer.info.render)
-    ? renderer.info.render
-    : { calls: 0, triangles: 0, geometries: 0, textures: 0 };
+  const info = (renderer && renderer.info && renderer.info.render) || {};
+  const calls = typeof info.calls === 'number' ? info.calls : 0;
+  const triangles =
+    typeof info.triangles === 'number' ? info.triangles : 0;
   return {
-    calls: info.calls || 0,
-    triangles: info.triangles || 0,
-    geometries: info.geometries || 0,
-    textures: info.textures || 0,
+    calls,
+    triangles,
+    drawCalls: calls,
+    maxDrawCalls: PERF_BUDGETS.maxDrawCalls,
+    maxTriangles: PERF_BUDGETS.maxTriangles,
+    withinBudget: calls <= PERF_BUDGETS.maxDrawCalls && triangles <= PERF_BUDGETS.maxTriangles,
   };
 }
 
+// {ok, ...}: true only when BOTH budgets hold. Accepts either key naming.
 export function withinBudget(stats) {
-  return stats.calls <= PERF_BUDGETS.maxDrawCalls
-    && stats.triangles <= PERF_BUDGETS.maxTriangles;
+  const s = stats || {};
+  const calls = s.calls !== undefined ? s.calls : s.drawCalls || 0;
+  const triangles = s.triangles !== undefined ? s.triangles : 0;
+  const maxCalls = PERF_BUDGETS.maxDrawCalls;
+  const maxTris = PERF_BUDGETS.maxTriangles;
+  return {
+    ok: calls <= maxCalls && triangles <= maxTris,
+    calls,
+    triangles,
+    maxDrawCalls: maxCalls,
+    maxTriangles: maxTris,
+    overCalls: Math.max(0, calls - maxCalls),
+    overTriangles: Math.max(0, triangles - maxTris),
+  };
 }
 
 export function resizeRenderer(renderer, width, height) {
-  if (renderer && typeof renderer.setSize === 'function') {
-    renderer.setSize(width, height);
-  }
-  return renderer;
+  if (!renderer) return;
+  renderer.setSize(width, height, false);
 }

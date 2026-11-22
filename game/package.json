@@ -1,1 +1,1 @@
-{"dependencies":{"three":"^0.170.0"},"description":"Solmar Bay — a GTA VI-inspired open-world chase game for make.fun gta6-01","name":"solmar-bay","private":true,"scripts":{"build":"node main.ts","serve":"node serve.ts --port 8080","start":"node serve.ts --port 8080"},"type":"module","version":"1.0.0"}
+{"description":"Solmar Bay — an open-world crime game in the spirit of GTA 6, played offline in a desktop browser.","license":"MIT","name":"solmar-bay","private":true,"type":"module","version":"1.0.0"}

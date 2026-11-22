@@ -1,50 +1,36 @@
-// game/src/input.js — Keyboard and mouse input (attempt #8, round-16 rebuild).
+// input.js — keyboard + mouse input for Solmar Bay.
+// Attempt #9 (top10-rebuild).
 //
-// Driving keys, on-foot movement keys, aim and fire (mouse), the pause
-// key (the letter P), and menu navigation. Input is ignored during staged
-// captures. The module is safe to import in Node (no DOM access at import
-// time): listeners are attached only when attach() runs in a browser, and
-// every DOM access is guarded by a typeof check.
+// One input object owns all key/mouse state. The game loop polls it
+// (isDown / getAxis); staged captures ignore it entirely.
+//
+// Design notes:
+//  - KEYS maps logical actions to physical codes. isDown accepts either
+//    an action name ('forward') or a raw code ('KeyW').
+//  - press()/release() are the single funnel: DOM event handlers call
+//    them, and tests call them directly (no DOM needed in Node).
+//  - justPressed is an edge set, cleared once per frame by update().
+//  - Mouse deltas accumulate between update() calls and reset there.
+//  - attach() is a safe no-op when there is no DOM (Node / tests).
 
 export const KEYS = {
-  // Driving / on-foot movement (WASD + arrows).
-  UP: 'KeyW',
-  DOWN: 'KeyS',
-  LEFT: 'KeyA',
-  RIGHT: 'KeyD',
-  ARROW_UP: 'ArrowUp',
-  ARROW_DOWN: 'ArrowDown',
-  ARROW_LEFT: 'ArrowLeft',
-  ARROW_RIGHT: 'ArrowRight',
-  // Driving verbs (aliases over the movement keys).
-  ACCEL: 'KeyW',
-  BRAKE: 'KeyS',
-  REVERSE: 'KeyS',
-  STEER_LEFT: 'KeyA',
-  STEER_RIGHT: 'KeyD',
-  // On-foot verbs.
-  WALK: 'KeyW',
-  RUN: 'ShiftLeft',
-  SPRINT: 'ShiftLeft',
-  JUMP: 'Space',
-  // Interaction.
-  ENTER_CAR: 'KeyE',
-  INTERACT: 'KeyE',
-  EXIT_CAR: 'KeyF',
-  // Combat.
-  AIM: 'MouseRight',
-  FIRE: 'MouseLeft',
-  RELOAD: 'KeyR',
-  WEAPON_NEXT: 'KeyQ',
-  // System.
-  PAUSE: 'KeyP',
-  MUTE: 'KeyM',
-  RADIO_NEXT: 'KeyN',
-  // Menus.
-  CONFIRM: 'Enter',
-  CANCEL: 'Escape',
-  MENU_UP: 'ArrowUp',
-  MENU_DOWN: 'ArrowDown',
+  forward: ['KeyW', 'ArrowUp'],
+  back: ['KeyS', 'ArrowDown'],
+  brake: ['KeyS', 'ArrowDown'],
+  left: ['KeyA', 'ArrowLeft'],
+  right: ['KeyD', 'ArrowRight'],
+  handbrake: ['Space'],
+  interact: ['KeyE'],
+  enterCar: ['KeyE'],
+  exitCar: ['KeyF'],
+  aim: ['ShiftLeft', 'ShiftRight'],
+  reload: ['KeyR'],
+  pause: ['KeyP'],
+  menu: ['Escape'],
+  confirm: ['Enter'],
+  horn: ['KeyH'],
+  radioNext: ['KeyT'],
+  camera: ['KeyC'],
 };
 
 export const MOUSE = {
@@ -53,284 +39,247 @@ export const MOUSE = {
   RIGHT: 2,
 };
 
-// Key codes that must never scroll the page while the game is focused.
-const PREVENT_DEFAULT_CODES = new Set([
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-  'Space',
-]);
+// Reverse lookup: code -> action names (first match wins for helpers).
+const CODE_TO_ACTION = {};
+for (const [action, codes] of Object.entries(KEYS)) {
+  for (const code of codes) {
+    if (!CODE_TO_ACTION[code]) CODE_TO_ACTION[code] = action;
+  }
+}
 
-// ---------------------------------------------------------------------
-// createInput — one input state object. Call attach() in the browser to
-// start listening; call detach() to stop. In tests, drive the state
-// directly with press() / release() / setMouse() — no DOM needed.
-//
-// The state object:
-//   down        — Set of key codes currently held
-//   justPressed — Set of key codes pressed since the last update()
-//   mouse       — { x, y, dx, dy, left, right, middle, wheel }
-//   isDown(code) / pressed(code) / axis() helpers
-//   enabled     — when false, all reads report "not pressed" (used to
-//                 freeze input during staged captures)
 export function createInput() {
+  // Currently-held physical codes.
   const down = new Set();
+  // Codes pressed since the last update() — edge-triggered.
   const justPressed = new Set();
+  // Codes released since the last update().
+  const justReleased = new Set();
+
   const mouse = {
     x: 0,
     y: 0,
     dx: 0,
     dy: 0,
-    left: false,
-    right: false,
-    middle: false,
+    down: [false, false, false],
+    justPressed: [false, false, false],
+    justReleased: [false, false, false],
     wheel: 0,
-    locked: false,
   };
 
+  let attachedTarget = null;
   let attached = false;
-  let enabled = true;
-  let lastMouseX = 0;
-  let lastMouseY = 0;
 
+  // -- DOM event handlers (bound once, attached/detached as a group) --
   function onKeyDown(event) {
-    if (!enabled) return;
-    if (PREVENT_DEFAULT_CODES.has(event.code)) {
-      event.preventDefault();
-    }
-    if (!down.has(event.code)) {
-      justPressed.add(event.code);
-    }
+    if (!event || !event.code) return;
+    if (event.repeat) return;
+    if (!down.has(event.code)) justPressed.add(event.code);
     down.add(event.code);
   }
 
   function onKeyUp(event) {
+    if (!event || !event.code) return;
     down.delete(event.code);
+    justReleased.add(event.code);
   }
 
   function onBlur() {
-    // Losing focus releases every key, so the car never keeps driving
-    // after the player alt-tabs away.
+    // Losing focus must not leave a key stuck down.
     down.clear();
-    mouse.left = false;
-    mouse.right = false;
-    mouse.middle = false;
+    justPressed.clear();
   }
 
   function onMouseMove(event) {
-    if (!enabled) return;
-    mouse.x = event.clientX;
-    mouse.y = event.clientY;
-    mouse.dx = event.clientX - lastMouseX;
-    mouse.dy = event.clientY - lastMouseY;
-    lastMouseX = event.clientX;
-    lastMouseY = event.clientY;
+    if (!event) return;
+    const nx = typeof event.clientX === 'number' ? event.clientX : mouse.x;
+    const ny = typeof event.clientY === 'number' ? event.clientY : mouse.y;
+    mouse.dx += nx - mouse.x;
+    mouse.dy += ny - mouse.y;
+    mouse.x = nx;
+    mouse.y = ny;
   }
 
   function onMouseDown(event) {
-    if (!enabled) return;
-    if (event.button === MOUSE.LEFT) mouse.left = true;
-    if (event.button === MOUSE.RIGHT) mouse.right = true;
-    if (event.button === MOUSE.MIDDLE) mouse.middle = true;
+    if (!event || typeof event.button !== 'number') return;
+    if (!mouse.down[event.button]) mouse.justPressed[event.button] = true;
+    mouse.down[event.button] = true;
   }
 
   function onMouseUp(event) {
-    if (event.button === MOUSE.LEFT) mouse.left = false;
-    if (event.button === MOUSE.RIGHT) mouse.right = false;
-    if (event.button === MOUSE.MIDDLE) mouse.middle = false;
+    if (!event || typeof event.button !== 'number') return;
+    mouse.down[event.button] = false;
+    mouse.justReleased[event.button] = true;
   }
 
   function onWheel(event) {
-    if (!enabled) return;
-    mouse.wheel += event.deltaY;
+    if (!event) return;
+    mouse.wheel += event.deltaY || 0;
   }
 
   function onContextMenu(event) {
-    // Right mouse is "aim" — never show the browser menu for it.
-    event.preventDefault();
+    // Right mouse is "aim" — never let the browser menu steal it.
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
   }
 
   const input = {
-    down,
-    justPressed,
+    keys: down,
     mouse,
 
-    get attached() {
-      return attached;
-    },
-
-    get enabled() {
-      return enabled;
-    },
-
-    setEnabled(value) {
-      enabled = !!value;
-      if (!enabled) {
-        down.clear();
-        justPressed.clear();
-        mouse.left = false;
-        mouse.right = false;
-        mouse.middle = false;
-      }
-      return input;
-    },
-
-    // Attach the DOM listeners. Safe to call in Node: it no-ops when
-    // there is no window/document.
-    attach() {
-      if (attached) return input;
-      if (typeof window === 'undefined' || typeof document === 'undefined') {
-        return input;
-      }
-      window.addEventListener('keydown', onKeyDown);
-      window.addEventListener('keyup', onKeyUp);
-      window.addEventListener('blur', onBlur);
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mousedown', onMouseDown);
-      document.addEventListener('mouseup', onMouseUp);
-      document.addEventListener('wheel', onWheel, { passive: true });
-      document.addEventListener('contextmenu', onContextMenu);
-      attached = true;
-      return input;
-    },
-
-    // Remove the DOM listeners.
-    detach() {
-      if (!attached) return input;
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('keydown', onKeyDown);
-        window.removeEventListener('keyup', onKeyUp);
-        window.removeEventListener('blur', onBlur);
-      }
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mousedown', onMouseDown);
-        document.removeEventListener('mouseup', onMouseUp);
-        document.removeEventListener('wheel', onWheel);
-        document.removeEventListener('contextmenu', onContextMenu);
-      }
-      attached = false;
-      return input;
-    },
-
-    // True while the key is held (and input is enabled).
-    isDown(code) {
-      if (!enabled) return false;
-      return down.has(code);
-    },
-
-    // True only on the frame the key went down (cleared by update()).
-    pressed(code) {
-      if (!enabled) return false;
-      return justPressed.has(code);
-    },
-
-    // -1 / 0 / +1 steering axis from A/D or Left/Right.
-    steerAxis() {
-      if (!enabled) return 0;
-      let axis = 0;
-      if (down.has(KEYS.LEFT) || down.has(KEYS.ARROW_LEFT)) axis -= 1;
-      if (down.has(KEYS.RIGHT) || down.has(KEYS.ARROW_RIGHT)) axis += 1;
-      return axis;
-    },
-
-    // -1 / 0 / +1 throttle axis from W/S or Up/Down.
-    // +1 = accelerate, -1 = brake/reverse.
-    throttleAxis() {
-      if (!enabled) return 0;
-      let axis = 0;
-      if (down.has(KEYS.UP) || down.has(KEYS.ARROW_UP)) axis += 1;
-      if (down.has(KEYS.DOWN) || down.has(KEYS.ARROW_DOWN)) axis -= 1;
-      return axis;
-    },
-
-    // -1 / 0 / +1 movement axis for on-foot forward/back.
-    moveAxis() {
-      return input.throttleAxis();
-    },
-
-    // True while the run/sprint key is held.
-    isRunning() {
-      if (!enabled) return false;
-      return down.has(KEYS.RUN) || down.has('ShiftRight');
-    },
-
-    // True while the aim (right mouse) button is held.
-    isAiming() {
-      if (!enabled) return false;
-      return mouse.right;
-    },
-
-    // True while the fire (left mouse) button is held.
-    isFiring() {
-      if (!enabled) return false;
-      return mouse.left;
-    },
-
-    // Test / harness hooks: drive the state without a DOM.
+    // -- testable funnel (also used by the DOM handlers above) --
     press(code) {
-      if (!down.has(code)) justPressed.add(code);
+      if (!code || down.has(code)) return;
+      justPressed.add(code);
       down.add(code);
-      return input;
     },
 
     release(code) {
+      if (!code) return;
       down.delete(code);
-      return input;
+      justReleased.add(code);
     },
 
-    setMouse(x, y) {
-      mouse.dx = x - lastMouseX;
-      mouse.dy = y - lastMouseY;
+    mouseDown(button) {
+      if (typeof button !== 'number') return;
+      if (!mouse.down[button]) mouse.justPressed[button] = true;
+      mouse.down[button] = true;
+    },
+
+    mouseUp(button) {
+      if (typeof button !== 'number') return;
+      mouse.down[button] = false;
+      mouse.justReleased[button] = true;
+    },
+
+    mouseMove(x, y) {
+      mouse.dx += x - mouse.x;
+      mouse.dy += y - mouse.y;
       mouse.x = x;
       mouse.y = y;
-      lastMouseX = x;
-      lastMouseY = y;
-      return input;
     },
 
-    setMouseButtons(left, right, middle) {
-      mouse.left = !!left;
-      mouse.right = !!right;
-      mouse.middle = !!middle;
-      return input;
+    // -- queries --
+    // Accepts an action name ('forward', 'pause') or a raw code ('KeyW').
+    isDown(actionOrCode) {
+      if (KEYS[actionOrCode]) {
+        return KEYS[actionOrCode].some((code) => down.has(code));
+      }
+      return down.has(actionOrCode);
     },
 
-    // End-of-frame housekeeping: clears justPressed and the mouse
-    // deltas. Called once per frame by the game loop.
+    // Edge: pressed since the last update(). Action name or raw code.
+    wasPressed(actionOrCode) {
+      if (KEYS[actionOrCode]) {
+        return KEYS[actionOrCode].some((code) => justPressed.has(code));
+      }
+      return justPressed.has(actionOrCode);
+    },
+
+    wasReleased(actionOrCode) {
+      if (KEYS[actionOrCode]) {
+        return KEYS[actionOrCode].some((code) => justReleased.has(code));
+      }
+      return justReleased.has(actionOrCode);
+    },
+
+    mouseIsDown(button) {
+      return !!mouse.down[button];
+    },
+
+    mouseWasPressed(button) {
+      return !!mouse.justPressed[button];
+    },
+
+    // Driving / on-foot axes in [-1, 1].
+    // x: +1 right, -1 left. y: +1 forward, -1 back.
+    getAxis() {
+      const x = (this.isDown('right') ? 1 : 0) - (this.isDown('left') ? 1 : 0);
+      const y = (this.isDown('forward') ? 1 : 0) - (this.isDown('back') ? 1 : 0);
+      return { x, y };
+    },
+
+    actionForCode(code) {
+      return CODE_TO_ACTION[code] || null;
+    },
+
+    // -- frame bookkeeping: call once per frame, after polling --
     update() {
       justPressed.clear();
+      justReleased.clear();
+      mouse.justPressed[0] = false;
+      mouse.justPressed[1] = false;
+      mouse.justPressed[2] = false;
+      mouse.justReleased[0] = false;
+      mouse.justReleased[1] = false;
+      mouse.justReleased[2] = false;
       mouse.dx = 0;
       mouse.dy = 0;
       mouse.wheel = 0;
-      return input;
     },
 
-    // Full reset (used when the game restarts or a shot is staged).
+    // -- DOM wiring (safe no-op without a DOM) --
+    attach(target) {
+      if (attached) return true;
+      const el = target || (typeof window !== 'undefined' ? window : null);
+      if (!el || typeof el.addEventListener !== 'function') return false;
+      el.addEventListener('keydown', onKeyDown);
+      el.addEventListener('keyup', onKeyUp);
+      el.addEventListener('blur', onBlur);
+      el.addEventListener('mousemove', onMouseMove);
+      el.addEventListener('mousedown', onMouseDown);
+      el.addEventListener('mouseup', onMouseUp);
+      el.addEventListener('wheel', onWheel);
+      el.addEventListener('contextmenu', onContextMenu);
+      attachedTarget = el;
+      attached = true;
+      return true;
+    },
+
+    detach() {
+      if (!attached || !attachedTarget) return false;
+      const el = attachedTarget;
+      el.removeEventListener('keydown', onKeyDown);
+      el.removeEventListener('keyup', onKeyUp);
+      el.removeEventListener('blur', onBlur);
+      el.removeEventListener('mousemove', onMouseMove);
+      el.removeEventListener('mousedown', onMouseDown);
+      el.removeEventListener('mouseup', onMouseUp);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('contextmenu', onContextMenu);
+      attachedTarget = null;
+      attached = false;
+      down.clear();
+      justPressed.clear();
+      return true;
+    },
+
+    get isAttached() {
+      return attached;
+    },
+
+    // Full reset (state changes, tests, respawns).
     reset() {
       down.clear();
       justPressed.clear();
-      mouse.left = false;
-      mouse.right = false;
-      mouse.middle = false;
+      justReleased.clear();
+      mouse.down[0] = false;
+      mouse.down[1] = false;
+      mouse.down[2] = false;
       mouse.dx = 0;
       mouse.dy = 0;
       mouse.wheel = 0;
-      return input;
     },
   };
 
   return input;
 }
 
-// The shared input instance for the whole game. main.js uses this one;
-// tests build their own with createInput().
+// Shared singleton: the game creates exactly one input object and
+// passes it around; modules that need input without plumbing use this.
 let sharedInput = null;
 
 export function getSharedInput() {
-  if (!sharedInput) {
-    sharedInput = createInput();
-  }
+  if (!sharedInput) sharedInput = createInput();
   return sharedInput;
 }
+
+export default createInput;

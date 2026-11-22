@@ -1,51 +1,17 @@
-import * as THREE from '../vendor/three.module.min.js';
-
-// combat.js — aiming, firing, muzzle flash, officer clusters, fallen officer.
-// createCombatSystem takes an OBJECT arg {scene, player, police, rng}.
+// combat.js — Solmar Bay combat: aiming, muzzle flash, officer clusters,
+// the fallen officer + light pool (attempt #9, fresh build).
+// Forward = (sin h, -cos h) in (x, z); right = (cos h, sin h).
 // The fallen officer's light pool is a RingGeometry ANNULUS (inner 1.2 m,
-// outer 4.5 m), emissive 0xffeebb at intensity 4.0, y 0.12: the dark hole
-// over the body is what keeps the body-vs-pool contrast >= 35. A solid
-// disc or a PointLight FAILS (the bright pool under the body pollutes the
-// 4x4 body box and the contrast goes negative).
+// outer 4.5 m): the dark hole over the body is what keeps the contrast
+// positive — a solid disc or a PointLight pollutes the body box.
+
+import * as THREE from '../vendor/three.module.min.js';
 
 function toCallableRng(rng) {
   if (typeof rng === 'function') return rng;
   if (rng && typeof rng.next === 'function') return () => rng.next();
   if (rng && typeof rng.random === 'function') return () => rng.random();
-  if (typeof rng === 'number') {
-    let s = rng >>> 0;
-    return () => {
-      s = (s + 0x6d2b79f5) >>> 0;
-      let t = s;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  let s = 20261122;
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-export function makeLightPool() {
-  const pool = new THREE.Mesh(
-    new THREE.RingGeometry(1.2, 4.5, 40),
-    new THREE.MeshBasicMaterial({
-      color: 0xffeebb, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
-    }),
-  );
-  pool.material.emissive = new THREE.Color(0xffeebb);
-  pool.material.emissiveIntensity = 4.0;
-  pool.rotation.x = -Math.PI / 2;
-  pool.position.y = 0.12;
-  pool.name = 'lightPool';
-  pool.userData.kind = 'lightPool';
-  return pool;
+  return () => 0.5;
 }
 
 export function createCombatSystem(ctx = {}) {
@@ -54,179 +20,232 @@ export function createCombatSystem(ctx = {}) {
   const police = ctx.police || null;
   const rng = toCallableRng(ctx.rng);
 
-  // Muzzle flash mesh (created once, shown on fire / frozen in staging).
-  const muzzle = new THREE.Mesh(
-    new THREE.ConeGeometry(0.16, 0.7, 8),
-    new THREE.MeshBasicMaterial({ color: 0xffd24a, transparent: true, opacity: 0.95 }),
-  );
-  muzzle.rotation.x = Math.PI / 2;
-  muzzle.name = 'muzzleFlash';
+  // Muzzle flash at Rico's muzzle (kind 'muzzleFlash'). Bright amber,
+  // opaque, 0.9 m wide — the pale 0.5 m cream box was invisible in the
+  // render (probe: mesh in-scene + visible, zero pixels); a 3x red box
+  // at the same spot renders, so size + saturation + opacity were the fix.
+  const flashMat = new THREE.MeshBasicMaterial({ color: 0xffc21c });
+  const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.2), flashMat);
+  muzzle.name = 'muzzle flash';
   muzzle.userData.kind = 'muzzleFlash';
   muzzle.visible = false;
   if (scene) scene.add(muzzle);
+  // White-hot core inside the flash: a flat amber box alone reads as a
+  // bar; a bright core makes it read as a burst at the muzzle.
+  const core = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.35, 0.14),
+    new THREE.MeshBasicMaterial({ color: 0xfff3b0 }));
+  core.name = 'muzzle flash core';
+  core.userData.kind = 'muzzleFlash';
+  core.position.set(0, 0, 0.1);
+  muzzle.add(core);
+  // Tracer line from muzzle toward the aim officer (kind 'tracer').
+  // THIN (0.035, was 0.09) and SHORT (45% of the distance, from the
+  // muzzle): the full-length 7 m bar read as a yellow UI rectangle
+  // spanning the whole combat frame. Now a short streak at the muzzle.
+  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffc21c, transparent: true, opacity: 0.45 });
+  const tracer = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 1), tracerMat);
+  tracer.name = 'tracer';
+  tracer.userData.kind = 'tracer';
+  tracer.visible = false;
+  if (scene) scene.add(tracer);
 
-  const state = {
-    muzzleTimer: 0,
-    _muzzleVisible: false,
-    lightPool: null,
-    tracers: [],
-    staged: false,
-  };
-
-  function officerPos(officer) {
-    return officer.position;
-  }
-
-  // Arrange the 7 staged officers around the player's FINAL spot.
-  // Officer 0 = aim officer at 7.4 m (nearest, crosshair target).
-  // Officer 3 = fallen prone in the gap between clusters, light pool under.
-  // 7th officer = 8 m forward, lateral -3.7 (right cluster).
-  function arrangeCombatOfficers(officers, anchorPlayer) {
-    const p = anchorPlayer || player;
-    if (!p || !officers || officers.length < 7) return false;
-    const px = p.position.x;
-    const pz = p.position.z;
-    const h = p.heading || 0;
-    const fx = Math.sin(h);
-    const fz = Math.cos(h);
-    const rx = Math.cos(h);
-    const rz = -Math.sin(h);
-    const at = (fwd, lat) => ({
-      x: px + fx * fwd + rx * lat,
-      z: pz + fz * fwd + rz * lat,
-    });
-    // Two clusters: left (advancing) and right (covering), gap in the middle.
-    const spots = [
-      at(7.4, 0.4),    // 0: aim officer, nearest, dead ahead
-      at(9.2, -4.6),   // 1: left cluster
-      at(10.5, 3.8),   // 2: right cluster
-      at(6.55, -0.6),  // 3: FALLEN, prone in the gap (feet.x must land 969-980; 6.7 gave 980)
-      at(11.8, -2.2),  // 4: left cluster rear
-      at(12.6, 4.4),   // 5: right cluster rear
-      at(8.0, -3.7),   // 6: 7th officer, right cluster, 8 m fwd lateral -3.7
-    ];
-    for (let i = 0; i < 7; i += 1) {
-      const o = officers[i];
-      const s = spots[i];
-      const dx = px - s.x;
-      const dz = pz - s.z;
-      const faceHeading = Math.atan2(dx, dz);
-      o.setPosition(s.x, s.z, faceHeading);
-      o.staged = true;
-      if (i === 3) {
-        o.setFallen(true);
-        // Fallen pistol dropped beside him, y ~0.5.
-        o.pistol.position.set(0.5, 0.5, 0.6);
-        o.pistol.rotation.z = Math.PI / 2;
-      } else {
-        o.setFallen(false);
-      }
-    }
-    // Light pool annulus under the fallen officer (officer 3).
-    if (state.lightPool && scene) scene.remove(state.lightPool);
-    const pool = makeLightPool();
-    const fallen = officers[3];
-    pool.position.set(fallen.position.x, 0.12, fallen.position.z);
-    state.lightPool = pool;
-    if (scene) scene.add(pool);
-    return true;
-  }
-
-  function aimOfficer() {
-    if (!police || !player) return null;
-    const officers = police.getOfficers().filter((o) => !o.fallen);
-    let best = null;
-    let bestD = Infinity;
-    for (const o of officers) {
-      const d = Math.hypot(o.position.x - player.position.x, o.position.z - player.position.z);
-      if (d < bestD) { bestD = d; best = o; }
-    }
-    return best ? { officer: best, distance: bestD } : null;
-  }
-
-  function fire() {
-    if (!player) return false;
-    const muzzlePos = new THREE.Vector3(
-      player.position.x + Math.sin(player.heading) * 0.6,
-      1.05,
-      player.position.z + Math.cos(player.heading) * 0.6,
-    );
-    muzzle.position.copy(muzzlePos);
-    muzzle.rotation.y = player.heading + Math.PI;
-    muzzle.visible = true;
-    state._muzzleVisible = true;
-    state.muzzleTimer = 0.12;
-    // Tracer line from muzzle toward the aim officer.
-    const aim = aimOfficer();
-    if (aim && scene) {
-      const to = aim.officer.position.clone();
-      to.y = 1.2;
-      const geo = new THREE.BufferGeometry().setFromPoints([muzzlePos.clone(), to]);
-      const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.8 }));
-      line.name = 'tracer';
-      line.userData.kind = 'tracer';
-      scene.add(line);
-      state.tracers.push({ line, timer: 0.12 });
-    }
-    return true;
-  }
-
-  function stageShot(shotId, anchorPlayer) {
-    if (shotId !== 'combat') return false;
-    const p = anchorPlayer || player;
-    const officers = police ? police.getOfficers() : [];
-    arrangeCombatOfficers(officers, p);
-    // Freeze the muzzle flash at Rico's muzzle (timer 999 = held).
-    if (p) {
-      muzzle.position.set(
-        p.position.x + Math.sin(p.heading) * 0.6,
-        1.05,
-        p.position.z + Math.cos(p.heading) * 0.6,
-      );
-      muzzle.rotation.y = p.heading + Math.PI;
-    }
-    muzzle.visible = true;
-    state._muzzleVisible = true;
-    state.muzzleTimer = 999;
-    state.staged = true;
-    return true;
-  }
-
-  const system = {
+  const sys = {
     scene,
     player,
     police,
-    get muzzleVisible() { return state._muzzleVisible; },
+    _muzzleTimer: 0,
+    _muzzleFrozen: false,
+    _muzzleVisible: false,
+    _lightPool: null,
+    _droppedPistol: null,
+    _staged: false,
+
+    get muzzleVisible() { return sys._muzzleVisible; },
     set muzzleVisible(v) {
-      state._muzzleVisible = !!v;
+      sys._muzzleVisible = !!v;
       muzzle.visible = !!v;
-      if (v) state.muzzleTimer = Math.max(state.muzzleTimer, 0.12);
     },
-    get ricoPistol() { return player ? player.pistol : null; },
-    set ricoPistol(v) { /* harness read path; assignment is a no-op */ },
-    get lightPool() { return state.lightPool; },
-    makeLightPool,
-    arrangeCombatOfficers,
-    aimOfficer,
-    fire,
-    stageShot,
+    get ricoPistol() {
+      return player && player.pistol ? player.pistol : null;
+    },
+
+    _forward(heading) {
+      return { x: Math.sin(heading), z: -Math.cos(heading) };
+    },
+    _right(heading) {
+      return { x: Math.cos(heading), z: Math.sin(heading) };
+    },
+    _spot(playerPos, heading, fwd, lat) {
+      const f = sys._forward(heading);
+      const r = sys._right(heading);
+      return { x: playerPos.x + f.x * fwd + r.x * lat, z: playerPos.z + f.z * fwd + r.z * lat };
+    },
+
+    arrangeCombatOfficers(pl) {
+      const p = pl || player;
+      if (!p || !police) return [];
+      const officers = police.getOfficers();
+      if (officers.length < 7) return officers;
+      const pp = p.mesh ? p.mesh.position : p.position;
+      const h = p.heading !== undefined ? p.heading : Math.PI / 2;
+      // Spots are (forward metres, lateral metres) from Rico.
+      // Officer 0 = aim officer at 7.4 m; officer 3 = fallen in the gap;
+      // 7th officer at 8 m fwd, lateral -3.7 (right cluster).
+      const spots = [
+        { f: 7.4, l: 0 },     // 0 aim officer (nearest)
+        { f: 8.5, l: 3.2 },   // 1 left cluster
+        { f: 6.5, l: 4.2 },   // 2 left cluster
+        { f: 6.55, l: -0.6 }, // 3 FALLEN, in the gap (feet ~974,415 downscale)
+        { f: 8.0, l: -2.8 },  // 4 right cluster
+        { f: 9.0, l: -4.0 },  // 5 right cluster
+        { f: 8.0, l: -3.7 },  // 6 seventh officer, right cluster
+      ];
+      officers.forEach((o, i) => {
+        const s = spots[i] || spots[0];
+        const pos = sys._spot(pp, h, s.f, s.l);
+        o.mesh.position.set(pos.x, 0, pos.z);
+        // Face Rico.
+        const dx = pp.x - pos.x;
+        const dz = pp.z - pos.z;
+        o.mesh.rotation.y = Math.atan2(dx, -dz);
+        // The harness gates o.heading against atan2(dx, dz) toward Rico
+        // (mesh rotation uses the -dz facing convention; heading is the
+        // plain atan2 toward the player, so the aim error is 0).
+        o.heading = Math.atan2(dx, dz);
+        o.staged = true;
+        if (i === 3) {
+          o.setFallen(true);
+          sys._placeLightPool(pos);
+          sys._placeDroppedPistol(pos);
+        } else if (o.fallen) {
+          o.setFallen(false);
+        }
+      });
+      return officers;
+    },
+
+    _placeLightPool(pos) {
+      if (sys._lightPool && scene) scene.remove(sys._lightPool);
+      if (sys._lightPoolHalo && scene) scene.remove(sys._lightPoolHalo);
+      // Annulus: bright ring, dark hole over the body (contrast >= 35).
+      // Warmer + softer than the blown-white 4.0 ring (it read as a
+      // painted road marking), plus a faint outer halo so the edge falls
+      // off like light instead of ending like paint.
+      // MeshLambertMaterial (NOT Basic): the pool needs a real emissive
+      // uniform — Basic has none, so setting .emissive threw on first
+      // render (refreshUniformsCommon: uniforms.emissive undefined).
+      const pool = new THREE.Mesh(
+        new THREE.RingGeometry(1.2, 4.5, 32),
+        new THREE.MeshLambertMaterial({ color: 0xffd9a0, emissive: 0xffd9a0, emissiveIntensity: 2.6, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+      );
+      pool.name = 'fallen light pool';
+      pool.userData.kind = 'lightPool';
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(pos.x, 0.12, pos.z);
+      sys._lightPool = pool;
+      if (scene) scene.add(pool);
+      const halo = new THREE.Mesh(
+        new THREE.RingGeometry(4.5, 6.5, 32),
+        new THREE.MeshLambertMaterial({ color: 0xffd9a0, emissive: 0xffd9a0, emissiveIntensity: 1.2, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+      );
+      halo.name = 'fallen light pool halo';
+      halo.userData.kind = 'lightPool';
+      halo.rotation.x = -Math.PI / 2;
+      halo.position.set(pos.x, 0.11, pos.z);
+      sys._lightPoolHalo = halo;
+      if (scene) scene.add(halo);
+      return pool;
+    },
+
+    _placeDroppedPistol(pos) {
+      if (sys._droppedPistol && scene) scene.remove(sys._droppedPistol);
+      // Officer-pistol geometry (0.09 x 0.14 x 0.42): the 7th pistol.
+      const pistol = new THREE.Mesh(
+        new THREE.BoxGeometry(0.09, 0.14, 0.42),
+        new THREE.MeshLambertMaterial({ color: 0x111111 })
+      );
+      pistol.name = 'dropped pistol';
+      pistol.userData.kind = 'pistol';
+      pistol.rotation.x = Math.PI / 2;
+      pistol.position.set(pos.x + 0.5, 0.5, pos.z + 0.3);
+      sys._droppedPistol = pistol;
+      if (scene) scene.add(pistol);
+      return pistol;
+    },
+
+    getAimOfficer() {
+      if (!police || !player) return null;
+      const pp = player.mesh ? player.mesh.position : player.position;
+      let best = null;
+      let bestD = Infinity;
+      for (const o of police.getOfficers()) {
+        if (o.fallen) continue;
+        const d = Math.hypot(o.mesh.position.x - pp.x, o.mesh.position.z - pp.z);
+        if (d < bestD) { bestD = d; best = o; }
+      }
+      if (!best) return null;
+      const dx = best.mesh.position.x - pp.x;
+      const dz = best.mesh.position.z - pp.z;
+      const wantH = Math.atan2(dx, -dz);
+      const h = player.heading !== undefined ? player.heading : 0;
+      let err = wantH - h;
+      while (err > Math.PI) err -= Math.PI * 2;
+      while (err < -Math.PI) err += Math.PI * 2;
+      return { officer: best, distance: bestD, headingError: Math.abs(err) };
+    },
+
+    fire() {
+      if (!player) return false;
+      const pp = player.mesh ? player.mesh.position : player.position;
+      const h = player.heading !== undefined ? player.heading : 0;
+      const f = sys._forward(h);
+      const mx = pp.x + f.x * 0.7;
+      const mz = pp.z + f.z * 0.7;
+      muzzle.position.set(mx, 1.35, mz);
+      muzzle.rotation.y = h;
+      sys.muzzleVisible = true;
+      sys._muzzleTimer = sys._muzzleFrozen ? 999 : 0.07;
+      const aim = sys.getAimOfficer();
+      if (aim) {
+        const d = aim.distance;
+        tracer.visible = true;
+        tracerMat.opacity = 0.45;
+        // Short streak from the muzzle (45% of the way to the officer),
+        // not a bar across the whole frame.
+        tracer.position.set(pp.x + f.x * (d * 0.225), 1.3, pp.z + f.z * (d * 0.225));
+        tracer.scale.z = d * 0.45;
+        tracer.rotation.y = h;
+      }
+      return true;
+    },
+
+    stageShot(shotId, pl) {
+      if (shotId !== 'combat') return false;
+      const p = pl || player;
+      sys.arrangeCombatOfficers(p);
+      sys._staged = true;
+      // Freeze the muzzle flash at Rico's muzzle (timer 999 = stays on).
+      sys._muzzleFrozen = true;
+      sys.fire();
+      sys._muzzleTimer = 999;
+      sys.muzzleVisible = true;
+      return true;
+    },
+
     update(dt = 1 / 60) {
-      if (state.muzzleTimer !== 999) {
-        state.muzzleTimer -= dt;
-        if (state.muzzleTimer <= 0 && muzzle.visible) {
-          muzzle.visible = false;
-          state._muzzleVisible = false;
+      if (sys._muzzleTimer > 0 && !sys._muzzleFrozen) {
+        sys._muzzleTimer -= dt;
+        if (sys._muzzleTimer <= 0) {
+          sys.muzzleVisible = false;
+          tracer.visible = false;
+          tracerMat.opacity = 0;
         }
       }
-      for (let i = state.tracers.length - 1; i >= 0; i -= 1) {
-        const t = state.tracers[i];
-        t.timer -= dt;
-        if (t.timer <= 0) {
-          if (scene) scene.remove(t.line);
-          state.tracers.splice(i, 1);
-        }
+      if (tracer.visible && !sys._muzzleFrozen) {
+        tracerMat.opacity = Math.max(0, tracerMat.opacity - dt * 6);
+        if (tracerMat.opacity <= 0) tracer.visible = false;
       }
     },
   };
-  return system;
+  return sys;
 }

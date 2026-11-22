@@ -1,14 +1,42 @@
-// Solmar Bay — local development server: serves game/ as the document root.
-// Usage: node serve.ts --port <n>   (also accepts a positional [port] and $PORT)
-// Fresh build for the round-16 rebuild (attempt #8). Written from the
-// interface contract + rebuild spec; no old source read or copied.
+// serve.ts — a tiny static server for game/ (Node 22, standard library
+// only), so Solmar Bay can be played locally without a build step:
+//   node serve.ts               serves game/ on http://localhost:8080
+//   node serve.ts --port 8899   serves game/ on http://localhost:8899
+// It sends the MIME types a browser game needs, refuses any path outside
+// game/, and otherwise does nothing clever: a development convenience, not
+// a web server for the internet.
+
+import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, statSync } from 'node:fs';
-import { join, extname, normalize, resolve, dirname } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = dirname(fileURLToPath(import.meta.url));
-const GAME_DIR = resolve(ROOT, 'game');
+const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const args = process.argv.slice(2);
+
+// The port, in priority order: --port <n>, then a positional [port], then
+// $PORT, then 8080. argv[2] is NEVER parsed blindly: when the caller writes
+// "--port 8899", argv[2] is the string "--port" itself, and Number("--port")
+// is NaN, which used to crash the server before it served a single file.
+function pickPort(argv) {
+  const flagIndex = argv.indexOf('--port');
+  if (flagIndex !== -1 && flagIndex + 1 < argv.length) {
+    const fromFlag = Number(argv[flagIndex + 1]);
+    if (Number.isInteger(fromFlag) && fromFlag > 0 && fromFlag < 65536) return fromFlag;
+  }
+  for (const token of argv) {
+    if (token === '--port') continue;
+    const fromPositional = Number(token);
+    if (Number.isInteger(fromPositional) && fromPositional > 0 && fromPositional < 65536) {
+      return fromPositional;
+    }
+  }
+  const fromEnv = Number(process.env.PORT);
+  if (Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv < 65536) return fromEnv;
+  return 8080;
+}
+
+const port = pickPort(args);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -19,67 +47,51 @@ const MIME = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.ico': 'image/x-icon',
-  '.wasm': 'application/wasm',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json',
+  '.bin': 'application/octet-stream',
+  '.wasm': 'application/wasm',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.ogg': 'audio/ogg',
   '.txt': 'text/plain; charset=utf-8',
 };
 
-function parsePort(argv) {
-  // Explicit --port <n> first (never parse argv[2] blindly: with
-  // "--port 8928" argv[2] is the flag itself and Number("--port") is NaN).
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--port' && i + 1 < argv.length) {
-      const n = Number(argv[i + 1]);
-      if (Number.isSafeInteger(n) && n > 0 && n < 65536) return n;
-    }
-    const m = /^--port=(\d+)$/.exec(argv[i] || '');
-    if (m) {
-      const n = Number(m[1]);
-      if (Number.isSafeInteger(n) && n > 0 && n < 65536) return n;
-    }
-  }
-  // Positional [port] fallback: the first bare numeric argument.
-  for (const a of argv) {
-    if (/^\d+$/.test(a)) {
-      const n = Number(a);
-      if (n > 0 && n < 65536) return n;
-    }
-  }
-  // $PORT fallback, then the default.
-  const env = Number(process.env.PORT || '');
-  if (Number.isSafeInteger(env) && env > 0 && env < 65536) return env;
-  return 8080;
-}
-
-const PORT = parsePort(process.argv.slice(2));
-
-const server = createServer((req, res) => {
+createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  let pathname;
   try {
-    const url = new URL(req.url || '/', 'http://localhost');
-    let rel = decodeURIComponent(url.pathname);
-    if (rel === '/') rel = '/index.html';
-    const target = normalize(join(GAME_DIR, rel));
-    if (!target.startsWith(GAME_DIR)) {
-      res.writeHead(403, { 'content-type': 'text/plain' });
-      res.end('forbidden');
-      return;
-    }
-    if (!existsSync(target) || !statSync(target).isFile()) {
-      res.writeHead(404, { 'content-type': 'text/plain' });
-      res.end('not found: ' + rel);
-      return;
-    }
-    const body = readFileSync(target);
-    const type = MIME[extname(target).toLowerCase()] || 'application/octet-stream';
-    res.writeHead(200, { 'content-type': type, 'content-length': body.length });
-    res.end(body);
-  } catch (err) {
-    res.writeHead(500, { 'content-type': 'text/plain' });
-    res.end('server error: ' + (err && err.message ? err.message : String(err)));
+    pathname = decodeURIComponent(url.pathname);
+  } catch {
+    response.writeHead(400).end('bad request');
+    return;
   }
-});
-
-server.listen(PORT, () => {
-  console.log('Solmar Bay serving game/ at http://localhost:' + PORT);
+  if (pathname.endsWith('/')) pathname += 'index.html';
+  const file = resolve(join(root, normalize(pathname)));
+  if (file !== root && !file.startsWith(root + sep)) {
+    response.writeHead(403).end('forbidden');
+    return;
+  }
+  let size;
+  try {
+    const stats = statSync(file);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
+  } catch {
+    response.writeHead(404).end('not found');
+    return;
+  }
+  response.writeHead(200, {
+    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'content-length': size,
+    'cache-control': 'no-store',
+  });
+  createReadStream(file).pipe(response);
+}).listen(port, '127.0.0.1', () => {
+  console.log(`Solmar Bay game/ is on http://localhost:${port}`);
 });

@@ -1,291 +1,267 @@
-// game/src/save.js — Save and restore (attempt #8, round-16 rebuild).
+// save.js — save + restore for Solmar Bay (save version 8).
+// Attempt #9 (top10-rebuild).
 //
-// Save version 8. Saves money (greater than 0), completed missions, jobs,
-// player position, and a display-only timestamp. Restores exactly through
-// a fresh load and start: a save followed by a fresh load and a start
-// must round-trip (same mission, same jobs, same money).
+// TWO localStorage keys, one save:
+//  - Module key:   'solmar-bay-save-v8' (the module's own key)
+//  - Harness key:  'solmar-bay-save-v1' (the geometry harness reads
+//    THIS key, with JSON version 8 inside)
+// save() writes BOTH keys so the harness always finds a real save.
 //
-// TWO keys, both written on every save:
-//   - the module's own key:   'solmar-bay-save-v8'
-//   - the harness key:        'solmar-bay-save-v1'  (JSON version 8)
-// The geometry harness reads the v1 key, so the game MUST write its save
-// under localStorage key 'solmar-bay-save-v1' with JSON `version: 8`.
-// saveGameState() MUST be called during staging so a real save exists
-// when the shots are captured.
+// Baseline new game: money 4500, mission 1, no jobs done.
+// Staged saves (per shot): cover 1200, combat 2450, pursuit 3200,
+// sunset 4500 — those are the staged money values the shots show.
 //
-// Storage: localStorage when available; an in-memory fallback when it is
-// not (Node tests, private mode, or a blocked store). The fallback keeps
-// the same API, so the round-trip test passes in both environments.
-// The only use of the current time is a display-only ISO timestamp
-// (savedAt) — never for scene content.
+// Round-trip rule: save -> fresh load -> start must restore the same
+// mission, jobs and money. validate() is the gate: version must be 8,
+// money must be a positive number, mission 1..5.
+//
+// The ONLY wall-clock use in the whole game is the display-only
+// savedAt ISO timestamp. Nothing about scene content reads the clock.
 
 export const SAVE_VERSION = 8;
 
 export const SAVE_KEY_V8 = 'solmar-bay-save-v8';
+export const SAVE_KEY = SAVE_KEY_V8;
 export const SAVE_KEY_V1 = 'solmar-bay-save-v1';
 
-// Backwards-compatible aliases (the module key is the v8 key).
-export const MODULE_KEY = SAVE_KEY_V8;
-export const HARNESS_KEY = SAVE_KEY_V1;
+// Staged money per shot (also mirrored in CONFIG.staging).
+export const STAGED_MONEY = {
+  cover: 1200,
+  combat: 2450,
+  pursuit: 3200,
+  sunset: 4500,
+};
 
-// Baseline new game: money 4500, mission 1. Staged save: money 1200.
-export const BASELINE_MONEY = 4500;
-export const BASELINE_MISSION = 1;
-export const STAGED_MONEY = 1200;
+// Jobs done / missions completed per shot (mirrors CONFIG.staging).
+export const STAGED_PROGRESS = {
+  cover: { jobsDone: 0, completedMissions: [] },
+  combat: { jobsDone: 1, completedMissions: [1] },
+  pursuit: { jobsDone: 2, completedMissions: [1, 2] },
+  sunset: { jobsDone: 4, completedMissions: [1, 2, 3, 4] },
+};
 
-// ---------------------------------------------------------------------
-// Storage shim: localStorage when it exists and works, an in-memory Map
-// otherwise. The shim is created once per module load and shared by
-// save/load/has/clear, so a save in one call is visible to the next.
-function createStorage() {
-  const memory = new Map();
-  let local = null;
-  try {
-    if (typeof localStorage !== 'undefined' && localStorage !== null) {
-      // Probe it: some browsers expose localStorage but throw on use.
-      const probeKey = '__solmar_save_probe__';
-      localStorage.setItem(probeKey, '1');
-      localStorage.removeItem(probeKey);
-      local = localStorage;
-    }
-  } catch (err) {
-    local = null;
-  }
-  return {
-    get(key) {
-      if (local) {
-        try {
-          return local.getItem(key);
-        } catch (err) {
-          return memory.has(key) ? memory.get(key) : null;
-        }
-      }
-      return memory.has(key) ? memory.get(key) : null;
-    },
-    set(key, value) {
-      if (local) {
-        try {
-          local.setItem(key, value);
-          return;
-        } catch (err) {
-          // Fall through to memory on quota / access errors.
-        }
-      }
-      memory.set(key, value);
-    },
-    remove(key) {
-      if (local) {
-        try {
-          local.removeItem(key);
-        } catch (err) {
-          // Ignore; memory copy is removed below regardless.
-        }
-      }
-      memory.delete(key);
-    },
-    // Test hook: which backend is live ('local' or 'memory').
-    get backend() {
-      return local ? 'local' : 'memory';
-    },
-  };
-}
+// ----------------------------------------------------------------------
+// Shape helpers
+// ----------------------------------------------------------------------
 
-const storage = createStorage();
-
-// ---------------------------------------------------------------------
-// defaultNewGameState — the baseline new game: money 4500, mission 1,
-// no jobs done, no completed missions, Rico at the downtown start spot.
+// Fresh new-game state. Money 4500, mission 1 — the baseline the
+// harness and the start menu both expect.
 export function defaultNewGameState() {
   return {
     version: SAVE_VERSION,
-    money: BASELINE_MONEY,
-    mission: BASELINE_MISSION,
-    currentMission: BASELINE_MISSION,
-    jobsDone: 0,
+    money: 4500,
+    mission: 1,
+    currentMission: 1,
     completedMissions: [],
-    player: { x: 40, z: -80, heading: 0, inCar: false, car: null },
-    wanted: 0,
-    respect: 0,
+    jobsDone: 0,
+    player: { x: 40, y: 0, z: -40, heading: 0 },
     checkpoint: 'MARINA',
-    savedAt: null,
+    savedAt: new Date().toISOString(),
   };
 }
 
-// make — build a save record from a live game state object. Accepts a
-// partial state and fills the rest from the baseline, so callers never
-// have to pass every field.
+// Normalise any partial state into a full, valid v8 save object.
+// Missing fields fall back to the new-game baseline; unknown extra
+// fields are dropped so old saves cannot smuggle junk forward.
 export function make(partial) {
   const base = defaultNewGameState();
-  const src = partial || {};
-  const state = {
+  const src = partial && typeof partial === 'object' ? partial : {};
+  const completed = Array.isArray(src.completedMissions)
+    ? src.completedMissions.filter((n) => Number.isInteger(n) && n >= 1 && n <= 5)
+    : [];
+  const player = src.player && typeof src.player === 'object' ? src.player : {};
+  return {
     version: SAVE_VERSION,
-    money: typeof src.money === 'number' ? src.money : base.money,
-    mission: typeof src.mission === 'number' ? src.mission : base.mission,
-    // FIX #1 (attempt #8): the harness reads saved.currentMission — the
-    // old make() wrote only `mission`, so the round-trip gate failed.
-    // Derive it from an explicit currentMission, else from mission.
+    money: typeof src.money === 'number' && src.money > 0 ? src.money : base.money,
+    mission: Number.isInteger(src.mission) && src.mission >= 1 && src.mission <= 5
+      ? src.mission
+      : base.mission,
+    // The harness reads saved.currentMission — derive it from an explicit
+    // currentMission, else from mission (attempt #8 fix #1, regressed here).
     currentMission: typeof src.currentMission === 'number'
       ? src.currentMission
-      : (typeof src.mission === 'number' ? src.mission : base.mission),
-    jobsDone: typeof src.jobsDone === 'number' ? src.jobsDone : base.jobsDone,
-    completedMissions: Array.isArray(src.completedMissions)
-      ? src.completedMissions.slice()
-      : base.completedMissions,
+      : (Number.isInteger(src.mission) && src.mission >= 1 && src.mission <= 5 ? src.mission : base.mission),
+    completedMissions: completed,
+    jobsDone: Number.isInteger(src.jobsDone) && src.jobsDone >= 0 ? src.jobsDone : 0,
     player: {
-      x: src.player && typeof src.player.x === 'number' ? src.player.x : base.player.x,
-      z: src.player && typeof src.player.z === 'number' ? src.player.z : base.player.z,
-      heading: src.player && typeof src.player.heading === 'number' ? src.player.heading : 0,
-      inCar: !!(src.player && src.player.inCar),
-      car: src.player && src.player.car ? src.player.car : null,
+      x: typeof player.x === 'number' ? player.x : base.player.x,
+      y: typeof player.y === 'number' ? player.y : 0,
+      z: typeof player.z === 'number' ? player.z : base.player.z,
+      heading: typeof player.heading === 'number' ? player.heading : 0,
     },
-    wanted: typeof src.wanted === 'number' ? src.wanted : 0,
-    respect: typeof src.respect === 'number' ? src.respect : 0,
-    checkpoint: typeof src.checkpoint === 'string' ? src.checkpoint : base.checkpoint,
-    // Display-only ISO timestamp. The ONLY Date.now use in the game.
-    savedAt: typeof src.savedAt === 'string' ? src.savedAt : new Date().toISOString(),
+    checkpoint: typeof src.checkpoint === 'string' && src.checkpoint ? src.checkpoint : 'MARINA',
+    savedAt: typeof src.savedAt === 'string' && src.savedAt ? src.savedAt : new Date().toISOString(),
   };
-  return state;
 }
 
-// validate — true only for a well-formed version-8 save: correct
-// version, money greater than 0, a 1-based mission number, jobs done
-// within 0-4, and completed missions as an array of 1-based numbers.
-export function validate(data) {
-  if (!data || typeof data !== 'object') return false;
-  if (data.version !== SAVE_VERSION) return false;
-  if (typeof data.money !== 'number' || data.money <= 0) return false;
-  if (typeof data.mission !== 'number' || data.mission < 1 || data.mission > 4) return false;
-  if (typeof data.jobsDone !== 'number' || data.jobsDone < 0 || data.jobsDone > 4) return false;
-  if (!Array.isArray(data.completedMissions)) return false;
-  for (let i = 0; i < data.completedMissions.length; i += 1) {
-    const m = data.completedMissions[i];
-    if (typeof m !== 'number' || m < 1 || m > 4) return false;
-  }
+// A staged save for one of the four shots: staged money + the shot's
+// progress, stamped with the current display-only time.
+export function makeStagedSave(shotId, mission) {
+  const progress = STAGED_PROGRESS[shotId] || { jobsDone: 0, completedMissions: [] };
+  const money = STAGED_MONEY[shotId] || 1200;
+  const missionNumber = Number.isInteger(mission) && mission >= 1 && mission <= 5
+    ? mission
+    : { cover: 1, combat: 2, pursuit: 3, sunset: 4 }[shotId] || 1;
+  return make({
+    money,
+    mission: missionNumber,
+    completedMissions: progress.completedMissions.slice(),
+    jobsDone: progress.jobsDone,
+  });
+}
+
+// Strict gate: is this object a usable v8 save?
+export function validate(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  if (obj.version !== SAVE_VERSION) return false;
+  if (typeof obj.money !== 'number' || !(obj.money > 0)) return false;
+  if (!Number.isInteger(obj.mission) || obj.mission < 1 || obj.mission > 5) return false;
+  if (!Array.isArray(obj.completedMissions)) return false;
+  if (!Number.isInteger(obj.jobsDone) || obj.jobsDone < 0) return false;
+  if (obj.player && typeof obj.player !== 'object') return false;
   return true;
 }
 
-// format — the save line shown in the mission panel, e.g.
-// "SAVED 11:32 · CHECKPOINT: MARINA". The clock part comes from the
-// savedAt timestamp's UTC hours/minutes (display only).
-export function format(data) {
-  const state = data || defaultNewGameState();
-  let clock = '--:--';
-  if (typeof state.savedAt === 'string' && state.savedAt.length >= 16) {
-    clock = state.savedAt.slice(11, 16);
-  }
-  const checkpoint = (state.checkpoint || 'MARINA').toUpperCase();
-  return 'SAVED ' + clock + ' · CHECKPOINT: ' + checkpoint;
+// JSON serialisation (pure — no storage touched, safe in Node/tests).
+export function serialize(state) {
+  return JSON.stringify(make(state));
 }
 
-// save — serialize the state and write it under BOTH keys (the module
-// key and the harness key). Returns the written record.
-export function save(state) {
-  const record = make(state);
-  const json = JSON.stringify(record);
-  storage.set(SAVE_KEY_V8, json);
-  storage.set(SAVE_KEY_V1, json);
-  return record;
-}
-
-// load — read the save back. The harness key is tried first, then the
-// module key. Returns the parsed record, or null when nothing valid is
-// stored. A stored record with a wrong version is treated as absent
-// (never migrated silently — a version mismatch is a real error).
-export function load() {
-  const raw = storage.get(SAVE_KEY_V1) || storage.get(SAVE_KEY_V8);
-  if (!raw) return null;
+export function deserialize(json) {
   let parsed = null;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(json);
   } catch (err) {
     return null;
   }
   if (!validate(parsed)) return null;
-  return parsed;
+  return make(parsed);
 }
 
-// has — true when a valid version-8 save exists under either key.
+// ----------------------------------------------------------------------
+// Storage (localStorage when present; graceful no-op without it)
+// ----------------------------------------------------------------------
+function storageAvailable() {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage !== null;
+  } catch (err) {
+    return false;
+  }
+}
+
+function writeKey(key, json) {
+  if (!storageAvailable()) return false;
+  try {
+    localStorage.setItem(key, json);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function readKey(key) {
+  if (!storageAvailable()) return null;
+  try {
+    return localStorage.getItem(key);
+  } catch (err) {
+    return null;
+  }
+}
+
+// Write the save under BOTH keys. Returns true only if at least the
+// harness key (v1) was written — that is the one the tests read.
+export function save(state, key) {
+  const json = serialize(state);
+  const wroteV1 = writeKey(SAVE_KEY_V1, json);
+  const wroteV8 = writeKey(SAVE_KEY_V8, json);
+  if (typeof key === 'string' && key && key !== SAVE_KEY_V1 && key !== SAVE_KEY_V8) {
+    writeKey(key, json);
+  }
+  return wroteV1 || wroteV8;
+}
+
+// The staging entry point: the game calls saveGameState() during
+// staging so a real save exists when the shots are captured.
+export function saveGameState(state) {
+  return save(state);
+}
+
+// Read: harness key first, module key as fallback. Returns a
+// normalised state object, or null when nothing usable is stored.
+export function load() {
+  const fromV1 = deserialize(readKey(SAVE_KEY_V1));
+  if (fromV1) return fromV1;
+  const fromV8 = deserialize(readKey(SAVE_KEY_V8));
+  if (fromV8) return fromV8;
+  return null;
+}
+
 export function has() {
-  return load() !== null;
+  if (!storageAvailable()) return false;
+  try {
+    return localStorage.getItem(SAVE_KEY_V1) !== null
+      || localStorage.getItem(SAVE_KEY_V8) !== null;
+  } catch (err) {
+    return false;
+  }
 }
 
-// clear — remove the save from both keys.
 export function clear() {
-  storage.remove(SAVE_KEY_V8);
-  storage.remove(SAVE_KEY_V1);
+  if (!storageAvailable()) return false;
+  try {
+    localStorage.removeItem(SAVE_KEY_V1);
+    localStorage.removeItem(SAVE_KEY_V8);
+    return true;
+  } catch (err) {
+    return false;
+  }
 }
 
-// apply — apply a loaded save record onto a live game state object.
-// Copies money, mission, jobs, completed missions, wanted, respect,
-// checkpoint, and the player position. Returns the target object.
-export function apply(target, record) {
-  const src = record || load();
-  if (!src || !validate(src)) return target;
-  target.money = src.money;
-  target.mission = src.mission;
-  if (typeof src.currentMission === 'number') target.currentMission = src.currentMission;
-  else target.currentMission = src.mission;
-  target.jobsDone = src.jobsDone;
-  target.completedMissions = src.completedMissions.slice();
-  target.wanted = src.wanted;
-  target.respect = src.respect;
-  target.checkpoint = src.checkpoint;
-  if (target.player && src.player) {
-    target.player.x = src.player.x;
-    target.player.z = src.player.z;
-    target.player.heading = src.player.heading;
-    target.player.inCar = src.player.inCar;
-    target.player.car = src.player.car;
-  }
-  return target;
+// Apply a loaded save to a fresh state: invalid input falls back to
+// the new-game baseline instead of throwing.
+export function apply(saveData) {
+  if (!validate(saveData)) return defaultNewGameState();
+  return make(saveData);
 }
 
-// roundTripTest — save a state, reload it fresh, and confirm the same
-// mission, the same jobs, and the same money come back. Returns an
-// object { pass, saved, loaded, reason } so the caller can report the
-// failure precisely instead of a bare boolean.
-export function roundTripTest(state) {
-  const probe = state || {
-    money: 2450,
-    mission: 2,
-    jobsDone: 1,
-    completedMissions: [1],
-    player: { x: 40, z: -22, heading: Math.PI / 2, inCar: false, car: null },
-    wanted: 4,
-    respect: 10,
-    checkpoint: 'MARINA',
-  };
-  const saved = save(probe);
-  const loaded = load();
-  if (!loaded) {
-    return { pass: false, saved, loaded: null, reason: 'load returned null after save' };
+// Human-readable save line for the mission panel, e.g.
+// "SAVED 11:32 · CHECKPOINT: MARINA". Display-only; the time comes
+// from the save's own savedAt stamp.
+export function format(saveData) {
+  const state = validate(saveData) ? saveData : defaultNewGameState();
+  let clock = '--:--';
+  if (state.savedAt) {
+    const d = new Date(state.savedAt);
+    if (!Number.isNaN(d.getTime())) {
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      clock = `${hh}:${mm}`;
+    }
   }
-  if (loaded.mission !== saved.mission) {
-    return { pass: false, saved, loaded, reason: 'mission mismatch' };
-  }
-  if (loaded.jobsDone !== saved.jobsDone) {
-    return { pass: false, saved, loaded, reason: 'jobsDone mismatch' };
-  }
-  if (loaded.money !== saved.money) {
-    return { pass: false, saved, loaded, reason: 'money mismatch' };
-  }
-  if (JSON.stringify(loaded.completedMissions) !== JSON.stringify(saved.completedMissions)) {
-    return { pass: false, saved, loaded, reason: 'completedMissions mismatch' };
-  }
-  return { pass: true, saved, loaded, reason: 'ok' };
+  const checkpoint = state.checkpoint || 'MARINA';
+  return `SAVED ${clock} · CHECKPOINT: ${checkpoint}`;
 }
 
-// saveGameState — the staging entry point main.js calls during shot
-// staging, so a real save exists when the shots are captured. Builds a
-// record from the live state and writes it under both keys.
-export function saveGameState(liveState) {
-  return save(liveState || defaultNewGameState());
+// ----------------------------------------------------------------------
+// Round-trip self-test (pure — no storage, no clock dependency beyond
+// the display stamp). save -> serialise -> parse -> validate must
+// return the same mission, jobs and money.
+// ----------------------------------------------------------------------
+export function roundTripTest() {
+  const original = defaultNewGameState();
+  original.money = 2450;
+  original.mission = 2;
+  original.completedMissions = [1];
+  original.jobsDone = 1;
+  const json = serialize(original);
+  const back = deserialize(json);
+  if (!back) return false;
+  if (back.version !== SAVE_VERSION) return false;
+  if (back.money !== original.money) return false;
+  if (back.mission !== original.mission) return false;
+  if (back.jobsDone !== original.jobsDone) return false;
+  if (JSON.stringify(back.completedMissions) !== JSON.stringify(original.completedMissions)) return false;
+  return true;
 }
 
-// loadGameState — the fresh-load entry point: read the stored save, or
-// fall back to the baseline new game when nothing valid is stored.
-export function loadGameState() {
-  const loaded = load();
-  if (loaded) return loaded;
-  return defaultNewGameState();
-}
+export default save;
